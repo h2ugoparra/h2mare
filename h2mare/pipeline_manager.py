@@ -23,6 +23,8 @@ class PipelineManager:
         end_date: Union[pd.Timestamp, None] = None,
         no_convert: bool = False,
         no_compile: bool = False,
+        no_parquet: bool = False,
+        no_sync: bool = False,
     ):
 
         self.app_config = app_config
@@ -33,6 +35,8 @@ class PipelineManager:
         self.end_date = end_date
         self.no_convert = no_convert
         self.no_compile = no_compile
+        self.no_parquet = no_parquet
+        self.no_sync = no_sync
 
     def run(self, variables: Optional[List[str] | None] = None):
         if variables is None:
@@ -85,9 +89,34 @@ class PipelineManager:
                     start_date=self.start_date,
                     end_date=self.end_date,
                     var_keys=variables,
+                    no_sync=self.no_sync,
                 )
             except Exception as e:
                 logger.error(f"Compile step failed: {e}")
+
+        _skip_parquet = (
+            self.no_parquet or self.no_compile or self.no_convert or self.dry_run
+        )
+        if not _skip_parquet:
+            from h2mare.config import settings
+            from h2mare.format_converters.zarr2parquet import Zarr2Parquet
+
+            logger.info("Starting Parquet conversion step (h2ds)")
+            try:
+                h2ds_local_folder = self.app_config.variables["h2ds"].local_folder
+                converter = Zarr2Parquet(
+                    var_key="h2ds",
+                    parquet_root=settings.PARQUET_DIR,
+                    store_root=self.store_root / h2ds_local_folder,
+                )
+                converter.run(
+                    start_date=self.start_date,
+                    end_date=self.end_date,
+                )
+                if not self.no_sync:
+                    converter.sync_data()
+            except Exception as e:
+                logger.error(f"Parquet conversion step failed: {e}")
 
         self._cleanup_empty_download_dirs(variables)
 

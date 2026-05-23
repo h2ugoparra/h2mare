@@ -170,7 +170,6 @@ class ZarrCatalog:
         records = self._scan_zarr_files()
 
         if not records:
-            logger.warning("No zarr files found during scan")
             return pd.DataFrame()
 
         df = pd.DataFrame(records)

@@ -6,6 +6,7 @@ from h2mare.cli.catalog import catalog
 from h2mare.cli.compile import compile
 from h2mare.cli.main import run
 from h2mare.cli.nc2zarr import convert
+from h2mare.cli.zarr2parquet import parquet
 
 app = typer.Typer(
     name="h2mare",
@@ -22,3 +23,7 @@ app.command(
     "compile",
     help="Merge per-variable Zarr stores into the unified h2ds compiled dataset.",
 )(compile)
+app.command(
+    "parquet",
+    help="Convert compiled Zarr stores to Hive-partitioned Parquet.",
+)(parquet)

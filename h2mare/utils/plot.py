@@ -278,45 +278,102 @@ def split_by_group(
 
 
 def animate_vars(
-    data: xr.Dataset | xr.DataArray, var_name: str | None = None, nsteps: int = 30
+    data: xr.Dataset | xr.DataArray,
+    var_name: str | None = None,
+    nsteps: int = 30,
+    dim: Literal["time", "depth"] = "time",
+    time_idx: int = 0,
+    depth_idx: int = 0,
 ) -> None:
     """
-    Animate plots from an xarray Dataset or DataArray over time.
+    Animate plots over a selected dimension (time or depth).
+
+    When dim='time' (default): animates over time steps; if a depth dimension is
+    also present, depth_idx fixes the depth level shown in every frame.
+    When dim='depth': animates over depth levels; time_idx fixes the time step.
 
     Args:
         data: Input data.
         var_name: Name of variable to plot (only needed if input is a Dataset).
-        nsteps: Number of time steps to animate.
+        nsteps: Maximum number of frames along the animated dimension.
+        dim: Dimension to animate over. Defaults to 'time'.
+        time_idx: Time index used as the fixed time step when dim='depth'. Defaults to 0.
+        depth_idx: Depth index used as the fixed depth level when dim='time'. Defaults to 0.
     """
     if isinstance(data, xr.Dataset):
         if var_name is None:
             raise ValueError("var_name must be provided when input is a Dataset")
         da = data[var_name]
-    else:  # DataArray
+    else:
         da = data
 
-    if "time" not in da.dims:
-        raise ValueError("Input must have a 'time' dimension for animation")
+    if dim not in da.dims:
+        raise ValueError(f"Input does not have a '{dim}' dimension")
 
-    nframes = min(nsteps, da.sizes["time"])
-    for i in range(nframes):
-        fig, ax = plt.subplots()
-        da.isel(time=i).plot(ax=ax)  # type: ignore
-        plt.title(f"Time index: {i} | {str(da['time'].values[i])}")
-        display(fig)  # Display the figure in the notebook
-        clear_output(wait=True)  # Clear previous output before showing new one
-        plt.close()
+    if dim == "time":
+        if "depth" in da.dims:
+            da = da.isel(depth=depth_idx)
+            depth_label = (
+                f" | depth: {float(da['depth'].values):.0f} m"
+                if "depth" in da.coords
+                else ""
+            )
+        else:
+            depth_label = ""
+        nframes = min(nsteps, da.sizes["time"])
+        for i in range(nframes):
+            fig, ax = plt.subplots()
+            da.isel(time=i).plot(ax=ax)  # type: ignore
+            plt.title(f"Time step: {i} | {str(da['time'].values[i])}{depth_label}")
+            display(fig)
+            clear_output(wait=True)
+            plt.close()
+
+    else:  # dim == "depth"
+        if "time" in da.dims:
+            da = da.isel(time=time_idx)
+            time_label = (
+                f" | time: {str(da['time'].values)}" if "time" in da.coords else ""
+            )
+        else:
+            time_label = ""
+        nframes = min(nsteps, da.sizes["depth"])
+        for i in range(nframes):
+            frame = da.isel(depth=i)
+            depth_val = (
+                f"{float(frame['depth'].values):.0f} m"
+                if "depth" in frame.coords
+                else str(i)
+            )
+            fig, ax = plt.subplots()
+            frame.plot(ax=ax)  # type: ignore
+            plt.title(f"Depth: {depth_val}{time_label}")
+            display(fig)
+            clear_output(wait=True)
+            plt.close()
 
 
-def plot_allvars_timeidx(ds: xr.Dataset, time_idx: int) -> None:
+def plot_snapshot(
+    ds: xr.Dataset,
+    time_idx: int = 0,
+    depth_idx: int | None = None,
+) -> None:
     """
-    Plot all variables for a specified time index.
+    Plot all variables at a given time index, optionally selecting a depth level.
+
+    For variables that have a depth dimension, depth_idx (or 0 if not provided)
+    is used to select a single level before plotting.
 
     Args:
-        ds (xr.Dataset): data input
-        time_idx (int): time  index value
+        ds: Input dataset.
+        time_idx: Integer index along the time dimension. Defaults to 0.
+        depth_idx: Integer index along the depth dimension. Defaults to 0 for
+            variables that have a depth dimension when not provided.
     """
-    vars = [v for v in ds.data_vars if "time" in ds[v].dims]
-    for var in vars:
-        ds[var].isel(time=time_idx).plot()  # type: ignore
+    vars_with_time = [v for v in ds.data_vars if "time" in ds[v].dims]
+    for var in vars_with_time:
+        da = ds[var].isel(time=time_idx)
+        if "depth" in da.dims:
+            da = da.isel(depth=depth_idx if depth_idx is not None else 0)
+        da.plot()  # type: ignore
         plt.show()

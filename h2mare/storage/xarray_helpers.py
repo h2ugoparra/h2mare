@@ -44,17 +44,42 @@ def chunk_dataset(
     Convert all variables from float64 to float32 and chunk all dims to max size
     while estimating a time size close to target_mb.
 
+    Spatial dims (lat/lon) are always kept at full size. Non-spatial, non-time
+    dims (e.g. depth) are chunked to 1 when the per-step payload exceeds
+    target_mb, preventing oversized chunks on 4-D datasets.
+
     Args:
         ds: dataset to chunk.
         target_mb : Target uncompressed chunk size in MB.
         time_dim : Time dimension name.
     """
     ds = xr_float64_to_float32(ds)
-    dim_dict = {dim: val for dim, val in ds.sizes.items() if dim != time_dim}
-    return ds.chunk(
-        {"time": unified_time_chunk(ds, target_mb=target_mb, time_dim=time_dim)}
-        | dim_dict
-    )
+
+    target_bytes = target_mb * 1024 * 1024
+    spatial_dims = {"lat", "lon", "latitude", "longitude", "x", "y"}
+
+    time_vars = [v for v in ds.data_vars if time_dim in ds[v].dims]
+    if not time_vars or time_dim not in ds.sizes:
+        raise ValueError(f"No variables contain dimension '{time_dim}'")
+
+    main_var = max(time_vars, key=lambda v: ds[v].sizes[time_dim] * ds[v].dtype.itemsize)
+    da = ds[main_var]
+    time_idx = da.dims.index(time_dim)
+    bytes_per_step = int(np.prod([s for i, s in enumerate(da.shape) if i != time_idx])) * da.dtype.itemsize
+
+    dim_dict: dict[str, int] = {}
+    for dim, size in ds.sizes.items():
+        if dim == time_dim:
+            continue
+        if dim.lower() in spatial_dims or bytes_per_step <= target_bytes:
+            dim_dict[dim] = size
+        else:
+            dim_dict[dim] = 1
+
+    non_time_size = int(np.prod(list(dim_dict.values()))) if dim_dict else 1
+    time_chunk = max(1, min(int(target_bytes // (non_time_size * da.dtype.itemsize)), ds.sizes[time_dim]))
+
+    return ds.chunk({time_dim: time_chunk} | dim_dict)
 
 
 def unified_time_chunk(

@@ -31,6 +31,16 @@ variables:
     subset: true
     bbox: [-80, 0, 10, 70]
 
+  thetao:
+    local_folder: CMEMS_Thetao
+    variables: [thetao]
+    dataset_id_rep: cmems_mod_glo_phy_my_0.083deg_P1D-m
+    source: cmems
+    pattern: (\d{4}-\d{2}-\d{2})-(\d{4}-\d{2}-\d{2})
+    subset: true
+    bbox: [-80, 0, 10, 70]
+    depth_range: [0, 1000]
+
   chl:
     local_folder: CMEMS_Chla_4km_daily
     variables: [CHL]
@@ -189,6 +199,7 @@ global_attrs:
     sst_nrt: SST_GLO_SST_L4_NRT_Observations_010_001/METOFFICE-GLO-SST-L4-NRT-OBS-SST-V2 
     o2: GLOBAL_MULTIYEAR_BGC_001_029/cmems_mod_glo_bgc_my_0.25deg_P1D-m 
     mld: GLOBAL_MULTIYEAR_PHY_001_030/cmems_mod_glo_phy_my_0.083deg_P1D-m
+    thetao: GLOBAL_MULTIYEAR_PHY_001_030/cmems_mod_glo_phy_my_0.083deg_P1D-m
     chl: OCEANCOLOUR_GLO_BGC_L4_MY_009_104/cmems_obs-oc_glo_bgc-plankton_my_l4-gapfree-multi-4km_P1D
     seapodym: GLOBAL_MULTIYEAR_BGC_001_033/cmems_mod_glo_bgc_my_0.083deg-lmtl_PT1D-i
     eddies: ftp://ftp-access-aviso.altimetry.fr/value-added/eddy-trajectory/delayed-time/META3.2_DT_allsat
@@ -369,6 +380,27 @@ variable_attrs:
     short_name: DO2 at 1000m
     long_name: Oxygen concentration at 1000m depth
     units: mmol.m-3
+
+# THETAO
+  thetao_100:
+    short_name: Thetao 100m
+    long_name: Potential temperature at 100m depth
+    units: degrees_C
+
+  thetao_200:
+    short_name: Thetao 200m
+    long_name: Potential temperature at 200m depth
+    units: degrees_C
+
+  thetao_500:
+    short_name: Thetao 500m
+    long_name: Potential temperature at 500m depth
+    units: degrees_C
+
+  thetao_1000:
+    short_name: Thetao 1000m
+    long_name: Potential temperature at 1000m depth
+    units: degrees_C
 
 # FSLE
   fsle_max:

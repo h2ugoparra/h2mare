@@ -207,10 +207,10 @@ class BBox:
         Returns:
             String like "10W-20E-30N-40N"
         """
-        xmin_str = f"{int(abs(self.xmin))}{'W' if self.xmin < 0 else 'E'}"
-        xmax_str = f"{int(abs(self.xmax))}{'W' if self.xmax < 0 else 'E'}"
-        ymin_str = f"{int(abs(self.ymin))}{'S' if self.ymin < 0 else 'N'}"
-        ymax_str = f"{int(abs(self.ymax))}{'S' if self.ymax < 0 else 'N'}"
+        xmin_str = f"{round(abs(self.xmin))}{'W' if self.xmin < 0 else 'E'}"
+        xmax_str = f"{round(abs(self.xmax))}{'W' if self.xmax < 0 else 'E'}"
+        ymin_str = f"{round(abs(self.ymin))}{'S' if self.ymin < 0 else 'N'}"
+        ymax_str = f"{round(abs(self.ymax))}{'S' if self.ymax < 0 else 'N'}"
 
         return f"{xmin_str}-{xmax_str}-{ymin_str}-{ymax_str}"
 

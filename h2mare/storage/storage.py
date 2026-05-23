@@ -4,6 +4,7 @@ Zarr Save/Temporal-overlap-check Logic
 
 from __future__ import annotations
 
+import gc
 import shutil
 import time
 from pathlib import Path
@@ -48,7 +49,21 @@ def write_append_zarr(
 
 def _append_data(var_key: str, ds_new: xr.Dataset, path: Path) -> None:
     """
-    Append new data to existing zarr file, handling temporal and spatial overlaps.
+    Append new data to existing zarr file, handling two distinct cases:
+
+    **Variable-addition** — all variables in *ds_new* are absent from the
+    existing zarr (disjoint variable sets).  The new variables are merged into
+    the existing dataset with an outer join so no existing variable is lost.
+    This is the correct path when backfilling a brand-new variable (e.g.
+    ``thetao``) into an already-compiled h2ds file that has many other variables.
+
+    **Time-extension** — *ds_new* shares at least one variable with the existing
+    zarr.  Temporal overlap is resolved via :func:`_resolve_overlap` and the
+    non-overlapping head of the existing data is concatenated with *ds_new* along
+    the time dimension.
+
+    Both paths write via an atomic tmp → backup-swap to avoid corrupt state on
+    failure.
 
     Args:
         var_key: The key for the variable to be processed and must exist in app_config.variables
@@ -58,17 +73,44 @@ def _append_data(var_key: str, ds_new: xr.Dataset, path: Path) -> None:
     Raises:
         ValueError: If corrupted dataset is detected with unique values after concatenation.
     """
-    ds_resolved = _resolve_overlap(ds_new, path)
+    ds_old = xr.open_zarr(path, consolidated=False)
+    ds_old_vars = set(ds_old.data_vars)
+    ds_new_vars = set(ds_new.data_vars)
 
-    if ds_resolved is not None:
-        ds_new = xr.concat([ds_resolved, ds_new], dim="time", data_vars="minimal")
+    # src_to_close tracks every dataset that holds open handles into path's zarr
+    # store.  They must all be closed (and gc'd) before the backup-swap so that
+    # Windows releases its file locks on the directory.
+    src_to_close: list[xr.Dataset] = []
 
-        # Rechunking the whole dataset to avoid Dask/backend chunk-alignment error when appending to existing zarr file.
-        chunk_sizes = {dim: sizes[0] for dim, sizes in ds_resolved.chunksizes.items()}
-        ds_new = ds_new.chunk(chunk_sizes)
+    if ds_new_vars.isdisjoint(ds_old_vars):
+        # Variable-addition: none of the incoming variables exist in the zarr yet.
+        # Merge so that all existing variables are preserved alongside the new ones.
+        logger.info(
+            f"Variable-addition: merging {sorted(ds_new_vars)} into {path.name}."
+        )
+        ds_out = xr.merge([ds_old, ds_new], join="outer")
+        chunk_sizes = {dim: sizes[0] for dim, sizes in ds_old.chunksizes.items()}
+        ds_out = ds_out.chunk(chunk_sizes)
+        src_to_close.append(ds_old)
+    else:
+        # Time-extension: at least one shared variable — resolve temporal overlap
+        # then concatenate along the time dimension.
+        # ds_old is reopened inside _resolve_overlap; closing here avoids a
+        # redundant open handle (zarr stores are lazy so this is safe).
+        ds_old.close()
+        ds_resolved = _resolve_overlap(ds_new, path)
+
+        if ds_resolved is not None:
+            ds_out = xr.concat([ds_resolved, ds_new], dim="time", data_vars="minimal")
+            # Rechunk to match the existing zarr layout and avoid dask chunk-alignment errors.
+            chunk_sizes = {dim: sizes[0] for dim, sizes in ds_resolved.chunksizes.items()}
+            ds_out = ds_out.chunk(chunk_sizes)
+            src_to_close.append(ds_resolved)
+        else:
+            ds_out = ds_new
 
     # Check if file is corrupted
-    if have_vars_unique_values(ds_new):
+    if have_vars_unique_values(ds_out):
         raise ValueError(
             f"Corrupted dataset detected: duplicate values found in {path}"
         )
@@ -80,7 +122,7 @@ def _append_data(var_key: str, ds_new: xr.Dataset, path: Path) -> None:
 
     for attempt in range(1, 4):
         try:
-            ds_new.to_zarr(tmp_path, align_chunks=True)
+            ds_out.to_zarr(tmp_path, align_chunks=True)
             break
         except Exception as e:
             if attempt == 3:
@@ -92,6 +134,14 @@ def _append_data(var_key: str, ds_new: xr.Dataset, path: Path) -> None:
             )
             shutil.rmtree(tmp_path, ignore_errors=True)
             time.sleep(2**attempt)
+
+    # Release all file handles on path before the swap.  On Windows, open zarr
+    # handles prevent shutil.move from renaming the directory ([WinError 32]).
+    ds_out.close()
+    for ds in src_to_close:
+        ds.close()
+    del ds_out, src_to_close
+    gc.collect()
 
     # Backup-swap: keep original until new file is confirmed in place
     backup_path = path.with_name(path.name + ".bak")
@@ -149,6 +199,7 @@ def _resolve_overlap(ds_new: xr.Dataset, path: Path) -> Optional[xr.Dataset]:
         logger.warning(
             f"Full temporal overlap between {path} and new data. Replacing entirely."
         )
+        ds_old.close()
         return None
 
     if daterange_old.overlaps(daterange_new):
@@ -159,6 +210,7 @@ def _resolve_overlap(ds_new: xr.Dataset, path: Path) -> Optional[xr.Dataset]:
             and daterange_new.end >= daterange_old.end
         ):
             logger.warning("New data fully contains existing data. Replacing entirely.")
+            ds_old.close()
             return None
 
         # Keep the non-overlapping head of ds_old — slice directly, no second zarr open

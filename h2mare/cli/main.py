@@ -95,6 +95,24 @@ def run(
         is_flag=True,
         help="Skip the compile step (h2ds dataset merge) after Zarr conversion.",
     ),
+    no_parquet: bool = typer.Option(
+        False,
+        "--no-parquet",
+        is_flag=True,
+        help=(
+            "Skip the Zarr → Parquet conversion step after compilation. "
+            "Implied automatically by --no-compile and --no-convert."
+        ),
+    ),
+    no_sync: bool = typer.Option(
+        False,
+        "--no-sync",
+        is_flag=True,
+        help=(
+            "Skip all sync steps: compiled zarr files are not copied to the local "
+            "store, and Parquet output is not copied to the remote store."
+        ),
+    ),
 ) -> None:
     """Download and convert climate/ocean data for one or more variable keys."""
 
@@ -148,6 +166,8 @@ def run(
         end_date=pd.Timestamp(end_date) if end_date else None,
         no_convert=no_convert,
         no_compile=no_compile,
+        no_parquet=no_parquet,
+        no_sync=no_sync,
     ).run(variables=selected)
 
 

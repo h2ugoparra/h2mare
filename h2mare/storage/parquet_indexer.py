@@ -424,6 +424,7 @@ class ParquetIndexer:
         else:
             logger.info("Creating new parquet dataset.")
 
+        max_rows = self._max_rows_per_file(df)
         ds.write_dataset(
             df.to_arrow(),
             base_dir=str(self.parquet_root),
@@ -432,7 +433,8 @@ class ParquetIndexer:
                 self._build_partition_schema(df), flavor="hive"
             ),
             existing_data_behavior="overwrite_or_ignore",
-            max_rows_per_file=self._max_rows_per_file(df),
+            max_rows_per_file=max_rows,
+            max_rows_per_group=max_rows,
         )
 
         # get metadata from first write
@@ -530,13 +532,37 @@ class ParquetIndexer:
             # Drop only time-derived partition cols from df_new; custom cols stay as join keys
             conn.register("df_new", df.drop(time_part_cols) if time_part_cols else df)
 
+            parquet_glob = self._partition_glob()
+
+            # Detect new_cols that were partially written by a previous interrupted run.
+            # DuckDB schema-unifies the glob so any column present in *any* file appears here.
+            # Such columns must be excluded from the existing CTE to avoid a name clash in
+            # the FULL OUTER JOIN (both sides would have the column → Polars renames to _1).
+            partially_written: set[str] = set()
+            if new_cols:
+                try:
+                    file_col_rows = conn.execute(
+                        f"DESCRIBE SELECT * FROM read_parquet('{parquet_glob}', "
+                        f"hive_partitioning=true) LIMIT 0"
+                    ).fetchall()
+                    actual_file_cols = {row[0] for row in file_col_rows}
+                    # Exclude partition cols: DESCRIBE on a hive-partitioned parquet glob
+                    # includes virtual year/month columns that aren't physical data columns.
+                    partially_written = (new_cols & actual_file_cols) - self.partition_cols
+                    if partially_written:
+                        logger.debug(
+                            f"Partially-written columns detected (excluded from existing CTE): {partially_written}"
+                        )
+                except Exception:
+                    pass
+
             # Exclude time-derived partition cols from existing CTE (re-derived after JOIN);
             # custom partition cols remain so they survive the FULL OUTER JOIN correctly.
-            exclude_cols = set(time_part_cols) | duplicated_cols
+            # Also exclude partially_written cols to prevent name clashes in the JOIN.
+            exclude_cols = set(time_part_cols) | duplicated_cols | partially_written
             exclude_sql = ", ".join(exclude_cols)
 
             filter_sql = self._partition_filter_sql(existing_pairs)
-            parquet_glob = self._partition_glob()
             key_cols = ", ".join(
                 [self.time_col, self.lon_col, self.lat_col] + custom_part_cols
             )
@@ -596,11 +622,13 @@ class ParquetIndexer:
 
         tmp_path.mkdir(parents=True, exist_ok=True)
 
+        max_rows = self._max_rows_per_file(df)
         ds.write_dataset(
             df.to_arrow(),
             base_dir=str(tmp_path),
             format="parquet",
-            max_rows_per_file=self._max_rows_per_file(df),
+            max_rows_per_file=max_rows,
+            max_rows_per_group=max_rows,
         )
         # Remove existing partition safely
         if final_path.exists():
@@ -791,12 +819,15 @@ class ParquetIndexer:
 
     def get_schema(self) -> dict[str, pl.DataType]:
         """Get schema (columns names and dtypes).
-        Returns cached physical_schema when available, otherwise reads from the first parquet file.
+        Returns cached physical_schema when available, otherwise scans all parquet files
+        to produce the union schema (handles partitions with different columns).
         """
         if self.physical_schema is not None:
             return self.physical_schema
-        first_file = next(self.parquet_root.rglob("*.parquet"))
-        return pl.read_parquet_schema(first_file)
+        all_files = list(self.parquet_root.rglob("*.parquet"))
+        if len(all_files) == 1:
+            return dict(pl.read_parquet_schema(all_files[0]))
+        return dict(pl.scan_parquet(all_files).collect_schema())
 
     def _prepare_df(self, df: pl.DataFrame) -> pl.DataFrame:
         """Add partition columns for Hive partitioning and downcast float64→float32."""

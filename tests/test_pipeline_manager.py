@@ -164,6 +164,54 @@ class TestVariableFiltering:
 # Post-run cleanup
 # ---------------------------------------------------------------------------
 
+class TestParquetStep:
+    """The Parquet conversion step runs after compile and respects all skip flags."""
+
+    def _run_with_mocks(self, tmp_path, **manager_kwargs):
+        """Run the pipeline with Netcdf2Zarr, Compiler, and Zarr2Parquet all mocked."""
+        cfg = _make_config("sst")
+        manager, _ = _make_manager(cfg, tmp_path, **manager_kwargs)
+        with (
+            patch("h2mare.pipeline_manager.Netcdf2Zarr"),
+            patch("h2mare.processing.compiler.Compiler"),
+            patch("h2mare.format_converters.zarr2parquet.Zarr2Parquet") as MockZ2P,
+        ):
+            manager.run()
+        return MockZ2P
+
+    def test_parquet_step_runs_by_default(self, tmp_path):
+        """Zarr2Parquet is instantiated when no skip flags are set."""
+        MockZ2P = self._run_with_mocks(tmp_path)
+        assert MockZ2P.called
+
+    def test_no_parquet_skips_parquet(self, tmp_path):
+        MockZ2P = self._run_with_mocks(tmp_path, no_parquet=True)
+        assert not MockZ2P.called
+
+    def test_no_compile_skips_parquet(self, tmp_path):
+        MockZ2P = self._run_with_mocks(tmp_path, no_compile=True)
+        assert not MockZ2P.called
+
+    def test_no_convert_skips_parquet(self, tmp_path):
+        MockZ2P = self._run_with_mocks(tmp_path, no_convert=True)
+        assert not MockZ2P.called
+
+    def test_dry_run_skips_parquet(self, tmp_path):
+        MockZ2P = self._run_with_mocks(tmp_path, dry_run=True)
+        assert not MockZ2P.called
+
+    def test_parquet_error_does_not_raise(self, tmp_path):
+        """An error in the Parquet step is caught and logged, not propagated."""
+        cfg = _make_config("sst")
+        manager, _ = _make_manager(cfg, tmp_path)
+        with (
+            patch("h2mare.pipeline_manager.Netcdf2Zarr"),
+            patch("h2mare.format_converters.zarr2parquet.Zarr2Parquet") as MockZ2P,
+        ):
+            MockZ2P.side_effect = ValueError("no zarr data")
+            manager.run()  # must not raise
+
+
 class TestCleanup:
 
     def test_empty_download_dir_removed(self, tmp_path):

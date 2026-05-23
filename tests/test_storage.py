@@ -136,3 +136,85 @@ class TestAtomicSwap:
                 _append_data("sst", _make_ds("2020-01-06", 5), path)
 
         assert not path.with_name(path.name + ".bak").exists()
+
+
+# ---------------------------------------------------------------------------
+# _append_data — variable-addition path
+# ---------------------------------------------------------------------------
+
+class TestVariableAddition:
+    """
+    When ds_new contains only variables absent from the existing zarr,
+    _append_data must merge (not replace) so all existing data is preserved.
+    """
+
+    def _make_disjoint_ds(
+        self,
+        var_name: str,
+        start: str = "2020-01-01",
+        n_days: int = 5,
+        seed: int = 1,
+    ) -> xr.Dataset:
+        times = pd.date_range(start, periods=n_days, freq="D")
+        rng = np.random.default_rng(seed)
+        data = rng.uniform(0, 1, size=(n_days, 3, 3))
+        return xr.Dataset(
+            {var_name: (["time", "lat", "lon"], data)},
+            coords={
+                "time": times,
+                "lat": [30.0, 35.0, 40.0],
+                "lon": [-10.0, -5.0, 0.0],
+            },
+        )
+
+    def test_existing_variable_preserved(self, tmp_path):
+        """The original variable must still be present after adding a new one."""
+        path = tmp_path / "h2ds.zarr"
+        _make_ds("2020-01-01", 5).to_zarr(path)           # writes 'sst'
+        _append_data("h2ds", self._make_disjoint_ds("chl"), path)  # adds 'chl'
+
+        ds = xr.open_zarr(path, consolidated=False)
+        assert "sst" in ds.data_vars
+        ds.close()
+
+    def test_new_variable_added(self, tmp_path):
+        """The new variable must be present in the result."""
+        path = tmp_path / "h2ds.zarr"
+        _make_ds("2020-01-01", 5).to_zarr(path)
+        _append_data("h2ds", self._make_disjoint_ds("chl"), path)
+
+        ds = xr.open_zarr(path, consolidated=False)
+        assert "chl" in ds.data_vars
+        ds.close()
+
+    def test_time_steps_unchanged(self, tmp_path):
+        """No time steps should be gained or lost during a variable-addition merge."""
+        path = tmp_path / "h2ds.zarr"
+        _make_ds("2020-01-01", 5).to_zarr(path)
+        _append_data("h2ds", self._make_disjoint_ds("chl"), path)
+
+        ds = xr.open_zarr(path, consolidated=False)
+        assert len(ds.time) == 5
+        ds.close()
+
+    def test_multiple_new_variables_all_added(self, tmp_path):
+        """All variables in the new dataset are added when all are disjoint."""
+        path = tmp_path / "h2ds.zarr"
+        _make_ds("2020-01-01", 5).to_zarr(path)
+
+        times = pd.date_range("2020-01-01", periods=5, freq="D")
+        rng = np.random.default_rng(99)
+        ds_new = xr.Dataset(
+            {
+                "thetao_100": (["time", "lat", "lon"], rng.uniform(0, 1, (5, 3, 3))),
+                "thetao_500": (["time", "lat", "lon"], rng.uniform(0, 1, (5, 3, 3))),
+            },
+            coords={"time": times, "lat": [30.0, 35.0, 40.0], "lon": [-10.0, -5.0, 0.0]},
+        )
+        _append_data("h2ds", ds_new, path)
+
+        ds = xr.open_zarr(path, consolidated=False)
+        assert "sst" in ds.data_vars
+        assert "thetao_100" in ds.data_vars
+        assert "thetao_500" in ds.data_vars
+        ds.close()

@@ -17,7 +17,7 @@ from loguru import logger
 
 from h2mare.config import AppConfig, settings
 from h2mare.downloader.commons import resolve_date_range
-from h2mare.storage.coverage import split_time_range
+from h2mare.storage.coverage import get_store_coverage, split_time_range
 from h2mare.storage.storage import write_append_zarr
 from h2mare.storage.xarray_helpers import chunk_dataset
 from h2mare.storage.zarr_catalog import ZarrCatalog
@@ -118,24 +118,44 @@ class Compiler:
         var_keys: Optional[list[str]] = None,
         dx: float = DX,
         dy: float = DY,
+        no_sync: bool = False,
     ) -> None:
         """
-        Main entry point for compilation process, i.e. create 'h2ds' zarr files.
+        Main entry point for the h2ds compilation process.
+
+        Date range inference (when start_date / end_date are not provided):
+
+        - **Incremental mode** — triggered when *var_keys* is ``None`` (all
+          variables).  The h2ds catalog end date is read and the range is set to
+          ``[h2ds_end + 1 day → today]``.  This is the normal pipeline-update
+          path: extend h2ds with the latest available data.
+
+        - **Backfill mode** — triggered when specific *var_keys* are supplied
+          (e.g. ``["thetao"]``).  The union of those source variables' catalog
+          ranges is used instead of the h2ds gap.  This handles adding a new
+          variable to an already-compiled historical h2ds dataset without
+          requiring explicit dates.
+
+        Explicit *start_date* / *end_date* always take priority and bypass both
+        inference modes.
 
         Args:
-            start_date (Optional[DateLike], optional): Start date to process. Defaults to None, inferring from store.
-            end_date (Optional[DateLike], optional): End date to process. Defaults to None, inferring from store.
-            var_keys (Optional[list[str]], optional): Lsit of var_keys to process. Defaults to None, processing all available var keys.
-            dx (float, optional): x cell size. Defaults to DX.
-            dy (float, optional): y cell size. Defaults to DY.
+            start_date: Start of the compilation window. If omitted, inferred
+                from the store (see above).
+            end_date: End of the compilation window. If omitted, inferred from
+                the store (see above).
+            var_keys: Variable keys to include. ``None`` compiles all configured
+                variables (incremental mode).
+            dx: Output grid cell width in degrees. Defaults to 0.25.
+            dy: Output grid cell height in degrees. Defaults to 0.25.
+            no_sync: Skip copying written zarr files to the local store. Defaults to False.
         """
         logger.info(
-            f"Initializing Zarr compilation fro variable key: {self.var_key.upper()}"
+            f"Initializing Zarr compilation for variable key: {self.var_key.upper()}"
         )
 
         start = normalize_date(start_date) if start_date else None
         end = normalize_date(end_date) if end_date else None
-        requested_range = resolve_date_range(self.var_key, start, end)
 
         self.var_keys = (
             [var_keys]
@@ -143,10 +163,13 @@ class Compiler:
             else var_keys or sorted(self.app_config.variables.keys())
         )
 
+        requested_range = self._resolve_compile_range(start, end, var_keys)
+
         self.base_grid = GridBuilder(self.bbox, dx, dy).generate_grid()
 
         logger.info(
-            f"Key variables to compile: {self.var_keys}, for period {start_date} -> {end_date}"
+            f"Key variables to compile: {self.var_keys}, "
+            f"for period {requested_range.start.date()} -> {requested_range.end.date()}"
         )
 
         # time chunks
@@ -197,10 +220,109 @@ class Compiler:
 
         self.catalog.refresh()
 
-        # Sync all written files to local store in one pass — avoids repeated
-        # large directory copies after each individual chunk
-        for path in written_paths:
-            self.sync_data(path)
+        if not no_sync:
+            # Sync all written files to local store in one pass — avoids repeated
+            # large directory copies after each individual chunk
+            for path in written_paths:
+                self.sync_data(path)
+
+    # =========== DATE RANGE RESOLUTION ===========
+    def _resolve_compile_range(
+        self,
+        start: Optional[pd.Timestamp],
+        end: Optional[pd.Timestamp],
+        var_keys: Optional[list[str]],
+    ) -> DateRange:
+        """
+        Resolve the compilation date range using one of two modes.
+
+        **Incremental mode** (``var_keys`` is ``None``):
+            Delegates to :func:`resolve_date_range` with ``var_key="h2ds"``, which
+            reads the h2ds catalog and returns ``[h2ds_end + 1 day → today]``.
+            Used for routine pipeline updates where all variables are compiled
+            together and only the latest missing period needs to be filled.
+
+        **Backfill mode** (specific ``var_keys`` supplied):
+            Collects the time coverage of each source variable's catalog and
+            returns ``[min(starts) → max(ends)]`` across all of them.  Used when
+            adding a new variable to an already-compiled historical h2ds dataset;
+            the inferred range covers exactly what those source variables have
+            available regardless of what h2ds already contains.
+
+        Explicit ``start`` / ``end`` timestamps short-circuit both modes and are
+        passed directly to :func:`resolve_date_range`.
+
+        Args:
+            start: Normalised start timestamp, or ``None`` to infer.
+            end: Normalised end timestamp, or ``None`` to infer.
+            var_keys: The raw ``var_keys`` argument received by :meth:`run`
+                before expansion.  ``None`` selects incremental mode; a list
+                (even a single-element one) selects backfill mode.
+
+        Returns:
+            Resolved :class:`DateRange`.
+
+        Raises:
+            ValueError: If backfill mode is selected but none of the requested
+                variables have data in the store.
+        """
+        # Explicit dates always win — standard resolver fills in missing halves
+        if start is not None or end is not None:
+            return resolve_date_range(self.var_key, start, end)
+
+        # Variables that have no independent zarr store and cannot contribute
+        # a date range (handled specially elsewhere in the compiler)
+        _no_store = {"h2ds", "bathy", "moon"}
+
+        # Normalise var_keys to a flat list, mirroring run()'s own normalisation
+        if var_keys is None:
+            explicit_keys: list[str] = []
+        elif isinstance(var_keys, str):
+            explicit_keys = [var_keys]
+        else:
+            explicit_keys = list(var_keys)
+
+        source_keys = [v for v in explicit_keys if v not in _no_store]
+
+        if not source_keys:
+            # No specific source variables requested → incremental mode
+            logger.debug(
+                "No specific var_keys supplied: using incremental h2ds date range "
+                "(h2ds end + 1 day → today)."
+            )
+            return resolve_date_range(self.var_key, start, end)
+
+        # Backfill mode: derive range from the source variables' own catalogs
+        ranges: list[DateRange] = []
+        missing: list[str] = []
+        for vkey in source_keys:
+            coverage = get_store_coverage(vkey)
+            if coverage is not None:
+                ranges.append(coverage)
+            else:
+                missing.append(vkey)
+
+        if missing:
+            logger.warning(
+                f"No catalog data found for {missing} — "
+                "excluded from date range inference."
+            )
+
+        if not ranges:
+            raise ValueError(
+                f"None of the requested variables {source_keys} have data in the "
+                "store. Provide explicit --start-date and --end-date."
+            )
+
+        inferred_start = min(r.start for r in ranges)
+        inferred_end = max(r.end for r in ranges)
+        inferred_range = DateRange(start=inferred_start, end=inferred_end)
+
+        logger.info(
+            f"Backfill mode: inferred date range from source variables {source_keys}: "
+            f"{inferred_start.date()} → {inferred_end.date()}"
+        )
+        return inferred_range
 
     # =========== DATASET ATTRIBUTES ===========
     def _set_attrs(self, ds: xr.Dataset) -> xr.Dataset:
@@ -244,6 +366,9 @@ class Compiler:
 
         if var_key == "o2":
             return self._process_o2(vk_catalog, date_range, depth_range)
+
+        if var_key == "thetao":
+            return self._process_thetao(vk_catalog, date_range)
 
         # General case
         try:
@@ -327,6 +452,33 @@ class Compiler:
         return xr.Dataset(
             {
                 f"o2_{target}": ds_interp.o2.isel(depth=i).drop_vars("depth")
+                for i, target in enumerate(depths)
+            }
+        )
+
+    def _process_thetao(
+        self, catalog: ZarrCatalog, date_range: DateRange, depths: list[float] = [100, 200, 500, 1000]
+    ) -> xr.Dataset | None:
+        """Create potential temperature variables for specified depth intervals"""
+        try:
+            ds = catalog.open_dataset(
+                start_date=date_range.start,
+                end_date=date_range.end,
+                bbox=self.bbox,
+                chunks={"depth": 1},
+            )
+        except FileNotFoundError:
+            logger.warning(
+                f"No data for thetao during {date_range.start.date()}–{date_range.end.date()} — skipping."
+            )
+            return None
+        ds_depths = ds.sel(depth=depths, method="nearest")
+        ds_interp = ds_depths.interp_like(
+            self.base_grid, method="linear", assume_sorted=True
+        )
+        return xr.Dataset(
+            {
+                f"thetao_{target}": ds_interp.thetao.isel(depth=i).drop_vars("depth")
                 for i, target in enumerate(depths)
             }
         )

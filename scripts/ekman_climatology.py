@@ -44,7 +44,7 @@ clim = ek_noleap.groupby("time.dayofyear").mean("time")
 clim_dir = settings.STORE_ROOT / "Climatology"
 clim_dir.mkdir(parents=True, exist_ok=True)
 
-file_path = clim_dir / "cds_ekman-doy-mean_80W-10E-0-70N_1998-2017.nc"
+file_path = clim_dir / "cds_ekman-doy-mean_80W-10E-0N-70N_1998-2017.nc"
 logger.info("Saving DOY mean climatology")
 clim.to_netcdf(file_path)
 logger.success(f"Saved: {file_path}")
@@ -58,7 +58,7 @@ p90_monthly = (
     ds["ekman_pumping_anom"].groupby("time.month").quantile(0.90, dim="time").compute()
 )
 
-file_path = clim_dir / "cds_ekman-montly-90thquantile_80W-10E-0-70N_1998-2017.nc"
+file_path = clim_dir / "cds_ekman-monthly-90thquantile_80W-10E-0N-70N_1998-2017.nc"
 logger.info("Saving monthly 90th percentile")
 p90_monthly.to_netcdf(file_path)
 logger.success(f"Saved: {file_path}")

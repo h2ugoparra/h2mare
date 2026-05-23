@@ -23,7 +23,7 @@ from h2mare.storage.xarray_helpers import chunk_dataset, rename_dims
 from h2mare.storage.zarr_catalog import ZarrCatalog
 from h2mare.types import TimeResolution
 from h2mare.utils.files_io import safe_move_files, safe_rmtree
-from h2mare.utils.paths import resolve_download_path, resolve_store_path
+from h2mare.utils.paths import resolve_download_path
 from h2mare.validators import validate_time_resolution, validate_var_key
 
 warnings.filterwarnings("ignore")
@@ -56,14 +56,13 @@ class Netcdf2Zarr:
         self.var_key = validate_var_key(var_key, self.app_config)
         self.var_config = self.app_config.variables[self.var_key]
 
-        self.store_root = resolve_store_path(self.var_config, store_root)
         self.download_root = resolve_download_path(self.var_config, download_root)
 
         self.time_resolution = validate_time_resolution(time_resolution)
         self.date_format: Literal["year", "date", "yearmonth"] = date_format
 
-        # Initialise parent class with the Repository index class
-        self.catalog = ZarrCatalog(self.var_key)
+        self.catalog = ZarrCatalog(self.var_key, store_root=store_root)
+        self.store_root = self.catalog.store_root
 
     def run(self) -> None:
 
@@ -329,7 +328,7 @@ class Netcdf2Zarr:
 
         try:
             ds = self.process_dataset(ds)
-            path = ZarrCatalog(self.var_key).build_file_path(ds, self.date_format)
+            path = self.catalog.build_file_path(ds, self.date_format)
             write_append_zarr(self.var_key, ds, path)
             try:
                 self._write_provenance(path, paths)
@@ -364,6 +363,7 @@ class Netcdf2Zarr:
             combine="by_coords",
             engine=engine,
             decode_timedelta=True,
+            chunks={"time": 1, "depth": 1},
             preprocess=(
                 preprocess if self.var_key in {"radiation", "atm-accum-avg"} else None
             ),

@@ -100,6 +100,77 @@ class TestConvert360To180:
         assert list(result["lon"].values) == [-10.0, 0.0, 10.0]
 
 
+class TestChunkDataset:
+
+    def test_2d_spatial_dims_stay_full_size(self):
+        """lat and lon are always kept at full size."""
+        ds = _make_ds(n_time=10, n_lat=50, n_lon=60)
+        result = chunk_dataset(ds, target_mb=32)
+        assert result.chunks["lat"] == (50,)
+        assert result.chunks["lon"] == (60,)
+
+    def test_converts_float64_to_float32(self):
+        """float64 variables are downcast to float32."""
+        ds = _make_ds(dtype=np.float64)
+        result = chunk_dataset(ds)
+        assert result["sst"].dtype == np.float32
+
+    def test_depth_chunked_to_1_when_payload_exceeds_target(self):
+        """depth is chunked to 1 when per-step payload exceeds target_mb."""
+        times = pd.date_range("2020-01-01", periods=10, freq="D")
+        # 5 × 300 × 300 × 4 bytes ≈ 1.7 MB > target_mb=1 → depth must chunk to 1
+        n_depth, n_lat, n_lon = 5, 300, 300
+        data = np.ones((10, n_depth, n_lat, n_lon), dtype=np.float32)
+        ds = xr.Dataset(
+            {"thetao": (["time", "depth", "lat", "lon"], data)},
+            coords={
+                "time": times,
+                "depth": np.arange(n_depth, dtype=np.float32),
+                "lat": np.linspace(0, 70, n_lat),
+                "lon": np.linspace(-80, 10, n_lon),
+            },
+        )
+        result = chunk_dataset(ds, target_mb=1)
+        assert result.chunks["depth"] == (1,) * n_depth
+
+    def test_depth_not_chunked_when_payload_under_target(self):
+        """depth stays at full size when the per-step payload is under target_mb."""
+        times = pd.date_range("2020-01-01", periods=10, freq="D")
+        # 3 × 10 × 10 × 4 bytes = 1 200 bytes ≪ 32 MB → depth must NOT chunk
+        n_depth = 3
+        data = np.ones((10, n_depth, 10, 10), dtype=np.float32)
+        ds = xr.Dataset(
+            {"o2": (["time", "depth", "lat", "lon"], data)},
+            coords={
+                "time": times,
+                "depth": np.arange(n_depth, dtype=np.float32),
+                "lat": np.arange(10, dtype=np.float32),
+                "lon": np.arange(10, dtype=np.float32),
+            },
+        )
+        result = chunk_dataset(ds, target_mb=32)
+        assert result.chunks["depth"] == (n_depth,)
+
+    def test_time_chunk_recomputed_after_depth_reduction(self):
+        """After depth is chunked to 1, time chunk should be larger than 1."""
+        times = pd.date_range("2020-01-01", periods=30, freq="D")
+        n_depth, n_lat, n_lon = 5, 300, 300
+        data = np.ones((30, n_depth, n_lat, n_lon), dtype=np.float32)
+        ds = xr.Dataset(
+            {"thetao": (["time", "depth", "lat", "lon"], data)},
+            coords={
+                "time": times,
+                "depth": np.arange(n_depth, dtype=np.float32),
+                "lat": np.linspace(0, 70, n_lat),
+                "lon": np.linspace(-80, 10, n_lon),
+            },
+        )
+        result = chunk_dataset(ds, target_mb=1)
+        # With depth=1, lat=300, lon=300: 1*300*300*4 = 360 000 bytes ≈ 0.34 MB
+        # time_chunk = floor(1 MB / 0.34 MB) = 2 → must be > 1
+        assert result.chunks["time"][0] > 1
+
+
 class TestRenameDims:
 
     def test_renames_longitude_latitude(self):
