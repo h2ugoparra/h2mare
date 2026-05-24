@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Literal, Optional, Union
 
 import plotly.graph_objects as go
 import polars as pl
+from loguru import logger
 
 from h2mare import settings
 from h2mare.storage.parquet_helpers import aggregate_by_space_time, aggregate_by_time
@@ -29,6 +30,23 @@ class ParquetPlotter:
     def __init__(self, indexer: ParquetIndexer) -> None:
         self._idx = indexer
         self._cache: dict = {}
+
+    def _snap_to_grid(self, point: tuple[float, float]) -> tuple[float, float, float, float]:
+        lon, lat = point
+        lon_col = self._idx.lon_col
+        lat_col = self._idx.lat_col
+        coords = (
+            self._idx.scan(columns=[lon_col, lat_col])
+            .select([lon_col, lat_col])
+            .unique()
+            .collect()
+        )
+        lons = coords[lon_col].unique()
+        lats = coords[lat_col].unique()
+        nearest_lon = float(lons[(lons - lon).abs().arg_min()])
+        nearest_lat = float(lats[(lats - lat).abs().arg_min()])
+        logger.debug(f"Point ({lon}, {lat}) snapped to grid cell ({nearest_lon}, {nearest_lat})")
+        return (nearest_lon, nearest_lat, nearest_lon, nearest_lat)
 
     def _agg_key(self, var_name, agg_by, dates, bbox) -> tuple:
         dates_key = tuple(dates) if isinstance(dates, list) else dates
@@ -68,7 +86,7 @@ class ParquetPlotter:
         agg_by: Literal["day", "week", "month", "season", "year"],
         *,
         dates: Optional[Union[list, tuple]] = None,
-        bbox: Optional[tuple[float, float, float, float]] = None,
+        bbox: Optional[tuple[float, float] | tuple[float, float, float, float]] = None,
     ) -> go.Figure:
         """
         Interactive time series line plot aggregated over space and time.
@@ -77,7 +95,8 @@ class ParquetPlotter:
             var_name: Variable name to plot.
             agg_by: Temporal aggregation granularity.
             dates: Discrete list of dates or (start, end) range. Defaults to full dataset.
-            bbox: Spatial subset (xmin, ymin, xmax, ymax). Defaults to full extent.
+            bbox: Spatial filter. Either a 4-tuple (xmin, ymin, xmax, ymax) for an extent
+                or a 2-tuple (lon, lat) to select the nearest grid cell. Defaults to full extent.
 
         Note:
             Seasonal values are assigned to the first month of the respective season
@@ -88,6 +107,9 @@ class ParquetPlotter:
         """
         if var_name not in self._idx.get_schema():
             raise ValueError(f"'{var_name}' not in parquet column names.")
+
+        if bbox is not None and len(bbox) == 2:
+            bbox = self._snap_to_grid(bbox)  # type: ignore[arg-type]
 
         lf = self._idx.scan(
             dates=dates, bbox=bbox, columns=[self._idx.time_col, var_name]
