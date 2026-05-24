@@ -827,7 +827,12 @@ class ParquetIndexer:
         all_files = list(self.parquet_root.rglob("*.parquet"))
         if len(all_files) == 1:
             return dict(pl.read_parquet_schema(all_files[0]))
-        return dict(pl.scan_parquet(all_files).collect_schema())
+        # One file per partition directory is enough — schema is uniform within a partition
+        rep_files = {f.parent: f for f in all_files}.values()
+        schema: dict = {}
+        for f in rep_files:
+            schema.update(pl.read_parquet_schema(f))
+        return schema
 
     def _prepare_df(self, df: pl.DataFrame) -> pl.DataFrame:
         """Add partition columns for Hive partitioning and downcast float64→float32."""
