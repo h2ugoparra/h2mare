@@ -192,8 +192,8 @@ def plot_panel(
 ):
     ax.set_extent(extent)
 
-    ax.add_feature(cfeature.COASTLINE)
-    ax.add_feature(cfeature.BORDERS, linestyle=":")
+    ax.add_feature(cfeature.COASTLINE, linewidth=0.4)
+    ax.add_feature(cfeature.BORDERS, linestyle=":", linewidth=0.4)
     ax.add_feature(cfeature.LAND, facecolor="lightgray", alpha=0.5)
     ax.add_feature(cfeature.OCEAN, facecolor="lightblue")
 
