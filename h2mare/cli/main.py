@@ -104,14 +104,33 @@ def run(
             "Implied automatically by --no-compile and --no-convert."
         ),
     ),
-    no_sync: bool = typer.Option(
+    no_backup: bool = typer.Option(
         False,
-        "--no-sync",
+        "--no-backup",
         is_flag=True,
-        help=(
-            "Skip all sync steps: compiled zarr files are not copied to the local "
-            "store, and Parquet output is not copied to the remote store."
-        ),
+        help="Skip both backup steps: zarr files are not copied to the local store and Parquet is not copied to the remote store.",
+    ),
+    no_zarr_backup: bool = typer.Option(
+        False,
+        "--no-zarr-backup",
+        is_flag=True,
+        help="Skip copying compiled zarr files to the local backup store.",
+    ),
+    no_parquet_backup: bool = typer.Option(
+        False,
+        "--no-parquet-backup",
+        is_flag=True,
+        help="Skip copying the Parquet output to the remote store.",
+    ),
+    zarr_backup_dir: Optional[Path] = typer.Option(
+        None,
+        "--zarr-backup-dir",
+        help="Override destination directory for the zarr backup.",
+    ),
+    parquet_backup_dir: Optional[Path] = typer.Option(
+        None,
+        "--parquet-backup-dir",
+        help="Override destination for the Parquet backup.",
     ),
 ) -> None:
     """Download and convert climate/ocean data for one or more variable keys."""
@@ -167,7 +186,10 @@ def run(
         no_convert=no_convert,
         no_compile=no_compile,
         no_parquet=no_parquet,
-        no_sync=no_sync,
+        no_zarr_backup=no_backup or no_zarr_backup,
+        no_parquet_backup=no_backup or no_parquet_backup,
+        zarr_backup_dir=zarr_backup_dir,
+        parquet_backup_dir=parquet_backup_dir,
     ).run(variables=selected)
 
 

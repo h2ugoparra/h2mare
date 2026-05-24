@@ -118,7 +118,8 @@ class Compiler:
         var_keys: Optional[list[str]] = None,
         dx: float = DX,
         dy: float = DY,
-        no_sync: bool = False,
+        no_zarr_backup: bool = False,
+        zarr_backup_dir: Optional[Path] = None,
     ) -> None:
         """
         Main entry point for the h2ds compilation process.
@@ -148,7 +149,8 @@ class Compiler:
                 variables (incremental mode).
             dx: Output grid cell width in degrees. Defaults to 0.25.
             dy: Output grid cell height in degrees. Defaults to 0.25.
-            no_sync: Skip copying written zarr files to the local store. Defaults to False.
+            no_zarr_backup: Skip copying written zarr files to the local store. Defaults to False.
+            zarr_backup_dir: Override destination for the zarr backup. Defaults to local_store_root.
         """
         logger.info(
             f"Initializing Zarr compilation for variable key: {self.var_key.upper()}"
@@ -220,11 +222,11 @@ class Compiler:
 
         self.catalog.refresh()
 
-        if not no_sync:
-            # Sync all written files to local store in one pass — avoids repeated
+        if not no_zarr_backup:
+            # Backup all written files to local store in one pass — avoids repeated
             # large directory copies after each individual chunk
             for path in written_paths:
-                self.sync_data(path)
+                self.sync_data(path, backup_dir=zarr_backup_dir)
 
     # =========== DATE RANGE RESOLUTION ===========
     def _resolve_compile_range(
@@ -498,14 +500,15 @@ class Compiler:
                 return False
         return False
 
-    def sync_data(self, remote_path: Path) -> None:
+    def sync_data(self, remote_path: Path, backup_dir: Optional[Path] = None) -> None:
         """
-        Syncronize data across devices (C: and D:) by copying
+        Copy a compiled zarr file to the local backup store.
 
         Args:
             remote_path: path built by the caller via ``ZarrCatalog.build_file_path()``
+            backup_dir: destination directory; defaults to ``local_store_root``.
         """
-        local_path = self.local_store_root / remote_path.name
+        local_path = (backup_dir or self.local_store_root) / remote_path.name
 
         logger.info(f"Copying {remote_path} to {local_path}")
 

@@ -54,11 +54,16 @@ def compile(
         "--store-path",
         help="Override the Zarr store root (defaults to STORE_ROOT from .env).",
     ),
-    no_sync: bool = typer.Option(
+    no_zarr_backup: bool = typer.Option(
         False,
-        "--no-sync",
+        "--no-zarr-backup",
         is_flag=True,
-        help="Skip copying compiled zarr files to the local store after writing.",
+        help="Skip copying compiled zarr files to the local backup store after writing.",
+    ),
+    zarr_backup_dir: Optional[Path] = typer.Option(
+        None,
+        "--zarr-backup-dir",
+        help="Override destination directory for the zarr backup (defaults to local_store_root from settings).",
     ),
 ) -> None:
     """Merge per-variable Zarr stores into the unified h2ds compiled dataset."""
@@ -99,7 +104,8 @@ def compile(
         start_date=start_date,
         end_date=end_date,
         var_keys=list(vars) if vars else None,
-        no_sync=no_sync,
+        no_zarr_backup=no_zarr_backup,
+        zarr_backup_dir=zarr_backup_dir,
     )
 
 

@@ -86,11 +86,16 @@ def parquet(
             "Required for depth-aware variables; ignored for surface-only ones."
         ),
     ),
-    no_sync: bool = typer.Option(
+    no_parquet_backup: bool = typer.Option(
         False,
-        "--no-sync",
+        "--no-parquet-backup",
         is_flag=True,
-        help="Skip copying the Parquet output to the remote store (STORE_ROOT/parquet).",
+        help="Skip copying the Parquet output to the remote store.",
+    ),
+    parquet_backup_dir: Optional[Path] = typer.Option(
+        None,
+        "--parquet-backup-dir",
+        help="Override destination for the Parquet backup (defaults to STORE_ROOT/parquet).",
     ),
 ) -> None:
     """Convert compiled Zarr stores to Hive-partitioned Parquet for one or more variable keys."""
@@ -145,8 +150,8 @@ def parquet(
                 store_root=store_path,
             )
             converter.run(start_date=start_date, end_date=end_date, depth=depth)
-            if not no_sync:
-                converter.sync_data()
+            if not no_parquet_backup:
+                converter.sync_data(remote_root=parquet_backup_dir)
         except ValueError as e:
             logger.error(f"Skipping '{key}': {e}")
             continue

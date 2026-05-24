@@ -43,6 +43,8 @@ Compiler().run(
     var_keys=None,
     dx=0.25,
     dy=0.25,
+    no_zarr_backup=False,
+    zarr_backup_dir=None,
 )
 ```
 
@@ -52,8 +54,10 @@ Compiler().run(
 | `end_date` | End of compilation period. Inferred from store if `None` |
 | `var_keys` | List of variable keys to include. Defaults to all keys in `config.yaml` |
 | `dx`, `dy` | Output grid resolution in degrees |
+| `no_zarr_backup` | Skip copying compiled Zarr files to the local backup store. Defaults to `False` |
+| `zarr_backup_dir` | Override backup destination. Defaults to `local_store_root` |
 
-The method splits the requested range into yearly (or monthly) chunks, processes each variable independently, merges the results with `xr.merge`, and writes via `write_append_zarr`. After all chunks are written the compiled files are synced to `local_store_root`.
+The method splits the requested range into yearly (or monthly) chunks, processes each variable independently, merges the results with `xr.merge`, and writes via `write_append_zarr`. After all chunks are written the compiled files are backed up to `local_store_root` (or `zarr_backup_dir` if provided).
 
 Variables with no data for a given chunk are skipped with a warning rather than raising an error.
 

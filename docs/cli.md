@@ -20,7 +20,13 @@ uv run h2mare run [OPTIONS]
 | `--store-path` | path | `STORE_ROOT` | Override the Zarr store root |
 | `--no-convert` | flag | false | Download raw files only; skip Zarr conversion and compile |
 | `--no-compile` | flag | false | Convert to Zarr but skip the h2ds compile step |
+| `--no-parquet` | flag | false | Skip the Zarr → Parquet conversion step |
 | `--dry-run` | flag | false | Plan tasks and log without downloading anything |
+| `--no-backup` | flag | false | Skip both backup steps (zarr local copy and Parquet remote copy) |
+| `--no-zarr-backup` | flag | false | Skip copying compiled Zarr files to the local backup store |
+| `--no-parquet-backup` | flag | false | Skip copying the Parquet output to the remote store |
+| `--zarr-backup-dir` | path | `local_store_root` | Override destination for the Zarr backup |
+| `--parquet-backup-dir` | path | `STORE_ROOT/parquet` | Override destination for the Parquet backup |
 
 When `--start-date` / `--end-date` are omitted the pipeline infers the missing date range from the existing store.
 
@@ -65,6 +71,8 @@ uv run h2mare compile [OPTIONS]
 | `--start-date` | YYYY-MM-DD | inferred | Start of date range |
 | `--end-date` | YYYY-MM-DD | inferred | End of date range |
 | `--store-path` | path | `STORE_ROOT` | Override the Zarr store root |
+| `--no-zarr-backup` | flag | false | Skip copying compiled Zarr files to the local backup store |
+| `--zarr-backup-dir` | path | `local_store_root` | Override destination for the Zarr backup |
 
 **Examples**
 
@@ -77,6 +85,9 @@ uv run h2mare compile -v sst -v ssh -v mld --start-date 2024-01-01 --end-date 20
 
 # Use a custom store path
 uv run h2mare compile --store-path D:/GlobalData
+
+# Compile without backing up to local store
+uv run h2mare compile --no-zarr-backup
 ```
 
 ---
@@ -102,6 +113,43 @@ uv run h2mare convert -v sst -v ssh
 
 # Convert from a custom input directory
 uv run h2mare convert -v sst --in-dir /data/raw/CMEMS_SST
+```
+
+---
+
+## `h2mare parquet`
+
+Convert compiled Zarr stores to Hive-partitioned Parquet.
+
+```
+uv run h2mare parquet [OPTIONS]
+```
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `-v, --vars` | text (repeatable) | `h2ds` | Variable key(s) to convert |
+| `--start-date` | YYYY-MM-DD | inferred | Start of date range |
+| `--end-date` | YYYY-MM-DD | inferred | End of date range |
+| `--out-dir` | path | `PARQUET_DIR` | Root directory for Parquet output |
+| `--store-path` | path | `STORE_ROOT` | Override the Zarr store root |
+| `--depth` | float | — | Depth level in metres for depth-aware variables (e.g. `thetao`, `o2`) |
+| `--no-parquet-backup` | flag | false | Skip copying the Parquet output to the remote store |
+| `--parquet-backup-dir` | path | `STORE_ROOT/parquet` | Override destination for the Parquet backup |
+
+**Examples**
+
+```bash
+# Convert the compiled h2ds store (dates inferred)
+uv run h2mare parquet
+
+# Convert a specific date range
+uv run h2mare parquet --start-date 1998-01-01 --end-date 1998-12-31
+
+# Convert without backing up to remote store
+uv run h2mare parquet --no-parquet-backup
+
+# Write to a custom output directory
+uv run h2mare parquet --out-dir D:/parquet_store
 ```
 
 ---

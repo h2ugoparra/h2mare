@@ -49,7 +49,7 @@ Raw files are opened with xarray, regridded to a daily time axis, and written (o
 **Class:** `Compiler` (`processing/compiler.py`)  
 **Output:** unified `h2ds` Zarr in `$STORE_ROOT/h2ds/`
 
-All per-variable Zarr stores are opened, interpolated to the common 0.25° × 0.25° daily grid defined in `config.yaml`, and merged into a single dataset. Variables without data for a given period are skipped gracefully. The compiled dataset is also synced to a local copy for fast access.
+All per-variable Zarr stores are opened, interpolated to the common 0.25° × 0.25° daily grid defined in `config.yaml`, and merged into a single dataset. Variables without data for a given period are skipped gracefully. The compiled dataset is also backed up to a local copy for fast access.
 
 Special variables handled outside the general path:
 

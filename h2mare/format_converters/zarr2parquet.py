@@ -140,7 +140,7 @@ class Zarr2Parquet:
         Copy the local Parquet store to a remote location.
 
         If *remote_root* is not provided, defaults to
-        ``settings.STORE_ROOT / "parquet" / var_key``.  The sync is silently
+        ``settings.STORE_ROOT / "parquet" / var_key``.  The backup is silently
         skipped when ``STORE_ROOT`` is not configured.
 
         Args:
@@ -150,19 +150,19 @@ class Zarr2Parquet:
         if remote_root is None:
             if settings.STORE_ROOT is None:
                 logger.warning(
-                    "STORE_ROOT is not set — skipping Parquet sync. "
+                    "STORE_ROOT is not set — skipping Parquet backup. "
                     "Set STORE_ROOT in .env or pass remote_root explicitly."
                 )
                 return
             remote_root = settings.STORE_ROOT / "parquet"
 
-        logger.info(f"Syncing Parquet: {self.parquet_root} → {remote_root}")
+        logger.info(f"Backing up Parquet: {self.parquet_root} → {remote_root}")
         try:
             shutil.copytree(str(self.parquet_root), str(remote_root), dirs_exist_ok=True)
         except (PermissionError, OSError) as e:
-            logger.exception(f"Parquet sync failed: {e}")
+            logger.exception(f"Parquet backup failed: {e}")
             return
-        logger.success("Parquet sync complete.")
+        logger.success("Parquet backup complete.")
 
     # -------------------------------------------------------------------------
     # Internal helpers

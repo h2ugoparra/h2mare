@@ -33,6 +33,21 @@ def _make_manager(cfg: AppConfig, tmp_path, **kwargs) -> PipelineManager:
 
 
 # ---------------------------------------------------------------------------
+# Module-level isolation: prevent any test from touching real Compiler or
+# Zarr2Parquet (both do disk I/O against the live data store).
+# Tests that need to inspect these mocks patch them again inside the test.
+# ---------------------------------------------------------------------------
+
+@pytest.fixture(autouse=True)
+def _patch_heavy_steps():
+    with (
+        patch("h2mare.processing.compiler.Compiler"),
+        patch("h2mare.format_converters.zarr2parquet.Zarr2Parquet"),
+    ):
+        yield
+
+
+# ---------------------------------------------------------------------------
 # Per-variable error isolation
 # ---------------------------------------------------------------------------
 
@@ -169,11 +184,10 @@ class TestParquetStep:
 
     def _run_with_mocks(self, tmp_path, **manager_kwargs):
         """Run the pipeline with Netcdf2Zarr, Compiler, and Zarr2Parquet all mocked."""
-        cfg = _make_config("sst")
+        cfg = _make_config("sst", "h2ds")
         manager, _ = _make_manager(cfg, tmp_path, **manager_kwargs)
         with (
             patch("h2mare.pipeline_manager.Netcdf2Zarr"),
-            patch("h2mare.processing.compiler.Compiler"),
             patch("h2mare.format_converters.zarr2parquet.Zarr2Parquet") as MockZ2P,
         ):
             manager.run()

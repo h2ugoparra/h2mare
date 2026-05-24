@@ -24,7 +24,10 @@ class PipelineManager:
         no_convert: bool = False,
         no_compile: bool = False,
         no_parquet: bool = False,
-        no_sync: bool = False,
+        no_zarr_backup: bool = False,
+        no_parquet_backup: bool = False,
+        zarr_backup_dir: Optional[Path] = None,
+        parquet_backup_dir: Optional[Path] = None,
     ):
 
         self.app_config = app_config
@@ -36,7 +39,10 @@ class PipelineManager:
         self.no_convert = no_convert
         self.no_compile = no_compile
         self.no_parquet = no_parquet
-        self.no_sync = no_sync
+        self.no_zarr_backup = no_zarr_backup
+        self.no_parquet_backup = no_parquet_backup
+        self.zarr_backup_dir = zarr_backup_dir
+        self.parquet_backup_dir = parquet_backup_dir
 
     def run(self, variables: Optional[List[str] | None] = None):
         if variables is None:
@@ -89,7 +95,8 @@ class PipelineManager:
                     start_date=self.start_date,
                     end_date=self.end_date,
                     var_keys=variables,
-                    no_sync=self.no_sync,
+                    no_zarr_backup=self.no_zarr_backup,
+                    zarr_backup_dir=self.zarr_backup_dir,
                 )
             except Exception as e:
                 logger.error(f"Compile step failed: {e}")
@@ -113,8 +120,8 @@ class PipelineManager:
                     start_date=self.start_date,
                     end_date=self.end_date,
                 )
-                if not self.no_sync:
-                    converter.sync_data()
+                if not self.no_parquet_backup:
+                    converter.sync_data(remote_root=self.parquet_backup_dir)
             except Exception as e:
                 logger.error(f"Parquet conversion step failed: {e}")
 
