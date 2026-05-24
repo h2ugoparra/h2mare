@@ -20,6 +20,13 @@ from h2mare.storage.parquet_helpers import _required_columns
 from h2mare.types import BBox
 
 
+# Trial-verified (nrows, ncols) → figsize for 12-panel monthly maps
+_MONTHLY_FIGSIZES: dict[tuple[int, int], tuple[float, float]] = {
+    (6, 2): (5, 10),
+    (4, 3): (7, 5),
+    (3, 4): (7, 7),
+}
+
 # --------------------------------
 #       PARQUET
 # --------------------------------
@@ -34,6 +41,7 @@ def plot_maps(
     vminmax: Optional[tuple[int | float, int | float]] = None,
     data_bbox: Optional[tuple[float, float, float, float]] = None,
     map_bbox: Optional[tuple[float, float, float, float]] = None,
+    grid_shape: Optional[tuple[int, int]] = None,
     main_title: Optional[str] = None,
     legend_title: Optional[str] = None,
     save_path: Optional[str | Path] = None,
@@ -56,6 +64,8 @@ def plot_maps(
         map_bbox (tuple[float, float, float, float], optional): Map display extent
             (xmin, ymin, xmax, ymax). Controls the visible region on each panel.
             Defaults to None, falling back to *data_bbox* or the inferred data extent.
+        grid_shape (tuple[int, int], optional): ``(nrows, ncols)`` grid grid_shape passed to
+            ``make_axes``. Defaults to None (auto).
         main_title (str, optional): Plot main title. Defaults to None.
         legend_title (str, optional): Legend title. Defaults to None; falls back to
             ``short_name`` in config.yaml, then to ``var_name``.
@@ -118,7 +128,7 @@ def plot_maps(
 
     groups = split_by_group(df, agg_by)
 
-    fig, axes = make_axes(len(groups))
+    fig, axes = make_axes(len(groups), grid_shape=grid_shape)
 
     if main_title:
         fig.suptitle(main_title, fontsize=12, fontweight="bold")
@@ -201,19 +211,24 @@ def plot_panel(
     return mesh
 
 
-def make_axes(n_panels: int):
+def make_axes(n_panels: int, grid_shape: Optional[tuple[int, int]] = None):
     """
-    Define subplots layout according to n_panels
-        - 4x4 (seasonal), 6x2 (monthly)
-        - Ideal size for monthly (12 panels) layout: (ncols, nrows) -> figsize():
-            - (4, 3) -> (7, 7)
-            - (3, 4) -> (7, 5)
-            - (2, 6) -> (5, 10)
+    Define subplots grid_shape according to n_panels.
+
+    Default grid_shapes: (nrows=6, ncols=2) for 12 panels (monthly),
+    (nrows=2, ncols=2) for 4 panels (seasonal).
 
     Args:
-        n_panels (int): Number of panels
+        n_panels (int): Number of panels.
+        grid_shape (tuple[int, int], optional): ``(nrows, ncols)`` override. For
+            12-panel monthly maps the known-good figsizes are ``(6, 2) → (5, 10)``,
+            ``(4, 3) → (7, 5)``, ``(3, 4) → (7, 7)``; other combinations fall back
+            to a formula. Defaults to None (auto).
     """
-    if n_panels == 12:
+    if grid_shape is not None:
+        nrows, ncols = grid_shape
+        figsize = _MONTHLY_FIGSIZES.get((nrows, ncols), (ncols * 3.5, nrows * 2.5))
+    elif n_panels == 12:
         nrows, ncols = 6, 2
         figsize = (5, 10)
     elif n_panels == 4:
@@ -228,7 +243,7 @@ def make_axes(n_panels: int):
         nrows,
         ncols,
         figsize=figsize,
-        constrained_layout=True,
+        constrained_grid_shape=True,
         squeeze=False,
         subplot_kw={"projection": ccrs.PlateCarree()},
     )

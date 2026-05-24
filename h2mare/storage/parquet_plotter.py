@@ -154,7 +154,7 @@ class ParquetPlotter:
                 name=var_name,
             )
         )
-        fig.update_layout(
+        fig.update_grid_shape(
             title=long_name,
             xaxis_title="Time",
             yaxis_title="Value",
@@ -174,6 +174,7 @@ class ParquetPlotter:
         dates: Optional[Union[list, tuple]] = None,
         data_bbox: Optional[tuple[float, float, float, float]] = None,
         map_bbox: Optional[tuple[float, float, float, float]] = None,
+        grid_shape: Optional[tuple[int, int]] = None,
         vminmax: Optional[tuple[float, float]] = None,
         main_title: Optional[str] = None,
         legend_title: Optional[str] = None,
@@ -197,6 +198,10 @@ class ParquetPlotter:
                 before aggregation. Defaults to full dataset extent.
             map_bbox: Map display bounds (xmin, ymin, xmax, ymax). Controls the visible
                 region on each panel. Defaults to the extent of the loaded data.
+            grid_shape: Grid grid_shape as ``(nrows, ncols)``. For monthly 12-panel maps the
+                known-good options are ``(6, 2)`` (default), ``(4, 3)``, and ``(3, 4)``.
+                For seasonal 4-panel maps the default is ``(2, 2)``. Defaults to None
+                (auto-selected based on number of panels).
             vminmax: Fixed (vmin, vmax) for the colorbar. Defaults to data range.
             main_title: Figure title. Defaults to None.
             legend_title: Colorbar label. Defaults to the variable short name from config.
@@ -219,6 +224,7 @@ class ParquetPlotter:
             vminmax=vminmax,
             data_bbox=data_bbox,
             map_bbox=map_bbox,
+            grid_shape=grid_shape,
             main_title=main_title,
             legend_title=legend_title,
             save_path=save_path,
