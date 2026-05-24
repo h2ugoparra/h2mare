@@ -142,7 +142,7 @@ def _append_data(var_key: str, ds_new: xr.Dataset, path: Path) -> None:
 
     # Backup-swap: keep original until new file is confirmed in place
     backup_path = path.with_name(path.name + ".bak")
-    logger.debug(f"Swapping {path} → backup, then {tmp_path} → {path}")
+    logger.debug(f"Atomic swap: {path.name}")
     shutil.move(str(path), str(backup_path))
     try:
         shutil.move(str(tmp_path), str(path))
