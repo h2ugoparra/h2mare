@@ -39,6 +39,7 @@ def plot_maps(
     data_bbox: Optional[tuple[float, float, float, float]] = None,
     map_bbox: Optional[tuple[float, float, float, float]] = None,
     grid_shape: Optional[tuple[int, int]] = None,
+    cmap: str = "turbo",
     main_title: Optional[str] = None,
     legend_title: Optional[str] = None,
     save_path: Optional[str | Path] = None,
@@ -150,6 +151,7 @@ def plot_maps(
             extent=(map_xmin, map_xmax, map_ymin, map_ymax),
             vmin=vmin,
             vmax=vmax,
+            cmap=cmap,
         )
 
         meshes.append(mesh)

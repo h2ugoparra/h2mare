@@ -176,6 +176,7 @@ class ParquetPlotter:
         map_bbox: Optional[tuple[float, float, float, float]] = None,
         grid_shape: Optional[tuple[int, int]] = None,
         vminmax: Optional[tuple[float, float]] = None,
+        cmap: str = "turbo",
         main_title: Optional[str] = None,
         legend_title: Optional[str] = None,
         save_path=None,
@@ -202,6 +203,7 @@ class ParquetPlotter:
                 monthly and ``(2, 2)`` for seasonal maps. Figsize is derived automatically
                 from the map extent so there are no blank spaces between rows.
             vminmax: Fixed (vmin, vmax) for the colorbar. Defaults to data range.
+            cmap: Matplotlib colormap name. Defaults to 'turbo'.
             main_title: Figure title. Defaults to None.
             legend_title: Colorbar label. Defaults to the variable short name from config.
             save_path: Path to save the figure. If None, the plot is shown interactively.
@@ -221,6 +223,7 @@ class ParquetPlotter:
             lon_col=lon_col,
             lat_col=lat_col,
             vminmax=vminmax,
+            cmap=cmap,
             data_bbox=data_bbox,
             map_bbox=map_bbox,
             grid_shape=grid_shape,
