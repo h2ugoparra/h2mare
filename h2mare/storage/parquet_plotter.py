@@ -154,7 +154,7 @@ class ParquetPlotter:
                 name=var_name,
             )
         )
-        fig.update_grid_shape(
+        fig.update_layout(
             title=long_name,
             xaxis_title="Time",
             yaxis_title="Value",
@@ -198,10 +198,9 @@ class ParquetPlotter:
                 before aggregation. Defaults to full dataset extent.
             map_bbox: Map display bounds (xmin, ymin, xmax, ymax). Controls the visible
                 region on each panel. Defaults to the extent of the loaded data.
-            grid_shape: Grid grid_shape as ``(nrows, ncols)``. For monthly 12-panel maps the
-                known-good options are ``(6, 2)`` (default), ``(4, 3)``, and ``(3, 4)``.
-                For seasonal 4-panel maps the default is ``(2, 2)``. Defaults to None
-                (auto-selected based on number of panels).
+            grid_shape: Grid layout as ``(nrows, ncols)``. Defaults to ``(6, 2)`` for
+                monthly and ``(2, 2)`` for seasonal maps. Figsize is derived automatically
+                from the map extent so there are no blank spaces between rows.
             vminmax: Fixed (vmin, vmax) for the colorbar. Defaults to data range.
             main_title: Figure title. Defaults to None.
             legend_title: Colorbar label. Defaults to the variable short name from config.

@@ -20,12 +20,9 @@ from h2mare.storage.parquet_helpers import _required_columns
 from h2mare.types import BBox
 
 
-# Trial-verified (nrows, ncols) → figsize for 12-panel monthly maps
-_MONTHLY_FIGSIZES: dict[tuple[int, int], tuple[float, float]] = {
-    (6, 2): (5, 10),
-    (4, 3): (7, 5),
-    (3, 4): (7, 7),
-}
+_PANEL_WIDTH = 3.0  # inches per panel column
+_WSPACE = -0.15     # fractional horizontal gap between panels
+_HSPACE = 0.20      # fractional vertical gap between panels (must fit panel titles)
 
 # --------------------------------
 #       PARQUET
@@ -64,7 +61,7 @@ def plot_maps(
         map_bbox (tuple[float, float, float, float], optional): Map display extent
             (xmin, ymin, xmax, ymax). Controls the visible region on each panel.
             Defaults to None, falling back to *data_bbox* or the inferred data extent.
-        grid_shape (tuple[int, int], optional): ``(nrows, ncols)`` grid grid_shape passed to
+        grid_shape (tuple[int, int], optional): ``(nrows, ncols)`` grid layout passed to
             ``make_axes``. Defaults to None (auto).
         main_title (str, optional): Plot main title. Defaults to None.
         legend_title (str, optional): Legend title. Defaults to None; falls back to
@@ -128,7 +125,11 @@ def plot_maps(
 
     groups = split_by_group(df, agg_by)
 
-    fig, axes = make_axes(len(groups), grid_shape=grid_shape)
+    fig, axes = make_axes(
+        len(groups),
+        grid_shape=grid_shape,
+        map_extent=(map_xmin, map_xmax, map_ymin, map_ymax),
+    )
 
     if main_title:
         fig.suptitle(main_title, fontsize=12, fontweight="bold")
@@ -211,40 +212,53 @@ def plot_panel(
     return mesh
 
 
-def make_axes(n_panels: int, grid_shape: Optional[tuple[int, int]] = None):
+def make_axes(
+    n_panels: int,
+    grid_shape: Optional[tuple[int, int]] = None,
+    map_extent: Optional[tuple[float, float, float, float]] = None,
+):
     """
-    Define subplots grid_shape according to n_panels.
+    Define subplots layout according to n_panels.
 
-    Default grid_shapes: (nrows=6, ncols=2) for 12 panels (monthly),
-    (nrows=2, ncols=2) for 4 panels (seasonal).
+    Default layouts: (nrows=6, ncols=2) for 12 panels, (nrows=2, ncols=2) for 4 panels.
+    When map_extent is provided the figsize is derived from the panel aspect ratio so
+    there are no blank spaces between rows.
 
     Args:
         n_panels (int): Number of panels.
-        grid_shape (tuple[int, int], optional): ``(nrows, ncols)`` override. For
-            12-panel monthly maps the known-good figsizes are ``(6, 2) → (5, 10)``,
-            ``(4, 3) → (7, 5)``, ``(3, 4) → (7, 7)``; other combinations fall back
-            to a formula. Defaults to None (auto).
+        grid_shape (tuple[int, int], optional): ``(nrows, ncols)`` override. Defaults to None (auto).
+        map_extent (tuple[float, float, float, float], optional): ``(xmin, xmax, ymin, ymax)``
+            used to compute the panel aspect ratio. Defaults to None (formula fallback).
     """
     if grid_shape is not None:
         nrows, ncols = grid_shape
-        figsize = _MONTHLY_FIGSIZES.get((nrows, ncols), (ncols * 3.5, nrows * 2.5))
     elif n_panels == 12:
         nrows, ncols = 6, 2
-        figsize = (5, 10)
     elif n_panels == 4:
         nrows, ncols = 2, 2
-        figsize = (7, 5)
     else:
         ncols = math.ceil(math.sqrt(n_panels))
         nrows = math.ceil(n_panels / ncols)
+
+    if map_extent is not None:
+        xmin, xmax, ymin, ymax = map_extent
+        panel_aspect = (xmax - xmin) / (ymax - ymin)
+        panel_h = _PANEL_WIDTH / panel_aspect
+        # Inflate figsize so that after wspace/hspace are removed each cell is
+        # exactly _PANEL_WIDTH × panel_h, keeping GeoAxes aspect ratio filled.
+        figsize = (
+            _PANEL_WIDTH * (ncols + _WSPACE * (ncols - 1)),
+            panel_h * (nrows + _HSPACE * (nrows - 1)),
+        )
+    else:
         figsize = (ncols * 3.5, nrows * 2.5)
 
     fig, axes = plt.subplots(
         nrows,
         ncols,
         figsize=figsize,
-        constrained_grid_shape=True,
         squeeze=False,
+        gridspec_kw={"wspace": _WSPACE, "hspace": _HSPACE},
         subplot_kw={"projection": ccrs.PlateCarree()},
     )
 
