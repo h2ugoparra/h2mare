@@ -98,7 +98,11 @@ class ParquetPlotter:
         Args:
             var_name: Variable name to plot.
             agg_by: Temporal aggregation granularity.
-            dates: Discrete list of dates or (start, end) range. Defaults to full dataset.
+            dates: Temporal filter. Pass a ``(start, end)`` tuple for a contiguous
+                range (e.g. ``("2010-01-01", "2020-12-31")``) or a ``list`` of
+                discrete dates (e.g. ``["2010-06-01", "2015-06-01"]``). A 2-element
+                tuple is always treated as a range, not two discrete dates.
+                Defaults to the full dataset.
             bbox: Spatial filter. Either a 4-tuple (xmin, ymin, xmax, ymax) for an extent
                 or a 2-tuple (lon, lat) to select the nearest grid cell. Defaults to full extent.
 
@@ -184,7 +188,11 @@ class ParquetPlotter:
         Args:
             var_name: Variable name to plot.
             agg_by: 'month' for 12 panels, 'season' for 4 panels. Defaults to 'month'.
-            dates: Date range or list for filtering. Defaults to full dataset.
+            dates: Temporal filter. Pass a ``(start, end)`` tuple for a contiguous
+                range (e.g. ``("2010-01-01", "2020-12-31")``) or a ``list`` of
+                discrete dates (e.g. ``["2010-06-01", "2015-06-01"]``). A 2-element
+                tuple is always treated as a range, not two discrete dates.
+                Defaults to the full dataset.
             data_bbox: Spatial data filter (xmin, ymin, xmax, ymax). Subsets the parquet data
                 before aggregation. Defaults to full dataset extent.
             map_bbox: Map display bounds (xmin, ymin, xmax, ymax). Controls the visible
