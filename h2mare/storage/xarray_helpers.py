@@ -147,11 +147,13 @@ def have_vars_unique_values(ds: Path | xr.Dataset) -> bool:
         for var in ds.data_vars:
             if "time" not in ds[var].dims:
                 continue
-            values_last_time = ds[var].isel(time=-1).values
-            uniq = np.unique(values_last_time)
+            last_slice = ds[var].isel(time=-1)
+            uniq = np.unique(last_slice.values)
             if len(uniq) == 1:
+                t = str(last_slice.time.values)[:10]
                 logger.warning(
-                    f"{var} has unique values in file {ds.encoding.get('source', 'unknown')}"
+                    f"{var} has a single unique value ({uniq[0]:.4g}) at time={t} "
+                    f"in {ds.encoding.get('source', 'unknown')}"
                 )
                 unique_found = True
     finally:

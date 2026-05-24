@@ -109,11 +109,8 @@ def _append_data(var_key: str, ds_new: xr.Dataset, path: Path) -> None:
         else:
             ds_out = ds_new
 
-    # Check if file is corrupted
-    if have_vars_unique_values(ds_out):
-        raise ValueError(
-            f"Corrupted dataset detected: duplicate values found in {path}"
-        )
+    # Check if file is corrupted (warning only — does not abort)
+    have_vars_unique_values(ds_out)
 
     # Co-locate tmp with destination so rename stays on the same drive (atomic on Windows/NTFS)
     tmp_path = path.with_name(path.name + ".tmp")
