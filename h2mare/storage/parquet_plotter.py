@@ -30,19 +30,23 @@ class ParquetPlotter:
     def __init__(self, indexer: ParquetIndexer) -> None:
         self._idx = indexer
         self._cache: dict = {}
+        self._grid_coords: pl.DataFrame | None = None
 
     def _snap_to_grid(self, point: tuple[float, float]) -> tuple[float, float, float, float]:
         lon, lat = point
         lon_col = self._idx.lon_col
         lat_col = self._idx.lat_col
-        coords = (
-            self._idx.scan(columns=[lon_col, lat_col])
-            .select([lon_col, lat_col])
-            .unique()
-            .collect()
-        )
-        lons = coords[lon_col].unique()
-        lats = coords[lat_col].unique()
+        if self._grid_coords is None:
+            # Every partition shares the same spatial grid — one file is enough
+            first_file = self._idx._resolve_files(None)[0]
+            self._grid_coords = (
+                pl.scan_parquet(first_file)
+                .select([lon_col, lat_col])
+                .unique()
+                .collect()
+            )
+        lons = self._grid_coords[lon_col].unique()
+        lats = self._grid_coords[lat_col].unique()
         nearest_lon = float(lons[(lons - lon).abs().arg_min()])
         nearest_lat = float(lats[(lats - lat).abs().arg_min()])
         logger.debug(f"Point ({lon}, {lat}) snapped to grid cell ({nearest_lon}, {nearest_lat})")
