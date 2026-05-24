@@ -29,3 +29,6 @@ site/
 
 # Jupyter Notebook
 *.ipynb_checkpoints
+
+# Scripts (work in progress)
+scripts/masked_spatial_maps.py
