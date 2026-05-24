@@ -229,6 +229,7 @@ def make_axes(n_panels: int):
         ncols,
         figsize=figsize,
         constrained_layout=True,
+        squeeze=False,
         subplot_kw={"projection": ccrs.PlateCarree()},
     )
 
