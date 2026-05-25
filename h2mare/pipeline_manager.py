@@ -44,9 +44,12 @@ class PipelineManager:
         self.zarr_backup_dir = zarr_backup_dir
         self.parquet_backup_dir = parquet_backup_dir
 
-    def run(self, variables: Optional[List[str] | None] = None):
+    def run(self, variables: Optional[List[str] | None] = None) -> bool:
+        """Run the full pipeline. Returns True if all steps succeeded, False if any failed."""
         if variables is None:
             variables = list(self.app_config.variables.keys())
+
+        _failed = False
 
         for var_key in variables:
             if var_key in SYSTEM_VAR_KEYS:
@@ -55,11 +58,13 @@ class PipelineManager:
             var_config = self.app_config.variables.get(var_key)
             if not var_config:
                 logger.warning(f"⚠️ Variable '{var_key}' not found in config. Skipping.")
+                _failed = True
                 continue
 
             DownloaderClass = self.registry.get(var_config.source)
             if not DownloaderClass:
                 logger.error(f"❌ Downloader {var_config.source} not found.")
+                _failed = True
                 continue
 
             downloader = DownloaderClass(
@@ -76,6 +81,7 @@ class PipelineManager:
                 )
             except Exception as e:
                 logger.error(f"Download failed for '{var_key}': {e}")
+                _failed = True
                 continue
 
             if self.no_convert or self.dry_run or not downloaded:
@@ -85,6 +91,7 @@ class PipelineManager:
                 Netcdf2Zarr(var_key).run()
             except Exception as e:
                 logger.error(f"Processing failed for '{var_key}': {e}")
+                _failed = True
 
         if not self.no_compile and not self.no_convert and not self.dry_run:
             from h2mare.processing.compiler import Compiler
@@ -100,6 +107,7 @@ class PipelineManager:
                 )
             except Exception as e:
                 logger.error(f"Compile step failed: {e}")
+                _failed = True
 
         _skip_parquet = (
             self.no_parquet or self.no_compile or self.no_convert or self.dry_run
@@ -124,8 +132,10 @@ class PipelineManager:
                     converter.sync_data(remote_root=self.parquet_backup_dir)
             except Exception as e:
                 logger.error(f"Parquet conversion step failed: {e}")
+                _failed = True
 
         self._cleanup_empty_download_dirs(variables)
+        return not _failed
 
     def _cleanup_empty_download_dirs(self, variables: List[str]) -> None:
         """Remove per-variable download subdirectories that are empty after the pipeline run."""

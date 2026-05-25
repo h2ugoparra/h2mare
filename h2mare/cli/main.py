@@ -176,7 +176,7 @@ def run(
         )
         raise typer.Exit(code=1)
 
-    PipelineManager(
+    success = PipelineManager(
         app_config=get_settings().app_config,
         registry=DOWNLOADER_REGISTRY,
         store_root=store_root,
@@ -191,6 +191,8 @@ def run(
         zarr_backup_dir=zarr_backup_dir,
         parquet_backup_dir=parquet_backup_dir,
     ).run(variables=selected)
+    if not success:
+        raise typer.Exit(code=1)
 
 
 app.command()(run)
