@@ -29,7 +29,8 @@ from h2mare.validators import validate_time_resolution, validate_var_key
 
 warnings.filterwarnings("ignore", category=RuntimeWarning)
 
-# GRID CELL SIZE FOR PROCESSED DATA (IN DEGREES)
+# Output grid resolution in degrees — matches the standard CMEMS/Copernicus
+# 0.25° daily grid used across all compiled h2ds variables.
 DX = 0.25
 DY = 0.25
 
