@@ -16,6 +16,7 @@ import xarray as xr
 from loguru import logger
 
 from h2mare.config import AppConfig, get_settings
+from h2mare.models import SYSTEM_VAR_KEYS
 from h2mare.downloader.commons import resolve_date_range
 from h2mare.storage.coverage import get_store_coverage, split_time_range
 from h2mare.storage.storage import write_append_zarr
@@ -274,7 +275,7 @@ class Compiler:
 
         # Variables that have no independent zarr store and cannot contribute
         # a date range (handled specially elsewhere in the compiler)
-        _no_store = {"h2ds", "bathy", "moon"}
+        _no_store = SYSTEM_VAR_KEYS
 
         # Normalise var_keys to a flat list, mirroring run()'s own normalisation
         if var_keys is None:
@@ -355,7 +356,7 @@ class Compiler:
             depth_range: For 'o2' var_key with depth dim
         """
 
-        if var_key not in {"bathy", "moon"}:
+        if var_key not in SYSTEM_VAR_KEYS:
             vk_catalog = ZarrCatalog(var_key)
             if not self._has_overlap(var_key, date_range, vk_catalog):
                 return None

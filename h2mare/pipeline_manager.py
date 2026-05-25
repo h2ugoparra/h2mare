@@ -8,7 +8,7 @@ from typing import List, Optional, Type, Union
 import pandas as pd
 from loguru import logger
 
-from h2mare import AppConfig, get_settings
+from h2mare import AppConfig, SYSTEM_VAR_KEYS, get_settings
 from h2mare.format_converters.netcdf2zarr import Netcdf2Zarr
 
 
@@ -49,7 +49,7 @@ class PipelineManager:
             variables = list(self.app_config.variables.keys())
 
         for var_key in variables:
-            if var_key in ["h2ds", "bathy", "moon"]:
+            if var_key in SYSTEM_VAR_KEYS:
                 continue
 
             var_config = self.app_config.variables.get(var_key)

@@ -50,6 +50,11 @@ class SecretsConfig(msgspec.Struct):
 # VariablesConfig is now a plain dict — kept as a type alias for compatibility
 VariablesConfig = dict[str, KeyVarConfigEntry]
 
+# Variables that are derived/computed inside the pipeline and never downloaded
+# from an external source. Excluded from download loops and catalog date-range
+# inference; each has its own dedicated processing path in the Compiler.
+SYSTEM_VAR_KEYS: frozenset[str] = frozenset({"h2ds", "bathy", "moon"})
+
 
 class AppConfig(msgspec.Struct):
     """Complete application configuration."""
