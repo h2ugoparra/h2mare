@@ -1,4 +1,5 @@
 """Tests for processing/core/cds.py pure transformation functions."""
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -21,6 +22,7 @@ from h2mare.processing.core.cds import (
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _hourly_ds(n_days: int = 3, **data_vars) -> xr.Dataset:
     """Minimal hourly dataset (time × lat × lon)."""
@@ -49,8 +51,8 @@ def _rad_da(values: list[float], name: str = "ssrd") -> xr.DataArray:
 # _get_ds_for_month
 # ---------------------------------------------------------------------------
 
-class TestGetDsForMonth:
 
+class TestGetDsForMonth:
     def test_returns_dominant_month_only(self):
         # 17 Jan days + 10 Feb days → January is dominant
         times = pd.date_range("2020-01-15", periods=27, freq="D")
@@ -68,8 +70,8 @@ class TestGetDsForMonth:
 # drop_dims
 # ---------------------------------------------------------------------------
 
-class TestDropDims:
 
+class TestDropDims:
     def test_removes_listed_variables(self):
         ds = xr.Dataset({"a": 1.0, "b": 2.0, "c": 3.0})
         result = drop_dims(ds, dims_to_drop=["a", "b"])
@@ -86,8 +88,8 @@ class TestDropDims:
 # resample_daily_mean
 # ---------------------------------------------------------------------------
 
-class TestResampleDailyMean:
 
+class TestResampleDailyMean:
     def test_collapses_24_steps_to_one_day(self):
         times = pd.date_range("2020-01-01", periods=48, freq="h")
         ds = xr.Dataset({"x": ("time", np.ones(48))}, coords={"time": times})
@@ -95,7 +97,9 @@ class TestResampleDailyMean:
 
     def test_mean_value_is_correct(self):
         times = pd.date_range("2020-01-01", periods=24, freq="h")
-        ds = xr.Dataset({"x": ("time", np.arange(24, dtype=float))}, coords={"time": times})
+        ds = xr.Dataset(
+            {"x": ("time", np.arange(24, dtype=float))}, coords={"time": times}
+        )
         np.testing.assert_allclose(resample_daily_mean(ds)["x"].values, [11.5])
 
 
@@ -103,8 +107,8 @@ class TestResampleDailyMean:
 # daily_wind
 # ---------------------------------------------------------------------------
 
-class TestDailyWind:
 
+class TestDailyWind:
     def test_all_output_variables_present(self):
         ds = _hourly_ds(2, u10=np.ones((48, 2, 2)), v10=np.ones((48, 2, 2)))
         result = daily_wind(ds)
@@ -129,8 +133,8 @@ class TestDailyWind:
 # daily_cloud_cover
 # ---------------------------------------------------------------------------
 
-class TestDailyCloudCover:
 
+class TestDailyCloudCover:
     def test_daily_resolution(self):
         ds = _hourly_ds(3, tcc=np.ones((72, 2, 2)) * 0.5)
         assert len(daily_cloud_cover(ds).time) == 3
@@ -148,15 +152,17 @@ class TestDailyCloudCover:
 # daily_sea_level_pressure
 # ---------------------------------------------------------------------------
 
-class TestDailySeaLevelPressure:
 
+class TestDailySeaLevelPressure:
     def test_pa_to_hpa_conversion(self):
         times = pd.date_range("2020-01-01", periods=24, freq="h")
         ds = xr.Dataset(
             {"msl": (["time", "lat", "lon"], np.full((24, 2, 2), 101325.0))},
             coords={"time": times, "lat": [30.0, 35.0], "lon": [-10.0, -5.0]},
         )
-        np.testing.assert_allclose(daily_sea_level_pressure(ds)["msl"].values, 1013.25, rtol=1e-5)
+        np.testing.assert_allclose(
+            daily_sea_level_pressure(ds)["msl"].values, 1013.25, rtol=1e-5
+        )
 
     def test_units_attribute_set_to_hpa(self):
         times = pd.date_range("2020-01-01", periods=24, freq="h")
@@ -171,8 +177,8 @@ class TestDailySeaLevelPressure:
 # hourly_radiation
 # ---------------------------------------------------------------------------
 
-class TestHourlyRadiation:
 
+class TestHourlyRadiation:
     def test_accumulated_to_watt_rate(self):
         # 3600 J/m² per hour → 1 W/m²
         da = _rad_da([0.0, 3600.0, 7200.0, 10800.0])
@@ -196,8 +202,8 @@ class TestHourlyRadiation:
 # daily_total_rain
 # ---------------------------------------------------------------------------
 
-class TestDailyTotalRain:
 
+class TestDailyTotalRain:
     def test_m_to_mm_and_daily_sum(self):
         # 0.001 m/h × 24 h = 24 mm/day
         times = pd.date_range("2020-01-01", periods=24, freq="h")
@@ -220,8 +226,8 @@ class TestDailyTotalRain:
 # direction_to_uv
 # ---------------------------------------------------------------------------
 
-class TestDirectionToUv:
 
+class TestDirectionToUv:
     def test_east_zero_degrees(self):
         # 0° → u=cos(0)=1, v=sin(0)=0
         da = xr.DataArray([0.0], dims=["time"], name="mdts")
@@ -246,8 +252,8 @@ class TestDirectionToUv:
 # daily_waves
 # ---------------------------------------------------------------------------
 
-class TestDailyWaves:
 
+class TestDailyWaves:
     def test_daily_resolution(self):
         ds = _hourly_ds(3, swh=np.ones((72, 2, 2)), mdts=np.zeros((72, 2, 2)))
         assert len(daily_waves(ds).time) == 3
@@ -266,8 +272,8 @@ class TestDailyWaves:
 # Integration: process_atm_instante
 # ---------------------------------------------------------------------------
 
-class TestProcessAtmInstante:
 
+class TestProcessAtmInstante:
     def test_output_has_all_expected_variables(self):
         from h2mare.processing.core.cds import process_atm_instante
 
@@ -301,8 +307,8 @@ class TestProcessAtmInstante:
 # Integration: process_waves
 # ---------------------------------------------------------------------------
 
-class TestProcessWaves:
 
+class TestProcessWaves:
     def test_daily_output_with_reversed_lat(self):
         from h2mare.processing.core.cds import process_waves
 

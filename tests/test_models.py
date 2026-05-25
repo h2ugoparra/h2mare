@@ -1,4 +1,5 @@
 """Tests for msgspec-based data models (KeyVarConfigEntry, AppConfig)."""
+
 import pytest
 import msgspec
 
@@ -22,8 +23,8 @@ VALID_ENTRY = {
 # KeyVarConfigEntry
 # ---------------------------------------------------------------------------
 
-class TestKeyVarConfigEntry:
 
+class TestKeyVarConfigEntry:
     def test_valid_minimal(self):
         """Required fields only — all optional fields default correctly."""
         entry = msgspec.convert(VALID_ENTRY, KeyVarConfigEntry)
@@ -34,49 +35,69 @@ class TestKeyVarConfigEntry:
         assert entry.depth_range is None
 
     def test_valid_with_bbox(self):
-        entry = msgspec.convert({**VALID_ENTRY, "bbox": [-10.0, 30.0, 10.0, 50.0]}, KeyVarConfigEntry)
+        entry = msgspec.convert(
+            {**VALID_ENTRY, "bbox": [-10.0, 30.0, 10.0, 50.0]}, KeyVarConfigEntry
+        )
         assert entry.bbox == (-10.0, 30.0, 10.0, 50.0)
 
     def test_valid_with_depth_range(self):
-        entry = msgspec.convert({**VALID_ENTRY, "depth_range": [0.0, 500.0]}, KeyVarConfigEntry)
+        entry = msgspec.convert(
+            {**VALID_ENTRY, "depth_range": [0.0, 500.0]}, KeyVarConfigEntry
+        )
         assert entry.depth_range == (0.0, 500.0)
 
     def test_variables_as_string(self):
         """variables field accepts a plain string (not just a list)."""
-        entry = msgspec.convert({**VALID_ENTRY, "variables": "analysed_sst"}, KeyVarConfigEntry)
+        entry = msgspec.convert(
+            {**VALID_ENTRY, "variables": "analysed_sst"}, KeyVarConfigEntry
+        )
         assert entry.variables == "analysed_sst"
 
     # --- bbox validation ---
 
     def test_invalid_lon_too_large(self):
         with pytest.raises(msgspec.ValidationError, match="Longitude"):
-            msgspec.convert({**VALID_ENTRY, "bbox": [170.0, 30.0, 200.0, 50.0]}, KeyVarConfigEntry)
+            msgspec.convert(
+                {**VALID_ENTRY, "bbox": [170.0, 30.0, 200.0, 50.0]}, KeyVarConfigEntry
+            )
 
     def test_invalid_lon_too_small(self):
         with pytest.raises(msgspec.ValidationError, match="Longitude"):
-            msgspec.convert({**VALID_ENTRY, "bbox": [-200.0, 30.0, 10.0, 50.0]}, KeyVarConfigEntry)
+            msgspec.convert(
+                {**VALID_ENTRY, "bbox": [-200.0, 30.0, 10.0, 50.0]}, KeyVarConfigEntry
+            )
 
     def test_invalid_lat_too_large(self):
         with pytest.raises(msgspec.ValidationError, match="Latitude"):
-            msgspec.convert({**VALID_ENTRY, "bbox": [-10.0, 30.0, 10.0, 100.0]}, KeyVarConfigEntry)
+            msgspec.convert(
+                {**VALID_ENTRY, "bbox": [-10.0, 30.0, 10.0, 100.0]}, KeyVarConfigEntry
+            )
 
     def test_invalid_lat_too_small(self):
         with pytest.raises(msgspec.ValidationError, match="Latitude"):
-            msgspec.convert({**VALID_ENTRY, "bbox": [-10.0, -95.0, 10.0, 50.0]}, KeyVarConfigEntry)
+            msgspec.convert(
+                {**VALID_ENTRY, "bbox": [-10.0, -95.0, 10.0, 50.0]}, KeyVarConfigEntry
+            )
 
     def test_invalid_lon_order(self):
         """lon_min must be strictly less than lon_max."""
         with pytest.raises(msgspec.ValidationError, match="lon_min"):
-            msgspec.convert({**VALID_ENTRY, "bbox": [10.0, 30.0, -10.0, 50.0]}, KeyVarConfigEntry)
+            msgspec.convert(
+                {**VALID_ENTRY, "bbox": [10.0, 30.0, -10.0, 50.0]}, KeyVarConfigEntry
+            )
 
     def test_invalid_lon_equal(self):
         with pytest.raises(msgspec.ValidationError, match="lon_min"):
-            msgspec.convert({**VALID_ENTRY, "bbox": [10.0, 30.0, 10.0, 50.0]}, KeyVarConfigEntry)
+            msgspec.convert(
+                {**VALID_ENTRY, "bbox": [10.0, 30.0, 10.0, 50.0]}, KeyVarConfigEntry
+            )
 
     def test_invalid_lat_order(self):
         """lat_min must be strictly less than lat_max."""
         with pytest.raises(msgspec.ValidationError, match="lat_min"):
-            msgspec.convert({**VALID_ENTRY, "bbox": [-10.0, 50.0, 10.0, 30.0]}, KeyVarConfigEntry)
+            msgspec.convert(
+                {**VALID_ENTRY, "bbox": [-10.0, 50.0, 10.0, 30.0]}, KeyVarConfigEntry
+            )
 
     def test_bbox_none_skips_validation(self):
         """None bbox must not trigger bbox validation."""
@@ -88,11 +109,15 @@ class TestKeyVarConfigEntry:
     def test_invalid_depth_range_order(self):
         """depth_min must be strictly less than depth_max."""
         with pytest.raises(msgspec.ValidationError, match="depth_min"):
-            msgspec.convert({**VALID_ENTRY, "depth_range": [500.0, 0.0]}, KeyVarConfigEntry)
+            msgspec.convert(
+                {**VALID_ENTRY, "depth_range": [500.0, 0.0]}, KeyVarConfigEntry
+            )
 
     def test_invalid_depth_range_equal(self):
         with pytest.raises(msgspec.ValidationError, match="depth_min"):
-            msgspec.convert({**VALID_ENTRY, "depth_range": [100.0, 100.0]}, KeyVarConfigEntry)
+            msgspec.convert(
+                {**VALID_ENTRY, "depth_range": [100.0, 100.0]}, KeyVarConfigEntry
+            )
 
     def test_depth_range_none_skips_validation(self):
         entry = msgspec.convert({**VALID_ENTRY, "depth_range": None}, KeyVarConfigEntry)
@@ -103,8 +128,8 @@ class TestKeyVarConfigEntry:
 # AppConfig
 # ---------------------------------------------------------------------------
 
-class TestAppConfig:
 
+class TestAppConfig:
     def test_convert_full_config(self):
         """Full config dict deserializes into nested Struct types."""
         raw = {

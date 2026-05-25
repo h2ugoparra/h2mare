@@ -1,4 +1,5 @@
 """Shared fixtures for h2mare test suite."""
+
 import pytest
 import numpy as np
 import pandas as pd
@@ -9,6 +10,7 @@ from datetime import date
 # ---------------------------------------------------------------------------
 # DataFrame factories
 # ---------------------------------------------------------------------------
+
 
 def make_grid_df(
     dates: list[date],
@@ -51,6 +53,7 @@ def make_grid_df(
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def jan_df():
     """9 rows: 3-day × 3×3 grid, single variable 'sst'."""
@@ -69,6 +72,7 @@ def parquet_dir(tmp_path):
 def loaded_indexer(parquet_dir, jan_df):
     """ParquetIndexer with january data pre-loaded."""
     from h2mare.storage.parquet_indexer import ParquetIndexer
+
     idx = ParquetIndexer(parquet_dir)
     idx.add_data(jan_df)
     return idx

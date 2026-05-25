@@ -1,4 +1,5 @@
 """Tests for ZarrCatalog: build_file_path, dataset column, and provenance sidecars."""
+
 import json
 import pytest
 import msgspec
@@ -56,8 +57,8 @@ def _make_ds(start: str = "2020-01-01", n_days: int = 5) -> xr.Dataset:
 # build_file_path
 # ---------------------------------------------------------------------------
 
-class TestBuildFilePath:
 
+class TestBuildFilePath:
     def test_default_uses_var_key(self, tmp_path):
         catalog = _make_catalog(tmp_path)
         path = catalog.build_file_path(_make_ds(), "year")
@@ -75,7 +76,9 @@ class TestBuildFilePath:
 
     def test_name_key_replaces_var_key(self, tmp_path):
         catalog = _make_catalog(tmp_path)
-        path = catalog.build_file_path(_make_ds(), "year", name_key="cmems_mod_glo_phy_my")
+        path = catalog.build_file_path(
+            _make_ds(), "year", name_key="cmems_mod_glo_phy_my"
+        )
         assert "cmems_mod_glo_phy_my" in path.name
 
     def test_name_key_excludes_var_key(self, tmp_path):
@@ -139,26 +142,30 @@ def _write_zarr(store_root, ds, name="test.zarr"):
 def _two_row_df(zarr_path) -> pd.DataFrame:
     """Minimal DataFrame with rep and nrt rows for the same zarr path."""
     p = str(zarr_path)
-    return pd.DataFrame([
-        {
-            "path": p, "filename": zarr_path.name,
-            "start_date": pd.Timestamp("2023-01-01"),
-            "end_date": pd.Timestamp("2023-06-30"),
-        },
-        {
-            "path": p, "filename": zarr_path.name,
-            "start_date": pd.Timestamp("2023-07-01"),
-            "end_date": pd.Timestamp("2023-12-31"),
-        },
-    ])
+    return pd.DataFrame(
+        [
+            {
+                "path": p,
+                "filename": zarr_path.name,
+                "start_date": pd.Timestamp("2023-01-01"),
+                "end_date": pd.Timestamp("2023-06-30"),
+            },
+            {
+                "path": p,
+                "filename": zarr_path.name,
+                "start_date": pd.Timestamp("2023-07-01"),
+                "end_date": pd.Timestamp("2023-12-31"),
+            },
+        ]
+    )
 
 
 # ---------------------------------------------------------------------------
 # dataset column and provenance sidecar tests
 # ---------------------------------------------------------------------------
 
-class TestDatasetColumn:
 
+class TestDatasetColumn:
     def test_no_sidecar_returns_single_row_with_rep_id(self, tmp_path):
         ds = _make_ds("2023-01-01", n_days=10)
         zarr_path = _write_zarr(tmp_path, ds)
@@ -171,13 +178,22 @@ class TestDatasetColumn:
 
     def test_zarr_attrs_two_sources_returns_two_rows(self, tmp_path):
         import zarr
+
         ds = _make_ds("2023-01-01", n_days=365)
         zarr_path = _write_zarr(tmp_path, ds)
         sources = [
-            {"dataset_id": "REP_ID", "dataset_type": "rep",
-             "start_date": "2023-01-01", "end_date": "2023-06-30"},
-            {"dataset_id": "NRT_ID", "dataset_type": "nrt",
-             "start_date": "2023-07-01", "end_date": "2023-12-31"},
+            {
+                "dataset_id": "REP_ID",
+                "dataset_type": "rep",
+                "start_date": "2023-01-01",
+                "end_date": "2023-06-30",
+            },
+            {
+                "dataset_id": "NRT_ID",
+                "dataset_type": "nrt",
+                "start_date": "2023-07-01",
+                "end_date": "2023-12-31",
+            },
         ]
         root = zarr.open_group(str(zarr_path), mode="r+")
         root.attrs["source_datasets"] = json.dumps(sources)
@@ -195,12 +211,24 @@ class TestDatasetColumn:
         ds = _make_ds("2023-01-01", n_days=365)
         zarr_path = _write_zarr(tmp_path, ds)
         sidecar = zarr_path.parent / (zarr_path.stem + "_prov.json")
-        sidecar.write_text(json.dumps([
-            {"dataset_id": "REP_ID", "dataset_type": "rep",
-             "start_date": "2023-01-01", "end_date": "2023-06-30"},
-            {"dataset_id": "NRT_ID", "dataset_type": "nrt",
-             "start_date": "2023-07-01", "end_date": "2023-12-31"},
-        ]))
+        sidecar.write_text(
+            json.dumps(
+                [
+                    {
+                        "dataset_id": "REP_ID",
+                        "dataset_type": "rep",
+                        "start_date": "2023-01-01",
+                        "end_date": "2023-06-30",
+                    },
+                    {
+                        "dataset_id": "NRT_ID",
+                        "dataset_type": "nrt",
+                        "start_date": "2023-07-01",
+                        "end_date": "2023-12-31",
+                    },
+                ]
+            )
+        )
         catalog = _make_catalog(tmp_path)
 
         rows = catalog._extract_zarr_metadata(zarr_path)
@@ -229,11 +257,16 @@ class TestDatasetColumn:
         assert len(result[str(zarr_path)]) == 2
 
     def test_load_from_disk_adds_dataset_column_for_old_parquet(self, tmp_path):
-        old_df = pd.DataFrame([{
-            "path": "/p/a.zarr", "filename": "a.zarr",
-            "start_date": pd.Timestamp("2020-01-01"),
-            "end_date": pd.Timestamp("2020-12-31"),
-        }])
+        old_df = pd.DataFrame(
+            [
+                {
+                    "path": "/p/a.zarr",
+                    "filename": "a.zarr",
+                    "start_date": pd.Timestamp("2020-01-01"),
+                    "end_date": pd.Timestamp("2020-12-31"),
+                }
+            ]
+        )
         catalog = _make_catalog(tmp_path)
         catalog.catalog_path.parent.mkdir(parents=True, exist_ok=True)
         old_df.to_parquet(catalog.catalog_path, index=False)
@@ -245,6 +278,7 @@ class TestDatasetColumn:
 
     def test_backfill_provenance_splits_boundary_file(self, tmp_path):
         import zarr
+
         ds = _make_ds("2023-01-01", n_days=365)
         zarr_path = _write_zarr(tmp_path, ds)
         catalog = _make_catalog_with_nrt(tmp_path)

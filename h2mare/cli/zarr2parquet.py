@@ -37,9 +37,7 @@ from loguru import logger
 
 from h2mare.config import get_settings
 
-app = typer.Typer(
-    help="Convert compiled Zarr stores to Hive-partitioned Parquet."
-)
+app = typer.Typer(help="Convert compiled Zarr stores to Hive-partitioned Parquet.")
 
 
 @app.command()

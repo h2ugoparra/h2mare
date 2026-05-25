@@ -1,4 +1,5 @@
 """Tests for Extractor — focused on logic that doesn't need external data."""
+
 import json
 import pytest
 import numpy as np
@@ -13,6 +14,7 @@ from h2mare.processing.extractor import Extractor, _save_completed_keys, _keys_p
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_spatial_ds(
     lons: list[float] = [-10.0, -5.0, 0.0],
@@ -42,11 +44,13 @@ def _make_spatiotemporal_ds(
 
 def _make_extractor(time_values: list, time_col: str = "time") -> Extractor:
     """Build a minimal Extractor from a list of time strings."""
-    df = pd.DataFrame({
-        time_col: time_values,
-        "lon": [10.0] * len(time_values),
-        "lat": [40.0] * len(time_values),
-    })
+    df = pd.DataFrame(
+        {
+            time_col: time_values,
+            "lon": [10.0] * len(time_values),
+            "lat": [40.0] * len(time_values),
+        }
+    )
     return Extractor(df, time_col=time_col)
 
 
@@ -54,8 +58,8 @@ def _make_extractor(time_values: list, time_col: str = "time") -> Extractor:
 # _resolve_time_col
 # ---------------------------------------------------------------------------
 
-class TestResolveTimeCol:
 
+class TestResolveTimeCol:
     def test_date_only_strings(self):
         """Date-only strings should NOT be truncated (no time component)."""
         ext = _make_extractor(["2020-01-01", "2020-01-02"])
@@ -64,30 +68,36 @@ class TestResolveTimeCol:
 
     def test_uniform_time_component_truncated(self):
         """Datetimes where all times are identical → truncate to midnight."""
-        ext = _make_extractor([
-            "2020-01-01 06:00:00",
-            "2020-01-02 06:00:00",
-            "2020-01-03 06:00:00",
-        ])
+        ext = _make_extractor(
+            [
+                "2020-01-01 06:00:00",
+                "2020-01-02 06:00:00",
+                "2020-01-03 06:00:00",
+            ]
+        )
         # All midnight after truncation
         assert ext.data["time"].dt.hour.eq(0).all()
 
     def test_variable_time_component_kept(self):
         """Datetimes with varying times → keep full datetime."""
-        ext = _make_extractor([
-            "2020-01-01 06:00:00",
-            "2020-01-01 12:00:00",
-            "2020-01-01 18:00:00",
-        ])
+        ext = _make_extractor(
+            [
+                "2020-01-01 06:00:00",
+                "2020-01-01 12:00:00",
+                "2020-01-01 18:00:00",
+            ]
+        )
         hours = ext.data["time"].dt.hour.tolist()
         assert len(set(hours)) > 1  # times preserved
 
     def test_tz_aware_input_becomes_naive(self):
         """TZ-aware strings must become tz-naive after conversion."""
-        ext = _make_extractor([
-            "2020-06-15T10:00:00+00:00",
-            "2020-06-16T10:00:00+00:00",
-        ])
+        ext = _make_extractor(
+            [
+                "2020-06-15T10:00:00+00:00",
+                "2020-06-16T10:00:00+00:00",
+            ]
+        )
         assert ext.data["time"].dt.tz is None
 
     def test_raw_check_before_conversion(self):
@@ -114,8 +124,8 @@ class TestResolveTimeCol:
 # _nearest_grid_indices
 # ---------------------------------------------------------------------------
 
-class TestNearestGridIndices:
 
+class TestNearestGridIndices:
     def test_exact_grid_points(self):
         """Querying exact grid coordinates returns their exact indices."""
         ds = _make_spatial_ds()
@@ -170,8 +180,8 @@ class TestNearestGridIndices:
 # _nearest_time_indices
 # ---------------------------------------------------------------------------
 
-class TestNearestTimeIndices:
 
+class TestNearestTimeIndices:
     def test_exact_match(self):
         """Exact timestamp returns the correct index."""
         ds = _make_spatiotemporal_ds()
@@ -219,8 +229,8 @@ class TestNearestTimeIndices:
 # Atomic checkpoint helpers
 # ---------------------------------------------------------------------------
 
-class TestAtomicCheckpoint:
 
+class TestAtomicCheckpoint:
     def test_save_completed_keys_writes_correct_content(self, tmp_path):
         checkpoint = tmp_path / "data.feather"
         keys = {"sst", "chl", "mld"}

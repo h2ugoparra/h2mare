@@ -32,7 +32,9 @@ class ParquetPlotter:
         self._cache: dict = {}
         self._grid_coords: pl.DataFrame | None = None
 
-    def _snap_to_grid(self, point: tuple[float, float]) -> tuple[float, float, float, float]:
+    def _snap_to_grid(
+        self, point: tuple[float, float]
+    ) -> tuple[float, float, float, float]:
         lon, lat = point
         lon_col = self._idx.lon_col
         lat_col = self._idx.lat_col
@@ -49,7 +51,9 @@ class ParquetPlotter:
         lats = self._grid_coords[lat_col].unique()
         nearest_lon = float(lons[(lons - lon).abs().arg_min()])
         nearest_lat = float(lats[(lats - lat).abs().arg_min()])
-        logger.debug(f"Point ({lon}, {lat}) snapped to grid cell ({nearest_lon}, {nearest_lat})")
+        logger.debug(
+            f"Point ({lon}, {lat}) snapped to grid cell ({nearest_lon}, {nearest_lat})"
+        )
         return (nearest_lon, nearest_lat, nearest_lon, nearest_lat)
 
     def _agg_key(self, var_name, agg_by, dates, bbox) -> tuple:

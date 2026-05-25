@@ -1,4 +1,5 @@
 """Tests for processing/core/cmems.py — pure dataset transform functions."""
+
 from unittest.mock import patch
 
 import numpy as np
@@ -6,12 +7,18 @@ import pandas as pd
 import pytest
 import xarray as xr
 
-from h2mare.processing.core.cmems import process_chl, process_mld, process_ssh, process_sst
+from h2mare.processing.core.cmems import (
+    process_chl,
+    process_mld,
+    process_ssh,
+    process_sst,
+)
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_times(n=2):
     return pd.date_range("2020-01-01", periods=n, freq="D")
@@ -35,8 +42,8 @@ def _fake_fdist_ds(var_name: str, times, coords) -> xr.Dataset:
 # process_mld
 # ---------------------------------------------------------------------------
 
-class TestProcessMld:
 
+class TestProcessMld:
     def test_renames_mlotst_to_mld(self):
         times = _make_times()
         coords = _spatial_coords()
@@ -64,8 +71,8 @@ class TestProcessMld:
 # process_ssh
 # ---------------------------------------------------------------------------
 
-class TestProcessSsh:
 
+class TestProcessSsh:
     def _make_ssh_ds(self, n=2):
         times = _make_times(n)
         coords = _spatial_coords()
@@ -102,8 +109,8 @@ class TestProcessSsh:
 # process_sst  (FrontProcessor mocked — too heavy for unit tests)
 # ---------------------------------------------------------------------------
 
-class TestProcessSst:
 
+class TestProcessSst:
     def _make_ds(self, n=1):
         times = _make_times(n)
         coords = _spatial_coords()
@@ -143,8 +150,8 @@ class TestProcessSst:
 # process_chl  (FrontProcessor mocked)
 # ---------------------------------------------------------------------------
 
-class TestProcessChl:
 
+class TestProcessChl:
     def _make_ds(self, n=1):
         times = _make_times(n)
         coords = _spatial_coords()

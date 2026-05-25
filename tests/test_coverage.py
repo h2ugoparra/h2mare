@@ -1,4 +1,5 @@
 """Tests for storage/coverage.py — split_time_range and get_store_coverage."""
+
 from unittest.mock import patch
 
 import pandas as pd
@@ -12,8 +13,8 @@ from h2mare.types import DateRange, TimeResolution
 # split_time_range
 # ---------------------------------------------------------------------------
 
-class TestSplitTimeRange:
 
+class TestSplitTimeRange:
     def test_single_month_stays_as_one_chunk(self):
         dr = DateRange("2021-03-01", "2021-03-31")
         chunks = split_time_range(dr, TimeResolution.MONTH)
@@ -59,15 +60,17 @@ class TestSplitTimeRange:
 # get_store_coverage
 # ---------------------------------------------------------------------------
 
-class TestGetStoreCoverage:
 
+class TestGetStoreCoverage:
     def test_returns_none_when_no_coverage(self):
         with patch("h2mare.storage.coverage.get_zarr_time_coverage", return_value=None):
             assert get_store_coverage("sst") is None
 
     def test_returns_date_range_when_coverage_exists(self):
         coverage = DateRange("2020-01-01", "2021-12-31")
-        with patch("h2mare.storage.coverage.get_zarr_time_coverage", return_value=coverage):
+        with patch(
+            "h2mare.storage.coverage.get_zarr_time_coverage", return_value=coverage
+        ):
             result = get_store_coverage("sst")
         assert result is not None
         assert result.start == pd.Timestamp("2020-01-01")

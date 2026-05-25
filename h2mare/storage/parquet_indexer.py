@@ -548,7 +548,9 @@ class ParquetIndexer:
                     actual_file_cols = {row[0] for row in file_col_rows}
                     # Exclude partition cols: DESCRIBE on a hive-partitioned parquet glob
                     # includes virtual year/month columns that aren't physical data columns.
-                    partially_written = (new_cols & actual_file_cols) - self.partition_cols
+                    partially_written = (
+                        new_cols & actual_file_cols
+                    ) - self.partition_cols
                     if partially_written:
                         logger.debug(
                             f"Partially-written columns detected (excluded from existing CTE): {partially_written}"

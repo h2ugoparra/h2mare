@@ -1,4 +1,5 @@
 """Tests for storage/coverage.py."""
+
 from unittest.mock import patch
 
 import pytest
@@ -8,7 +9,6 @@ from h2mare.types import DateRange, TimeResolution
 
 
 class TestSplitTimeRange:
-
     def test_monthly_split_single_month(self):
         dr = DateRange("2020-03-01", "2020-03-31")
         chunks = split_time_range(dr, TimeResolution.MONTH)
@@ -49,7 +49,6 @@ class TestSplitTimeRange:
 
 
 class TestGetStoreCoverage:
-
     def test_returns_date_range_when_data_exists(self):
         mock_coverage = DateRange("2020-01-01", "2020-12-31")
         with patch(
@@ -61,9 +60,7 @@ class TestGetStoreCoverage:
         assert result.start.year == 2020
 
     def test_returns_none_when_no_data(self):
-        with patch(
-            "h2mare.storage.coverage.get_zarr_time_coverage", return_value=None
-        ):
+        with patch("h2mare.storage.coverage.get_zarr_time_coverage", return_value=None):
             result = get_store_coverage("sst")
         assert result is None
 

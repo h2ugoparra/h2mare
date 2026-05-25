@@ -158,7 +158,9 @@ class Zarr2Parquet:
 
         logger.info(f"Backing up Parquet: {self.parquet_root} → {remote_root}")
         try:
-            shutil.copytree(str(self.parquet_root), str(remote_root), dirs_exist_ok=True)
+            shutil.copytree(
+                str(self.parquet_root), str(remote_root), dirs_exist_ok=True
+            )
         except (PermissionError, OSError) as e:
             logger.exception(f"Parquet backup failed: {e}")
             return

@@ -1,4 +1,5 @@
 """Tests for utils/spatial.py."""
+
 import numpy as np
 import pytest
 import xarray as xr
@@ -12,7 +13,6 @@ from h2mare.utils.spatial import (
 
 
 class TestHaversineMinDistance:
-
     def test_basic_distance(self):
         coords1 = np.array([[40.0, -10.0]])
         coords2 = np.array([[40.0, -10.0]])
@@ -28,15 +28,11 @@ class TestHaversineMinDistance:
 
     def test_invalid_shape_coords1(self):
         with pytest.raises(ValueError, match="coords1"):
-            haversine_min_distance_kdtree(
-                np.array([1.0, 2.0]), np.array([[1.0, 2.0]])
-            )
+            haversine_min_distance_kdtree(np.array([1.0, 2.0]), np.array([[1.0, 2.0]]))
 
     def test_invalid_shape_coords2(self):
         with pytest.raises(ValueError, match="coords2"):
-            haversine_min_distance_kdtree(
-                np.array([[1.0, 2.0]]), np.array([1.0, 2.0])
-            )
+            haversine_min_distance_kdtree(np.array([[1.0, 2.0]]), np.array([1.0, 2.0]))
 
     def test_wrong_columns_coords1(self):
         with pytest.raises(ValueError, match="coords1"):
@@ -46,7 +42,6 @@ class TestHaversineMinDistance:
 
 
 class TestGridBuilder:
-
     def test_generate_grid_shape(self):
         bbox = BBox(-10, 30, 10, 50)
         grid = GridBuilder(bbox, dx=1.0, dy=1.0).generate_grid()
@@ -58,17 +53,20 @@ class TestGridBuilder:
     def test_generate_grid_with_attributes(self):
         bbox = BBox(-10, 30, 10, 50)
         attrs = {"title": "test grid"}
-        grid = GridBuilder(bbox, dx=1.0, dy=1.0, attributes=attrs).generate_grid_with_attributes()
+        grid = GridBuilder(
+            bbox, dx=1.0, dy=1.0, attributes=attrs
+        ).generate_grid_with_attributes()
         assert grid.attrs["title"] == "test grid"
 
     def test_generate_grid_with_none_attributes(self):
         bbox = BBox(-10, 30, 10, 50)
-        grid = GridBuilder(bbox, dx=1.0, dy=1.0, attributes=None).generate_grid_with_attributes()
+        grid = GridBuilder(
+            bbox, dx=1.0, dy=1.0, attributes=None
+        ).generate_grid_with_attributes()
         assert isinstance(grid, xr.Dataset)
 
 
 class TestClipLandData:
-
     def test_returns_dataset(self):
         ds = xr.Dataset(
             {"sst": (["lat", "lon"], np.ones((4, 4)))},

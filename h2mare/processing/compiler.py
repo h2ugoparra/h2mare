@@ -461,7 +461,10 @@ class Compiler:
         )
 
     def _process_thetao(
-        self, catalog: ZarrCatalog, date_range: DateRange, depths: list[float] = [100, 200, 500, 1000]
+        self,
+        catalog: ZarrCatalog,
+        date_range: DateRange,
+        depths: list[float] = [100, 200, 500, 1000],
     ) -> xr.Dataset | None:
         """Create potential temperature variables for specified depth intervals"""
         try:

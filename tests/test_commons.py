@@ -1,4 +1,5 @@
 """Tests for utils/date_range.py — resolve_date_range."""
+
 from unittest.mock import patch
 
 import pandas as pd
@@ -9,7 +10,6 @@ from h2mare.types import DateRange
 
 
 class TestResolveDateRange:
-
     def test_explicit_dates_returned_as_date_range(self):
         result = resolve_date_range("sst", "2020-01-01", "2020-12-31")
         assert pd.Timestamp(result.start) == pd.Timestamp("2020-01-01")

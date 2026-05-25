@@ -1,4 +1,5 @@
 """Tests for downloader/cmems_utils.py — pure helper functions."""
+
 from unittest.mock import MagicMock
 
 import pandas as pd
@@ -15,6 +16,7 @@ from h2mare.downloader.cmems_utils import (
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _build_metadata(coord_id: str, min_val, max_val):
     """Build a minimal mock metadata tree with one coordinate."""
@@ -44,8 +46,8 @@ def _build_metadata(coord_id: str, min_val, max_val):
 # _find_time_coordinate
 # ---------------------------------------------------------------------------
 
-class TestFindTimeCoordinate:
 
+class TestFindTimeCoordinate:
     def test_returns_min_and_max_when_time_coord_present(self):
         metadata = _build_metadata("time", 1_000_000.0, 2_000_000.0)
         result = _find_time_coordinate(metadata)
@@ -71,14 +73,17 @@ class TestFindTimeCoordinate:
 # _parse_time_values
 # ---------------------------------------------------------------------------
 
-class TestParseTimeValues:
 
+class TestParseTimeValues:
     def _ms(self, ts: str) -> float:
         return pd.Timestamp(ts).timestamp() * 1000
 
     def test_converts_ms_epoch_to_timestamps(self):
         tmin, tmax = _parse_time_values(
-            {"minimum_value": self._ms("2020-01-01"), "maximum_value": self._ms("2021-01-01")},
+            {
+                "minimum_value": self._ms("2020-01-01"),
+                "maximum_value": self._ms("2021-01-01"),
+            },
             "test-ds",
         )
         assert tmin == pd.Timestamp("2020-01-01")
@@ -86,7 +91,10 @@ class TestParseTimeValues:
 
     def test_returns_normalized_dates(self):
         tmin, tmax = _parse_time_values(
-            {"minimum_value": self._ms("2020-06-15"), "maximum_value": self._ms("2021-06-15")},
+            {
+                "minimum_value": self._ms("2020-06-15"),
+                "maximum_value": self._ms("2021-06-15"),
+            },
             "test-ds",
         )
         assert tmin.hour == 0 and tmin.minute == 0
@@ -101,7 +109,9 @@ class TestParseTimeValues:
 
     def test_raises_when_values_are_not_numeric(self):
         with pytest.raises(CMEMSAPIError, match="Invalid time values"):
-            _parse_time_values({"minimum_value": "not_a_number", "maximum_value": "x"}, "ds")
+            _parse_time_values(
+                {"minimum_value": "not_a_number", "maximum_value": "x"}, "ds"
+            )
 
     def test_raises_when_start_after_end(self):
         t1 = self._ms("2020-01-01")
@@ -114,7 +124,7 @@ class TestParseTimeValues:
 # clear_dataset_cache
 # ---------------------------------------------------------------------------
 
-class TestClearDatasetCache:
 
+class TestClearDatasetCache:
     def test_no_error_on_empty_cache(self):
         clear_dataset_cache()  # must not raise

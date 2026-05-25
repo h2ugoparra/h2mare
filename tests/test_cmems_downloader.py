@@ -1,4 +1,5 @@
 """Tests for CMEMSDownloader pattern generation and task creation logic."""
+
 import json
 from pathlib import Path
 from unittest.mock import patch
@@ -62,16 +63,20 @@ def dl_no_nrt(tmp_path):
 # generate_copernicus_patterns — pure function
 # ---------------------------------------------------------------------------
 
-class TestGenerateCopernicusPatterns:
 
+class TestGenerateCopernicusPatterns:
     def test_full_month_returns_month_shortcut(self):
-        assert generate_copernicus_patterns("2023-01-01", "2023-01-31") == ["*2023/01/*"]
+        assert generate_copernicus_patterns("2023-01-01", "2023-01-31") == [
+            "*2023/01/*"
+        ]
 
     def test_full_year_returns_year_shortcut(self):
         assert generate_copernicus_patterns("2023-01-01", "2023-12-31") == ["*2023/*"]
 
     def test_partial_range_within_month(self):
-        assert generate_copernicus_patterns("2023-01-21", "2023-01-23") == ["*2023012[1-3]*"]
+        assert generate_copernicus_patterns("2023-01-21", "2023-01-23") == [
+            "*2023012[1-3]*"
+        ]
 
     def test_multi_year_range_produces_per_month_patterns(self):
         result = generate_copernicus_patterns("2022-11-01", "2023-02-28")
@@ -82,7 +87,9 @@ class TestGenerateCopernicusPatterns:
 
     def test_full_decade_in_single_bracket(self):
         # 2023-01-20 to 2023-01-29 → tens=2, ones 0–9
-        assert generate_copernicus_patterns("2023-01-20", "2023-01-29") == ["*2023012[0-9]*"]
+        assert generate_copernicus_patterns("2023-01-20", "2023-01-29") == [
+            "*2023012[0-9]*"
+        ]
 
     def test_single_day_contains_full_date(self):
         result = generate_copernicus_patterns("2023-06-15", "2023-06-15")
@@ -94,8 +101,8 @@ class TestGenerateCopernicusPatterns:
 # _generate_date_patterns — pure function
 # ---------------------------------------------------------------------------
 
-class TestGenerateDatePatterns:
 
+class TestGenerateDatePatterns:
     def test_full_decade_bracket(self):
         start = pd.Timestamp("2023-01-20")
         end = pd.Timestamp("2023-01-29")
@@ -124,7 +131,6 @@ _NRT_AVAIL = DateRange("2024-01-01", "2025-06-30")
 
 
 class TestCreateDownloadTasks:
-
     def test_request_fully_within_rep(self, dl):
         with (
             patch.object(dl, "get_rep_availability", return_value=_REP_AVAIL),
@@ -172,7 +178,9 @@ class TestCreateDownloadTasks:
             patch.object(dl_no_nrt, "get_rep_availability", return_value=_REP_AVAIL),
             patch.object(dl_no_nrt, "get_nrt_availability", return_value=None),
         ):
-            tasks = dl_no_nrt._create_download_tasks(DateRange("2020-01-01", "2020-12-31"))
+            tasks = dl_no_nrt._create_download_tasks(
+                DateRange("2020-01-01", "2020-12-31")
+            )
 
         assert len(tasks) == 1
         assert tasks[0].dataset_type == "rep"
@@ -193,8 +201,8 @@ class TestCreateDownloadTasks:
 # CMEMSDownloader._write_manifest
 # ---------------------------------------------------------------------------
 
-class TestWriteManifest:
 
+class TestWriteManifest:
     def test_creates_manifest_file(self, dl, tmp_path):
         tasks = [
             DownloadTask(

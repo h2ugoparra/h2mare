@@ -1,4 +1,5 @@
 """Tests for utils/files_io.py — file I/O utilities."""
+
 import zipfile
 
 import numpy as np
@@ -19,8 +20,8 @@ from h2mare.utils.files_io import (
 # safe_rmtree
 # ---------------------------------------------------------------------------
 
-class TestSafeRmtree:
 
+class TestSafeRmtree:
     def test_removes_directory_with_contents(self, tmp_path):
         d = tmp_path / "to_delete"
         d.mkdir()
@@ -36,8 +37,8 @@ class TestSafeRmtree:
 # safe_move_files
 # ---------------------------------------------------------------------------
 
-class TestSafeMoveFiles:
 
+class TestSafeMoveFiles:
     def test_moves_single_file(self, tmp_path):
         src = tmp_path / "src"
         src.mkdir()
@@ -76,8 +77,8 @@ class TestSafeMoveFiles:
 # move_files
 # ---------------------------------------------------------------------------
 
-class TestMoveFiles:
 
+class TestMoveFiles:
     def test_moves_files_with_matching_extension(self, tmp_path):
         src = tmp_path / "src"
         src.mkdir()
@@ -110,8 +111,8 @@ class TestMoveFiles:
 # unizp_files
 # ---------------------------------------------------------------------------
 
-class TestUnizpFiles:
 
+class TestUnizpFiles:
     def test_extracts_zip_contents(self, tmp_path):
         zip_path = tmp_path / "archive.zip"
         extract_dir = tmp_path / "extracted"
@@ -135,8 +136,8 @@ class TestUnizpFiles:
 # clean_era_dataset
 # ---------------------------------------------------------------------------
 
-class TestCleanEraDataset:
 
+class TestCleanEraDataset:
     def _make_ds(self, times, values):
         return xr.Dataset(
             {"u10": ("time", values)},

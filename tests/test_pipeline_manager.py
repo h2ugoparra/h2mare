@@ -1,4 +1,5 @@
 """Tests for PipelineManager run() isolation and dry-run behaviour."""
+
 import pytest
 import msgspec
 from unittest.mock import MagicMock, patch, call
@@ -38,6 +39,7 @@ def _make_manager(cfg: AppConfig, tmp_path, **kwargs) -> PipelineManager:
 # Tests that need to inspect these mocks patch them again inside the test.
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture(autouse=True)
 def _patch_heavy_steps():
     with (
@@ -51,15 +53,18 @@ def _patch_heavy_steps():
 # Per-variable error isolation
 # ---------------------------------------------------------------------------
 
-class TestDownloadFailureIsolation:
 
+class TestDownloadFailureIsolation:
     def test_download_error_skips_to_next_variable(self, tmp_path):
         """A RuntimeError during download must not stop processing of other variables."""
         cfg = _make_config("sst", "chl")
         manager, downloader_cls = _make_manager(cfg, tmp_path)
 
         # sst download fails; chl succeeds
-        downloader_cls.return_value.run.side_effect = [RuntimeError("network error"), True]
+        downloader_cls.return_value.run.side_effect = [
+            RuntimeError("network error"),
+            True,
+        ]
 
         with patch("h2mare.pipeline_manager.Netcdf2Zarr") as MockConverter:
             MockConverter.return_value.run.return_value = None
@@ -83,7 +88,10 @@ class TestDownloadFailureIsolation:
         manager, _ = _make_manager(cfg, tmp_path)
 
         with patch("h2mare.pipeline_manager.Netcdf2Zarr") as MockConverter:
-            MockConverter.return_value.run.side_effect = [RuntimeError("zarr error"), None]
+            MockConverter.return_value.run.side_effect = [
+                RuntimeError("zarr error"),
+                None,
+            ]
             manager.run()
 
         assert MockConverter.return_value.run.call_count == 2
@@ -93,8 +101,8 @@ class TestDownloadFailureIsolation:
 # dry_run flag
 # ---------------------------------------------------------------------------
 
-class TestDryRun:
 
+class TestDryRun:
     def test_dry_run_skips_converter(self, tmp_path):
         """With dry_run=True, Netcdf2Zarr.run() must never be called."""
         cfg = _make_config("sst", "chl")
@@ -131,7 +139,8 @@ class TestDryRun:
         """start_date/end_date set on PipelineManager must be forwarded to downloader.run()."""
         cfg = _make_config("sst")
         manager, downloader_cls = _make_manager(
-            cfg, tmp_path,
+            cfg,
+            tmp_path,
             start_date="2020-01-01",
             end_date="2020-12-31",
         )
@@ -150,8 +159,8 @@ class TestDryRun:
 # Variable filtering
 # ---------------------------------------------------------------------------
 
-class TestVariableFiltering:
 
+class TestVariableFiltering:
     def test_h2ds_bathy_moon_always_skipped(self, tmp_path):
         """h2ds, bathy, and moon are pipeline-internal and must never be downloaded."""
         cfg = _make_config("sst", "h2ds", "bathy", "moon")
@@ -178,6 +187,7 @@ class TestVariableFiltering:
 # ---------------------------------------------------------------------------
 # Post-run cleanup
 # ---------------------------------------------------------------------------
+
 
 class TestParquetStep:
     """The Parquet conversion step runs after compile and respects all skip flags."""
@@ -227,7 +237,6 @@ class TestParquetStep:
 
 
 class TestCleanup:
-
     def test_empty_download_dir_removed(self, tmp_path):
         """An empty per-variable download subdirectory is removed after the pipeline run."""
         cfg = _make_config("sst")
@@ -237,8 +246,10 @@ class TestCleanup:
         empty_dir = tmp_path / "downloads" / "sst"
         empty_dir.mkdir(parents=True)
 
-        with patch("h2mare.pipeline_manager.get_settings") as mock_get_settings, \
-             patch("h2mare.pipeline_manager.Netcdf2Zarr"):
+        with (
+            patch("h2mare.pipeline_manager.get_settings") as mock_get_settings,
+            patch("h2mare.pipeline_manager.Netcdf2Zarr"),
+        ):
             mock_get_settings.return_value.DOWNLOADS_DIR = tmp_path / "downloads"
             manager.run()
 
@@ -253,8 +264,10 @@ class TestCleanup:
         non_empty_dir.mkdir(parents=True)
         (non_empty_dir / "data.nc").write_text("data")
 
-        with patch("h2mare.pipeline_manager.get_settings") as mock_get_settings, \
-             patch("h2mare.pipeline_manager.Netcdf2Zarr"):
+        with (
+            patch("h2mare.pipeline_manager.get_settings") as mock_get_settings,
+            patch("h2mare.pipeline_manager.Netcdf2Zarr"),
+        ):
             mock_get_settings.return_value.DOWNLOADS_DIR = tmp_path / "downloads"
             manager.run()
 
@@ -267,13 +280,18 @@ class TestCleanup:
         from h2mare.models import AppConfig
 
         cfg = msgspec.convert(
-            {"variables": {"sst": {
-                "local_folder": "sst",
-                "variables": ["analysed_sst"],
-                "dataset_id_rep": "cmems_mod",
-                "source": "cmems",
-                "pattern": r".*\.nc",
-            }}, "secrets": {}},
+            {
+                "variables": {
+                    "sst": {
+                        "local_folder": "sst",
+                        "variables": ["analysed_sst"],
+                        "dataset_id_rep": "cmems_mod",
+                        "source": "cmems",
+                        "pattern": r".*\.nc",
+                    }
+                },
+                "secrets": {},
+            },
             AppConfig,
         )
 

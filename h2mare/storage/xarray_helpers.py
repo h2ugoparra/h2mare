@@ -62,10 +62,15 @@ def chunk_dataset(
     if not time_vars or time_dim not in ds.sizes:
         raise ValueError(f"No variables contain dimension '{time_dim}'")
 
-    main_var = max(time_vars, key=lambda v: ds[v].sizes[time_dim] * ds[v].dtype.itemsize)
+    main_var = max(
+        time_vars, key=lambda v: ds[v].sizes[time_dim] * ds[v].dtype.itemsize
+    )
     da = ds[main_var]
     time_idx = da.dims.index(time_dim)
-    bytes_per_step = int(np.prod([s for i, s in enumerate(da.shape) if i != time_idx])) * da.dtype.itemsize
+    bytes_per_step = (
+        int(np.prod([s for i, s in enumerate(da.shape) if i != time_idx]))
+        * da.dtype.itemsize
+    )
 
     dim_dict: dict[str, int] = {}
     for dim, size in ds.sizes.items():
@@ -77,7 +82,12 @@ def chunk_dataset(
             dim_dict[dim] = 1
 
     non_time_size = int(np.prod(list(dim_dict.values()))) if dim_dict else 1
-    time_chunk = max(1, min(int(target_bytes // (non_time_size * da.dtype.itemsize)), ds.sizes[time_dim]))
+    time_chunk = max(
+        1,
+        min(
+            int(target_bytes // (non_time_size * da.dtype.itemsize)), ds.sizes[time_dim]
+        ),
+    )
 
     return ds.chunk({time_dim: time_chunk} | dim_dict)
 

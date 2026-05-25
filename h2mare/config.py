@@ -214,7 +214,6 @@ class Settings:
         return self._app_config
 
 
-
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
     """Return the application-wide Settings instance (cached after first call).

@@ -1,4 +1,5 @@
 """Tests for processing/compiler.py — Compiler class and helpers."""
+
 import shutil
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -10,7 +11,11 @@ import pytest
 import xarray as xr
 
 from h2mare.models import AppConfig
-from h2mare.processing.compiler import Compiler, calculate_moon_phase, postprocess_sst_fdist
+from h2mare.processing.compiler import (
+    Compiler,
+    calculate_moon_phase,
+    postprocess_sst_fdist,
+)
 from h2mare.types import DateRange
 
 
@@ -62,8 +67,8 @@ def compiler(tmp_path):
 # calculate_moon_phase
 # ---------------------------------------------------------------------------
 
-class TestCalculateMoonPhase:
 
+class TestCalculateMoonPhase:
     def test_returns_one_value_per_date(self):
         dates = pd.date_range("2020-01-01", periods=10, freq="D")
         phases = calculate_moon_phase(40.0, -10.0, dates)
@@ -85,8 +90,8 @@ class TestCalculateMoonPhase:
 # postprocess_sst_fdist
 # ---------------------------------------------------------------------------
 
-class TestPostprocessSstFdist:
 
+class TestPostprocessSstFdist:
     def _make_ds(self, values: np.ndarray) -> xr.Dataset:
         return xr.Dataset(
             {"sst_fdist": (["time", "lat", "lon"], values.reshape(1, 2, 2))},
@@ -105,7 +110,9 @@ class TestPostprocessSstFdist:
     def test_positive_values_unchanged(self):
         ds = self._make_ds(np.array([1.0, 2.0, 3.0, 4.0]))
         result = postprocess_sst_fdist(ds)
-        np.testing.assert_allclose(result["sst_fdist"].values.ravel(), [1.0, 2.0, 3.0, 4.0])
+        np.testing.assert_allclose(
+            result["sst_fdist"].values.ravel(), [1.0, 2.0, 3.0, 4.0]
+        )
 
     def test_no_op_when_variable_absent(self):
         ds = xr.Dataset({"sst": (["time"], [1.0, 2.0])})
@@ -117,8 +124,8 @@ class TestPostprocessSstFdist:
 # Compiler._resolve_compile_range
 # ---------------------------------------------------------------------------
 
-class TestResolveCompileRange:
 
+class TestResolveCompileRange:
     def test_explicit_dates_bypass_inference(self, compiler):
         start = pd.Timestamp("2021-01-01")
         end = pd.Timestamp("2021-12-31")
@@ -173,7 +180,9 @@ class TestResolveCompileRange:
             "h2mare.processing.compiler.get_store_coverage",
             side_effect=lambda k: ranges.get(k),
         ):
-            result = compiler._resolve_compile_range(None, None, var_keys=["sst", "ssh"])
+            result = compiler._resolve_compile_range(
+                None, None, var_keys=["sst", "ssh"]
+            )
 
         assert pd.Timestamp(result.start) == pd.Timestamp("2019-06-01")
         assert pd.Timestamp(result.end) == pd.Timestamp("2020-12-31")
@@ -188,24 +197,30 @@ class TestResolveCompileRange:
 # Compiler._has_overlap
 # ---------------------------------------------------------------------------
 
-class TestHasOverlap:
 
+class TestHasOverlap:
     def test_returns_true_when_ranges_overlap(self, compiler):
         catalog = MagicMock()
         catalog.get_time_coverage.return_value = DateRange("2020-01-01", "2020-12-31")
-        result = compiler._has_overlap("sst", DateRange("2020-06-01", "2021-06-30"), catalog)
+        result = compiler._has_overlap(
+            "sst", DateRange("2020-06-01", "2021-06-30"), catalog
+        )
         assert result is True
 
     def test_returns_false_when_no_overlap(self, compiler):
         catalog = MagicMock()
         catalog.get_time_coverage.return_value = DateRange("2015-01-01", "2018-12-31")
-        result = compiler._has_overlap("sst", DateRange("2020-01-01", "2020-12-31"), catalog)
+        result = compiler._has_overlap(
+            "sst", DateRange("2020-01-01", "2020-12-31"), catalog
+        )
         assert result is False
 
     def test_returns_false_when_catalog_is_empty(self, compiler):
         catalog = MagicMock()
         catalog.get_time_coverage.return_value = None
-        result = compiler._has_overlap("sst", DateRange("2020-01-01", "2020-12-31"), catalog)
+        result = compiler._has_overlap(
+            "sst", DateRange("2020-01-01", "2020-12-31"), catalog
+        )
         assert result is False
 
 
@@ -213,8 +228,8 @@ class TestHasOverlap:
 # Compiler.sync_data
 # ---------------------------------------------------------------------------
 
-class TestSyncData:
 
+class TestSyncData:
     def test_copies_zarr_directory_to_local_store(self, compiler, tmp_path):
         remote_dir = tmp_path / "remote"
         remote_dir.mkdir()

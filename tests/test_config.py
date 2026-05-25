@@ -1,4 +1,5 @@
 """Tests for config.py — Settings class."""
+
 import warnings
 from pathlib import Path
 
@@ -36,8 +37,8 @@ variables:
 # _find_project_root
 # ---------------------------------------------------------------------------
 
-class TestFindProjectRoot:
 
+class TestFindProjectRoot:
     def test_h2mare_root_env_takes_priority(self, tmp_path, monkeypatch):
         monkeypatch.setenv("H2MARE_ROOT", str(tmp_path))
         monkeypatch.delenv("STORE_ROOT", raising=False)
@@ -61,8 +62,8 @@ class TestFindProjectRoot:
 # _get_store_dir
 # ---------------------------------------------------------------------------
 
-class TestGetStoreDir:
 
+class TestGetStoreDir:
     def test_store_root_env_returned_as_path(self, tmp_path, monkeypatch):
         store = tmp_path / "my_store"
         monkeypatch.setenv("H2MARE_ROOT", str(tmp_path))
@@ -81,8 +82,8 @@ class TestGetStoreDir:
 # load_app_config
 # ---------------------------------------------------------------------------
 
-class TestLoadAppConfig:
 
+class TestLoadAppConfig:
     def _make_settings(self, tmp_path, monkeypatch) -> Settings:
         monkeypatch.setenv("H2MARE_ROOT", str(tmp_path))
         monkeypatch.delenv("STORE_ROOT", raising=False)
@@ -131,8 +132,8 @@ class TestLoadAppConfig:
 # get_var_info
 # ---------------------------------------------------------------------------
 
-class TestGetVarInfo:
 
+class TestGetVarInfo:
     def _make_settings(self, tmp_path, monkeypatch) -> Settings:
         monkeypatch.setenv("H2MARE_ROOT", str(tmp_path))
         monkeypatch.delenv("STORE_ROOT", raising=False)
@@ -154,8 +155,8 @@ class TestGetVarInfo:
 # get_available_var_keys
 # ---------------------------------------------------------------------------
 
-class TestGetAvailableVarKeys:
 
+class TestGetAvailableVarKeys:
     def test_returns_list_of_configured_keys(self, tmp_path, monkeypatch):
         monkeypatch.setenv("H2MARE_ROOT", str(tmp_path))
         monkeypatch.delenv("STORE_ROOT", raising=False)
@@ -170,8 +171,8 @@ class TestGetAvailableVarKeys:
 # get_settings — cached factory
 # ---------------------------------------------------------------------------
 
-class TestGetSettingsFactory:
 
+class TestGetSettingsFactory:
     def test_returns_settings_instance(self):
         assert isinstance(get_settings(), Settings)
 

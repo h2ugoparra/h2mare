@@ -64,8 +64,8 @@ def _make_converter(
 # __init__
 # ---------------------------------------------------------------------------
 
-class TestInit:
 
+class TestInit:
     def test_raises_when_no_zarr_data(self, tmp_path):
         """ValueError is raised immediately when the zarr catalog is empty."""
         with (
@@ -87,8 +87,8 @@ class TestInit:
 # _resolve_date_range
 # ---------------------------------------------------------------------------
 
-class TestResolveDateRange:
 
+class TestResolveDateRange:
     def test_explicit_dates_returned_unchanged(self, tmp_path):
         z = _make_converter(tmp_path)
         start, end = z._resolve_date_range("1998-03-01", "1998-06-30")
@@ -140,8 +140,8 @@ class TestResolveDateRange:
 # run() — always splits monthly
 # ---------------------------------------------------------------------------
 
-class TestRun:
 
+class TestRun:
     def test_open_dataset_called_once_per_month(self, tmp_path):
         """run() splits the requested range into monthly chunks."""
         z = _make_converter(tmp_path)
@@ -183,13 +183,18 @@ class TestRun:
 # run() — depth filtering
 # ---------------------------------------------------------------------------
 
-class TestRunDepthFiltering:
 
+class TestRunDepthFiltering:
     def _make_mock_ds(self, *, has_depth: bool) -> MagicMock:
         """Return a dataset mock with or without a depth dimension."""
         mock_ds = MagicMock()
         # Use a real dict so 'in' checks work correctly.
-        mock_ds.dims = {"time": 3, "lat": 4, "lon": 4, **({"depth": 5} if has_depth else {})}
+        mock_ds.dims = {
+            "time": 3,
+            "lat": 4,
+            "lon": 4,
+            **({"depth": 5} if has_depth else {}),
+        }
         # sel() returns the same mock so the rest of the pipeline still works.
         mock_ds.sel.return_value = mock_ds
         mock_ds.to_dataframe.return_value.reset_index.return_value = MagicMock()
@@ -262,12 +267,14 @@ class TestRunDepthFiltering:
 # sync_data()
 # ---------------------------------------------------------------------------
 
-class TestSyncData:
 
+class TestSyncData:
     def test_skips_when_store_root_is_none(self, tmp_path):
         """sync_data() returns without error when STORE_ROOT is not configured."""
         z = _make_converter(tmp_path)
-        with patch("h2mare.format_converters.zarr2parquet.get_settings") as mock_get_settings:
+        with patch(
+            "h2mare.format_converters.zarr2parquet.get_settings"
+        ) as mock_get_settings:
             mock_get_settings.return_value.STORE_ROOT = None
             z.sync_data()  # must not raise
 
@@ -288,7 +295,9 @@ class TestSyncData:
         ):
             mock_catalog = MockCatalog.return_value
             mock_catalog.get_time_coverage.return_value = _ZARR_RANGE
-            mock_catalog.df = __import__("pandas").DataFrame()  # empty → fallback to var_key
+            mock_catalog.df = __import__(
+                "pandas"
+            ).DataFrame()  # empty → fallback to var_key
             z = Zarr2Parquet("h2ds", parquet_parent)
 
         z.sync_data(remote_root=remote_root)

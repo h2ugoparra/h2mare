@@ -1,4 +1,5 @@
 """Tests for utils/datetime_utils.py."""
+
 import pytest
 import pandas as pd
 from datetime import date, datetime
@@ -12,7 +13,6 @@ from h2mare.utils.datetime_utils import (
 
 
 class TestToDatetime:
-
     def test_datetime_passthrough(self):
         dt = datetime(2020, 6, 15, 12, 30)
         assert to_datetime(dt) is dt
@@ -37,7 +37,6 @@ class TestToDatetime:
 
 
 class TestNormalizeDate:
-
     def test_scalar_string(self):
         result = normalize_date("2020-03-15")
         assert result == pd.Timestamp("2020-03-15")
@@ -58,7 +57,6 @@ class TestNormalizeDate:
 
 
 class TestMoreThanOneYear:
-
     def test_true(self):
         a = pd.Timestamp("2020-01-01")
         b = pd.Timestamp("2021-06-01")
@@ -76,7 +74,6 @@ class TestMoreThanOneYear:
 
 
 class TestDateToStandardString:
-
     def test_string_input(self):
         assert date_to_standard_string("2020-03-15") == "2020-03-15"
 

@@ -1,4 +1,5 @@
 """Tests for write_append_zarr and atomic swap behaviour in storage.py."""
+
 import shutil
 from pathlib import Path
 from unittest.mock import patch
@@ -14,6 +15,7 @@ from h2mare.storage.storage import _append_data, write_append_zarr
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_ds(start: str = "2020-01-01", n_days: int = 5, seed: int = 0) -> xr.Dataset:
     """Varied (non-constant) data so have_vars_unique_values does not fire."""
@@ -34,8 +36,8 @@ def _make_ds(start: str = "2020-01-01", n_days: int = 5, seed: int = 0) -> xr.Da
 # write_append_zarr — new write path
 # ---------------------------------------------------------------------------
 
-class TestNewWrite:
 
+class TestNewWrite:
     def test_creates_zarr_directory(self, tmp_path):
         path = tmp_path / "sst.zarr"
         write_append_zarr("sst", _make_ds(), path)
@@ -69,8 +71,8 @@ class TestNewWrite:
 # _append_data — atomic backup-swap
 # ---------------------------------------------------------------------------
 
-class TestAtomicSwap:
 
+class TestAtomicSwap:
     def test_no_bak_file_after_success(self, tmp_path):
         """.bak file must be removed after a successful append."""
         path = tmp_path / "sst.zarr"
@@ -142,6 +144,7 @@ class TestAtomicSwap:
 # _append_data — variable-addition path
 # ---------------------------------------------------------------------------
 
+
 class TestVariableAddition:
     """
     When ds_new contains only variables absent from the existing zarr,
@@ -170,7 +173,7 @@ class TestVariableAddition:
     def test_existing_variable_preserved(self, tmp_path):
         """The original variable must still be present after adding a new one."""
         path = tmp_path / "h2ds.zarr"
-        _make_ds("2020-01-01", 5).to_zarr(path)           # writes 'sst'
+        _make_ds("2020-01-01", 5).to_zarr(path)  # writes 'sst'
         _append_data("h2ds", self._make_disjoint_ds("chl"), path)  # adds 'chl'
 
         ds = xr.open_zarr(path, consolidated=False)
@@ -209,7 +212,11 @@ class TestVariableAddition:
                 "thetao_100": (["time", "lat", "lon"], rng.uniform(0, 1, (5, 3, 3))),
                 "thetao_500": (["time", "lat", "lon"], rng.uniform(0, 1, (5, 3, 3))),
             },
-            coords={"time": times, "lat": [30.0, 35.0, 40.0], "lon": [-10.0, -5.0, 0.0]},
+            coords={
+                "time": times,
+                "lat": [30.0, 35.0, 40.0],
+                "lon": [-10.0, -5.0, 0.0],
+            },
         )
         _append_data("h2ds", ds_new, path)
 

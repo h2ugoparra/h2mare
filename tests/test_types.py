@@ -1,4 +1,5 @@
 """Tests for DateRange and BBox."""
+
 import numpy as np
 import pytest
 import polars as pl
@@ -13,8 +14,8 @@ from h2mare.types import DateRange, BBox, DownloadTask
 # DateRange
 # ---------------------------------------------------------------------------
 
-class TestDateRange:
 
+class TestDateRange:
     def test_basic_construction(self):
         dr = DateRange("2020-01-01", "2020-12-31")
         assert dr.start == datetime(2020, 1, 1)
@@ -167,8 +168,8 @@ class TestDateRange:
 # BBox
 # ---------------------------------------------------------------------------
 
-class TestBBox:
 
+class TestBBox:
     def test_basic_construction(self):
         b = BBox(xmin=-10, ymin=30, xmax=20, ymax=50)
         assert b.area() == 30 * 20
@@ -241,9 +242,7 @@ class TestBBox:
         assert b.area() == 50.0
 
     def test_from_dataset(self):
-        ds = xr.Dataset(
-            coords={"lon": [-10.0, 0.0, 10.0], "lat": [30.0, 40.0, 50.0]}
-        )
+        ds = xr.Dataset(coords={"lon": [-10.0, 0.0, 10.0], "lat": [30.0, 40.0, 50.0]})
         b = BBox.from_dataset(ds)
         assert b.xmin == -10.0
         assert b.ymax == 50.0
@@ -254,9 +253,7 @@ class TestBBox:
             BBox.from_dataset(ds)
 
     def test_from_dataset_with_longitude_latitude_names(self):
-        ds = xr.Dataset(
-            coords={"longitude": [-10.0, 10.0], "latitude": [30.0, 50.0]}
-        )
+        ds = xr.Dataset(coords={"longitude": [-10.0, 10.0], "latitude": [30.0, 50.0]})
         b = BBox.from_dataset(ds)
         assert b.xmin == -10.0
 
@@ -276,7 +273,12 @@ class TestBBox:
             BBox.from_polars(df, lon_col="lon", lat_col="lat")
 
     def test_from_polars_null_values_raises(self):
-        df = pl.DataFrame({"lon": pl.Series([None], dtype=pl.Float64), "lat": pl.Series([None], dtype=pl.Float64)})
+        df = pl.DataFrame(
+            {
+                "lon": pl.Series([None], dtype=pl.Float64),
+                "lat": pl.Series([None], dtype=pl.Float64),
+            }
+        )
         with pytest.raises(ValueError):
             BBox.from_polars(df, lon_col="lon", lat_col="lat")
 
@@ -301,7 +303,6 @@ class TestBBox:
 
 
 class TestDownloadTask:
-
     def test_repr(self):
         dr = DateRange("2020-01-01", "2020-12-31")
         task = DownloadTask(dataset_id="cmems_sst", date_range=dr, dataset_type="rep")

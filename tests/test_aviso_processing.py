@@ -1,4 +1,5 @@
 """Tests for processing/core/aviso.py — pure functions and EDDIESProcessor helpers."""
+
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -24,7 +25,14 @@ from h2mare.types import DateRange, TimeResolution
 
 _EDDIES_ENTRY = {
     "local_folder": "eddies",
-    "variables": ["track", "effective_radius", "speed_radius", "amplitude", "speed_average", "observation_number"],
+    "variables": [
+        "track",
+        "effective_radius",
+        "speed_radius",
+        "amplitude",
+        "speed_average",
+        "observation_number",
+    ],
     "dataset_id_rep": "META3.2_ALLSAT_PHY_L4_REP",
     "source": "aviso",
     "pattern": r"(\d{8})_(\d{8})",
@@ -68,14 +76,16 @@ def eddies_proc(tmp_path):
 # find_nearest_vectorized
 # ---------------------------------------------------------------------------
 
-class TestFindNearestVectorized:
 
+class TestFindNearestVectorized:
     def test_single_query_finds_nearest_target(self):
         query_lats = np.array([40.0])
         query_lons = np.array([-10.0])
         target_lats = np.array([40.1, 45.0, 30.0])
         target_lons = np.array([-10.1, 0.0, -20.0])
-        indices = find_nearest_vectorized(query_lats, query_lons, target_lats, target_lons)
+        indices = find_nearest_vectorized(
+            query_lats, query_lons, target_lats, target_lons
+        )
         assert indices[0] == 0  # (40.1, -10.1) is nearest to (40.0, -10.0)
 
     def test_multiple_queries(self):
@@ -84,7 +94,9 @@ class TestFindNearestVectorized:
         query_lons = np.array([0.0, 10.0])
         target_lats = np.array([0.1, 50.1])
         target_lons = np.array([0.1, 10.1])
-        indices = find_nearest_vectorized(query_lats, query_lons, target_lats, target_lons)
+        indices = find_nearest_vectorized(
+            query_lats, query_lons, target_lats, target_lons
+        )
         assert indices[0] == 0
         assert indices[1] == 1
 
@@ -102,8 +114,8 @@ class TestFindNearestVectorized:
 # _group_dates
 # ---------------------------------------------------------------------------
 
-class TestGroupDates:
 
+class TestGroupDates:
     def test_year_grouping_covers_all_dates(self):
         dates = pd.date_range("2020-01-01", "2021-12-31", freq="D")
         groups = dict(_group_dates(dates, TimeResolution.YEAR))
@@ -135,11 +147,11 @@ class TestGroupDates:
 # process_fsle
 # ---------------------------------------------------------------------------
 
-class TestProcessFsle:
 
+class TestProcessFsle:
     def _make_fsle_ds(self) -> xr.Dataset:
         """Dataset with global coverage, lon in 0-360."""
-        lons = np.arange(0, 360, 1.0)   # 360 points, 0–359
+        lons = np.arange(0, 360, 1.0)  # 360 points, 0–359
         lats = np.arange(-90, 91, 1.0)  # 181 points, -90–90
         data = np.random.default_rng(0).uniform(0.1, 10.0, (181, 360))
         return xr.Dataset(
@@ -186,8 +198,8 @@ class TestProcessFsle:
 # EDDIESProcessor._get_downloaded_metadata
 # ---------------------------------------------------------------------------
 
-class TestGetDownloadedMetadata:
 
+class TestGetDownloadedMetadata:
     def _create_eddy_files(self, root: Path, dates: str = "20210101_20211231") -> None:
         for eddy_type in ("anticyclonic", "cyclonic"):
             (root / f"META_{eddy_type}_{dates}.nc").touch()
@@ -220,8 +232,8 @@ class TestGetDownloadedMetadata:
 # EDDIESProcessor._resolve_date_range
 # ---------------------------------------------------------------------------
 
-class TestEddiesResolveRange:
 
+class TestEddiesResolveRange:
     def test_returns_intersection_of_requested_and_available(self, eddies_proc):
         download_range = DateRange("2020-01-01", "2021-12-31")
         requested = DateRange("2020-06-01", "2022-06-30")

@@ -103,7 +103,9 @@ def _append_data(var_key: str, ds_new: xr.Dataset, path: Path) -> None:
         if ds_resolved is not None:
             ds_out = xr.concat([ds_resolved, ds_new], dim="time", data_vars="minimal")
             # Rechunk to match the existing zarr layout and avoid dask chunk-alignment errors.
-            chunk_sizes = {dim: sizes[0] for dim, sizes in ds_resolved.chunksizes.items()}
+            chunk_sizes = {
+                dim: sizes[0] for dim, sizes in ds_resolved.chunksizes.items()
+            }
             ds_out = ds_out.chunk(chunk_sizes)
             src_to_close.append(ds_resolved)
         else:

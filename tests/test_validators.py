@@ -1,4 +1,5 @@
 """Tests for validators.py."""
+
 import msgspec
 import pytest
 
@@ -17,13 +18,10 @@ _ENTRY = {
     "source": "cmems",
     "pattern": r".*\.nc",
 }
-_CONFIG = msgspec.convert(
-    {"variables": {"sst": _ENTRY}, "secrets": {}}, AppConfig
-)
+_CONFIG = msgspec.convert({"variables": {"sst": _ENTRY}, "secrets": {}}, AppConfig)
 
 
 class TestValidateVarKey:
-
     def test_valid_key_returns_key(self):
         assert validate_var_key("sst", _CONFIG) == "sst"
 
@@ -33,7 +31,6 @@ class TestValidateVarKey:
 
 
 class TestValidateVarKeys:
-
     def test_all_valid(self):
         validate_var_keys(["sst"], _CONFIG)
 
@@ -46,7 +43,6 @@ class TestValidateVarKeys:
 
 
 class TestValidateTimeResolution:
-
     def test_enum_passthrough(self):
         assert validate_time_resolution(TimeResolution.MONTH) is TimeResolution.MONTH
 

@@ -1,4 +1,5 @@
 """Tests for CLI commands — argument validation and error paths."""
+
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -44,20 +45,26 @@ def _mock_settings(tmp_path: Path) -> MagicMock:
 # cli/main.py — run command
 # ---------------------------------------------------------------------------
 
-class TestRunCLI:
 
+class TestRunCLI:
     def test_only_start_date_exits_with_code_1(self, tmp_path):
-        with patch("h2mare.cli.main.get_settings", return_value=_mock_settings(tmp_path)):
+        with patch(
+            "h2mare.cli.main.get_settings", return_value=_mock_settings(tmp_path)
+        ):
             result = _runner.invoke(main_app, ["--start-date", "2021-01-01"])
         assert result.exit_code == 1
 
     def test_only_end_date_exits_with_code_1(self, tmp_path):
-        with patch("h2mare.cli.main.get_settings", return_value=_mock_settings(tmp_path)):
+        with patch(
+            "h2mare.cli.main.get_settings", return_value=_mock_settings(tmp_path)
+        ):
             result = _runner.invoke(main_app, ["--end-date", "2021-12-31"])
         assert result.exit_code == 1
 
     def test_start_not_before_end_exits_with_code_1(self, tmp_path):
-        with patch("h2mare.cli.main.get_settings", return_value=_mock_settings(tmp_path)):
+        with patch(
+            "h2mare.cli.main.get_settings", return_value=_mock_settings(tmp_path)
+        ):
             result = _runner.invoke(
                 main_app,
                 ["--start-date", "2021-12-31", "--end-date", "2021-01-01"],
@@ -65,7 +72,9 @@ class TestRunCLI:
         assert result.exit_code == 1
 
     def test_unknown_var_key_exits_with_code_1(self, tmp_path):
-        with patch("h2mare.cli.main.get_settings", return_value=_mock_settings(tmp_path)):
+        with patch(
+            "h2mare.cli.main.get_settings", return_value=_mock_settings(tmp_path)
+        ):
             result = _runner.invoke(main_app, ["-v", "nonexistent"])
         assert result.exit_code == 1
 
@@ -78,7 +87,9 @@ class TestRunCLI:
 
     def test_successful_run_exits_with_code_0(self, tmp_path):
         with (
-            patch("h2mare.cli.main.get_settings", return_value=_mock_settings(tmp_path)),
+            patch(
+                "h2mare.cli.main.get_settings", return_value=_mock_settings(tmp_path)
+            ),
             patch("h2mare.cli.main.PipelineManager") as mock_pm,
         ):
             mock_pm.return_value.run.return_value = True
@@ -87,7 +98,9 @@ class TestRunCLI:
 
     def test_failed_pipeline_exits_with_code_1(self, tmp_path):
         with (
-            patch("h2mare.cli.main.get_settings", return_value=_mock_settings(tmp_path)),
+            patch(
+                "h2mare.cli.main.get_settings", return_value=_mock_settings(tmp_path)
+            ),
             patch("h2mare.cli.main.PipelineManager") as mock_pm,
         ):
             mock_pm.return_value.run.return_value = False
@@ -99,20 +112,26 @@ class TestRunCLI:
 # cli/compile.py — compile command
 # ---------------------------------------------------------------------------
 
-class TestCompileCLI:
 
+class TestCompileCLI:
     def test_only_start_date_exits_with_code_1(self, tmp_path):
-        with patch("h2mare.cli.compile.get_settings", return_value=_mock_settings(tmp_path)):
+        with patch(
+            "h2mare.cli.compile.get_settings", return_value=_mock_settings(tmp_path)
+        ):
             result = _runner.invoke(compile_app, ["--start-date", "2021-01-01"])
         assert result.exit_code == 1
 
     def test_only_end_date_exits_with_code_1(self, tmp_path):
-        with patch("h2mare.cli.compile.get_settings", return_value=_mock_settings(tmp_path)):
+        with patch(
+            "h2mare.cli.compile.get_settings", return_value=_mock_settings(tmp_path)
+        ):
             result = _runner.invoke(compile_app, ["--end-date", "2021-12-31"])
         assert result.exit_code == 1
 
     def test_start_not_before_end_exits_with_code_1(self, tmp_path):
-        with patch("h2mare.cli.compile.get_settings", return_value=_mock_settings(tmp_path)):
+        with patch(
+            "h2mare.cli.compile.get_settings", return_value=_mock_settings(tmp_path)
+        ):
             result = _runner.invoke(
                 compile_app,
                 ["--start-date", "2021-12-31", "--end-date", "2021-01-01"],
@@ -120,13 +139,17 @@ class TestCompileCLI:
         assert result.exit_code == 1
 
     def test_unknown_var_key_exits_with_code_1(self, tmp_path):
-        with patch("h2mare.cli.compile.get_settings", return_value=_mock_settings(tmp_path)):
+        with patch(
+            "h2mare.cli.compile.get_settings", return_value=_mock_settings(tmp_path)
+        ):
             result = _runner.invoke(compile_app, ["-v", "nonexistent"])
         assert result.exit_code == 1
 
     def test_valid_call_invokes_compiler(self, tmp_path):
         with (
-            patch("h2mare.cli.compile.get_settings", return_value=_mock_settings(tmp_path)),
+            patch(
+                "h2mare.cli.compile.get_settings", return_value=_mock_settings(tmp_path)
+            ),
             patch("h2mare.processing.compiler.Compiler") as mock_compiler,
         ):
             result = _runner.invoke(
@@ -141,16 +164,20 @@ class TestCompileCLI:
 # cli/nc2zarr.py — convert command
 # ---------------------------------------------------------------------------
 
-class TestConvertCLI:
 
+class TestConvertCLI:
     def test_unknown_var_key_logs_error_and_exits_0(self, tmp_path):
-        with patch("h2mare.cli.nc2zarr.get_settings", return_value=_mock_settings(tmp_path)):
+        with patch(
+            "h2mare.cli.nc2zarr.get_settings", return_value=_mock_settings(tmp_path)
+        ):
             result = _runner.invoke(nc2zarr_app, ["-v", "nonexistent"])
         assert result.exit_code == 0
 
     def test_valid_var_key_invokes_netcdf2zarr(self, tmp_path):
         with (
-            patch("h2mare.cli.nc2zarr.get_settings", return_value=_mock_settings(tmp_path)),
+            patch(
+                "h2mare.cli.nc2zarr.get_settings", return_value=_mock_settings(tmp_path)
+            ),
             patch("h2mare.cli.nc2zarr.Netcdf2Zarr") as mock_n2z,
         ):
             result = _runner.invoke(nc2zarr_app, ["-v", "sst"])
@@ -162,21 +189,31 @@ class TestConvertCLI:
 # cli/catalog.py — catalog command
 # ---------------------------------------------------------------------------
 
-class TestCatalogCLI:
 
+class TestCatalogCLI:
     def test_no_var_key_and_no_all_exits_with_code_1(self, tmp_path):
-        with patch("h2mare.cli.catalog.get_settings", return_value=_mock_settings(tmp_path)):
+        with patch(
+            "h2mare.cli.catalog.get_settings", return_value=_mock_settings(tmp_path)
+        ):
             result = _runner.invoke(catalog_app, [])
         assert result.exit_code == 1
 
     def test_unknown_var_key_prints_error_and_continues(self, tmp_path):
-        with patch("h2mare.cli.catalog.get_settings", return_value=_mock_settings(tmp_path)):
+        with patch(
+            "h2mare.cli.catalog.get_settings", return_value=_mock_settings(tmp_path)
+        ):
             result = _runner.invoke(catalog_app, ["nonexistent"])
-        assert "Unknown" in result.output or "unknown" in result.output or result.exit_code == 0
+        assert (
+            "Unknown" in result.output
+            or "unknown" in result.output
+            or result.exit_code == 0
+        )
 
     def test_valid_var_key_calls_print_catalog(self, tmp_path):
         with (
-            patch("h2mare.cli.catalog.get_settings", return_value=_mock_settings(tmp_path)),
+            patch(
+                "h2mare.cli.catalog.get_settings", return_value=_mock_settings(tmp_path)
+            ),
             patch("h2mare.cli.catalog._print_catalog") as mock_print,
         ):
             result = _runner.invoke(catalog_app, ["sst"])
@@ -185,7 +222,9 @@ class TestCatalogCLI:
 
     def test_all_flag_calls_print_catalog_for_each_var(self, tmp_path):
         with (
-            patch("h2mare.cli.catalog.get_settings", return_value=_mock_settings(tmp_path)),
+            patch(
+                "h2mare.cli.catalog.get_settings", return_value=_mock_settings(tmp_path)
+            ),
             patch("h2mare.cli.catalog._print_catalog") as mock_print,
         ):
             result = _runner.invoke(catalog_app, ["--all"])

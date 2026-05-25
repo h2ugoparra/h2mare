@@ -1,4 +1,5 @@
 """Integration tests for ParquetIndexer."""
+
 import pytest
 import polars as pl
 from datetime import date
@@ -11,8 +12,8 @@ from conftest import make_grid_df
 # Initialisation
 # ---------------------------------------------------------------------------
 
-class TestInit:
 
+class TestInit:
     def test_empty_dir_creates_directory(self, parquet_dir):
         idx = ParquetIndexer(parquet_dir)
         assert parquet_dir.exists()
@@ -25,6 +26,7 @@ class TestInit:
 
     def test_wrong_col_names_raises(self, parquet_dir, jan_df):
         import polars.exceptions
+
         idx = ParquetIndexer(parquet_dir)
         idx.add_data(jan_df)
         # polars raises ColumnNotFoundError when scanning with a non-existent
@@ -37,8 +39,8 @@ class TestInit:
 # First write
 # ---------------------------------------------------------------------------
 
-class TestFirstWrite:
 
+class TestFirstWrite:
     def test_schema_initialised(self, loaded_indexer):
         schema = loaded_indexer.get_schema()
         assert "time" in schema
@@ -71,8 +73,8 @@ class TestFirstWrite:
 # scan / load
 # ---------------------------------------------------------------------------
 
-class TestScan:
 
+class TestScan:
     def test_load_all(self, loaded_indexer, jan_df):
         df = loaded_indexer.load()
         assert len(df) == len(jan_df)
@@ -106,8 +108,8 @@ class TestScan:
 # Overlap resolution
 # ---------------------------------------------------------------------------
 
-class TestOverlapResolution:
 
+class TestOverlapResolution:
     def test_new_variable_added(self, parquet_dir, jan_df):
         """Adding a second variable to overlapping dates merges correctly."""
         idx = ParquetIndexer(parquet_dir)
@@ -161,8 +163,8 @@ class TestOverlapResolution:
 # Plot accessor caching
 # ---------------------------------------------------------------------------
 
-class TestPlotCache:
 
+class TestPlotCache:
     def test_cached_property_same_instance(self, loaded_indexer):
         assert loaded_indexer.plot is loaded_indexer.plot
 
@@ -201,8 +203,8 @@ class TestPlotCache:
 # Configurable partition_by
 # ---------------------------------------------------------------------------
 
-class TestPartitionBy:
 
+class TestPartitionBy:
     def test_default_partition_attributes(self, parquet_dir):
         idx = ParquetIndexer(parquet_dir)
         assert idx._partition_by == ["year", "month"]
@@ -220,12 +222,16 @@ class TestPartitionBy:
         df = make_grid_df([date(2021, 6, 15), date(2021, 7, 1)])
         idx.add_data(df)
         assert (parquet_dir / "year=2021").exists()
-        assert not any((parquet_dir / "year=2021").iterdir().__next__().name.startswith("month=")
-                       for _ in [None])
+        assert not any(
+            (parquet_dir / "year=2021").iterdir().__next__().name.startswith("month=")
+            for _ in [None]
+        )
 
     def test_custom_nontemporal_col_dirs(self, parquet_dir):
         idx = ParquetIndexer(parquet_dir, partition_by=["year", "region"])
-        df = make_grid_df([date(2021, 6, 15)]).with_columns(pl.lit("atlantic").alias("region"))
+        df = make_grid_df([date(2021, 6, 15)]).with_columns(
+            pl.lit("atlantic").alias("region")
+        )
         idx.add_data(df)
         assert (parquet_dir / "year=2021" / "region=atlantic").exists()
 
@@ -240,7 +246,10 @@ class TestPartitionBy:
         idx.add_data(df)
         loaded = idx.load()
         assert len(loaded) == len(df)
-        assert set(loaded["time"].cast(pl.Utf8).to_list()) == {"2021-06-15", "2021-06-16"}
+        assert set(loaded["time"].cast(pl.Utf8).to_list()) == {
+            "2021-06-15",
+            "2021-06-16",
+        }
 
     def test_roundtrip_custom_col(self, parquet_dir):
         idx = ParquetIndexer(parquet_dir, partition_by=["year", "region"])
@@ -290,7 +299,9 @@ class TestPartitionBy:
     def test_overlap_resolution_custom_partition(self, parquet_dir):
         """Overlap resolution with a custom partition col merges correctly."""
         idx = ParquetIndexer(parquet_dir, partition_by=["year", "region"])
-        df1 = make_grid_df([date(2021, 6, 15)]).with_columns(pl.lit("atlantic").alias("region"))
+        df1 = make_grid_df([date(2021, 6, 15)]).with_columns(
+            pl.lit("atlantic").alias("region")
+        )
         idx.add_data(df1)
 
         df2 = df1.with_columns(pl.lit(0.5).alias("chl"))

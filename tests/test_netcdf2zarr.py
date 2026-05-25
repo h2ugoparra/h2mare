@@ -1,4 +1,5 @@
 """Tests for format_converters/netcdf2zarr.py — Netcdf2Zarr class."""
+
 import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -84,8 +85,8 @@ def single_converter(tmp_path):
 # _resolve_string
 # ---------------------------------------------------------------------------
 
-class TestResolveString:
 
+class TestResolveString:
     def test_integer_year_returns_string(self, converter):
         assert converter._resolve_string(2021) == "2021"
 
@@ -101,8 +102,8 @@ class TestResolveString:
 # _parse_file_dates
 # ---------------------------------------------------------------------------
 
-class TestParseFileDates:
 
+class TestParseFileDates:
     def test_subset_true_expands_date_range(self, converter):
         f = Path("sst_20210101_20210131.nc")
         dates = converter._parse_file_dates(f)
@@ -125,8 +126,8 @@ class TestParseFileDates:
 # _get_file_date_bounds
 # ---------------------------------------------------------------------------
 
-class TestGetFileDateBounds:
 
+class TestGetFileDateBounds:
     def test_subset_true_returns_start_and_end(self, converter):
         f = Path("sst_20210601_20210630.nc")
         bounds = converter._get_file_date_bounds(f)
@@ -143,8 +144,8 @@ class TestGetFileDateBounds:
 # _get_downloaded_files
 # ---------------------------------------------------------------------------
 
-class TestGetDownloadedFiles:
 
+class TestGetDownloadedFiles:
     def test_finds_nc_files(self, tmp_path):
         n2z = _make_converter(tmp_path)
         (n2z.download_root / "file_20210101_20210131.nc").touch()
@@ -167,11 +168,18 @@ class TestGetDownloadedFiles:
 # _read_manifest
 # ---------------------------------------------------------------------------
 
-class TestReadManifest:
 
+class TestReadManifest:
     def test_returns_records_when_manifest_exists(self, tmp_path):
         n2z = _make_converter(tmp_path)
-        records = [{"dataset_id": "cmems-rep", "dataset_type": "rep", "start": "2021-01-01", "end": "2021-12-31"}]
+        records = [
+            {
+                "dataset_id": "cmems-rep",
+                "dataset_type": "rep",
+                "start": "2021-01-01",
+                "end": "2021-12-31",
+            }
+        ]
         (n2z.download_root / "h2mare_manifest.json").write_text(json.dumps(records))
         result = n2z._read_manifest()
         assert len(result) == 1
@@ -186,8 +194,8 @@ class TestReadManifest:
 # _group_map
 # ---------------------------------------------------------------------------
 
-class TestGroupMap:
 
+class TestGroupMap:
     def test_year_grouping(self, tmp_path):
         n2z = _make_converter(tmp_path)
         (n2z.download_root / "sst_20210101_20210131.nc").touch()
@@ -210,7 +218,9 @@ class TestGroupMap:
     def test_empty_downloads_returns_empty_dict(self, tmp_path):
         n2z = _make_converter(tmp_path)
         # No files; _get_file_date_series returns empty Series
-        with patch.object(n2z, "_get_file_date_series", return_value=pd.Series(dtype="object")):
+        with patch.object(
+            n2z, "_get_file_date_series", return_value=pd.Series(dtype="object")
+        ):
             assert n2z._group_map(TimeResolution.YEAR) == {}
 
 
@@ -218,8 +228,8 @@ class TestGroupMap:
 # _stage_eddies_to_store
 # ---------------------------------------------------------------------------
 
-class TestStageEddiesToStore:
 
+class TestStageEddiesToStore:
     def test_rep_files_moved_to_store_rep_subdir(self, tmp_path):
         n2z = _make_converter(tmp_path)
         n2z.store_root = tmp_path / "store"
@@ -273,8 +283,8 @@ class TestStageEddiesToStore:
 # process_dataset
 # ---------------------------------------------------------------------------
 
-class TestProcessDataset:
 
+class TestProcessDataset:
     def test_calls_registered_processor_for_var_key(self, tmp_path):
         n2z = _make_converter(tmp_path)
         ds = xr.Dataset(
@@ -286,7 +296,9 @@ class TestProcessDataset:
             },
         )
         mock_proc = MagicMock(return_value=ds)
-        with patch.dict("h2mare.format_converters.netcdf2zarr.PROCESSORS", {"sst": mock_proc}):
+        with patch.dict(
+            "h2mare.format_converters.netcdf2zarr.PROCESSORS", {"sst": mock_proc}
+        ):
             n2z.process_dataset(ds)
         mock_proc.assert_called_once()
 
@@ -300,6 +312,8 @@ class TestProcessDataset:
                 "lon": [-10.0, -5.0],
             },
         )
-        with patch.dict("h2mare.format_converters.netcdf2zarr.PROCESSORS", {}, clear=True):
+        with patch.dict(
+            "h2mare.format_converters.netcdf2zarr.PROCESSORS", {}, clear=True
+        ):
             result = n2z.process_dataset(ds)
         assert "sst" in result

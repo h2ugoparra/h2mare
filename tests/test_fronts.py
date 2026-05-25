@@ -1,4 +1,5 @@
 """Tests for processing/core/fronts.py — pure functions and FrontProcessor helpers."""
+
 from unittest.mock import patch
 
 import numpy as np
@@ -20,8 +21,8 @@ from h2mare.processing.core.fronts import (
 # filt5
 # ---------------------------------------------------------------------------
 
-class TestFilt5:
 
+class TestFilt5:
     def test_output_shape_matches_input(self):
         arr = np.random.rand(8, 10)
         assert filt5(arr).shape == (8, 10)
@@ -47,8 +48,8 @@ class TestFilt5:
 # filt3
 # ---------------------------------------------------------------------------
 
-class TestFilt3:
 
+class TestFilt3:
     def test_output_shape_matches_input(self):
         arr = np.random.rand(6, 6)
         grid5 = filt5(arr)
@@ -72,8 +73,8 @@ class TestFilt3:
 # boa
 # ---------------------------------------------------------------------------
 
-class TestBOA:
 
+class TestBOA:
     def _step_field(self):
         lat = np.linspace(30.0, 35.0, 8)
         lon = np.linspace(-10.0, -5.0, 10)
@@ -106,8 +107,8 @@ class TestBOA:
 # BOA_aplication
 # ---------------------------------------------------------------------------
 
-class TestBOAApplication:
 
+class TestBOAApplication:
     def test_xarray_wrapper_returns_same_as_boa(self):
         lat = np.linspace(30.0, 35.0, 8)
         lon = np.linspace(-10.0, -5.0, 10)
@@ -127,13 +128,15 @@ class TestBOAApplication:
 # create_base_grid
 # ---------------------------------------------------------------------------
 
-class TestCreateBaseGrid:
 
+class TestCreateBaseGrid:
     def test_output_shapes(self):
         lat = np.array([30.0, 35.0, 40.0])
         lon = np.array([-10.0, -5.0, 0.0])
         all_ocean = np.zeros((3, 3), dtype=bool)
-        with patch("h2mare.processing.core.fronts.globe.is_land", return_value=all_ocean):
+        with patch(
+            "h2mare.processing.core.fronts.globe.is_land", return_value=all_ocean
+        ):
             latlon_arr, sea_mask = create_base_grid(lat, lon)
         assert sea_mask.shape == (3, 3)
         assert latlon_arr.ndim == 2
@@ -143,7 +146,9 @@ class TestCreateBaseGrid:
         lat = np.array([30.0, 35.0])
         lon = np.array([-10.0, -5.0])
         all_ocean = np.zeros((2, 2), dtype=bool)
-        with patch("h2mare.processing.core.fronts.globe.is_land", return_value=all_ocean):
+        with patch(
+            "h2mare.processing.core.fronts.globe.is_land", return_value=all_ocean
+        ):
             latlon_arr, sea_mask = create_base_grid(lat, lon)
         assert latlon_arr.shape[0] == 4
 
@@ -151,7 +156,9 @@ class TestCreateBaseGrid:
         lat = np.array([30.0, 35.0])
         lon = np.array([-10.0, -5.0])
         all_land = np.ones((2, 2), dtype=bool)
-        with patch("h2mare.processing.core.fronts.globe.is_land", return_value=all_land):
+        with patch(
+            "h2mare.processing.core.fronts.globe.is_land", return_value=all_land
+        ):
             latlon_arr, sea_mask = create_base_grid(lat, lon)
         assert latlon_arr.shape[0] == 0
 
@@ -160,8 +167,8 @@ class TestCreateBaseGrid:
 # FrontProcessor.__init__
 # ---------------------------------------------------------------------------
 
-class TestFrontProcessorInit:
 
+class TestFrontProcessorInit:
     def test_sst_is_valid(self):
         fp = FrontProcessor("sst")
         assert fp.var_key == "sst"
@@ -183,8 +190,8 @@ class TestFrontProcessorInit:
 # FrontProcessor._process_daily
 # ---------------------------------------------------------------------------
 
-class TestProcessDaily:
 
+class TestProcessDaily:
     def test_returns_dataarray_with_correct_name_and_time(self):
         fp = FrontProcessor("sst")
         lat = np.array([30.0, 35.0])
@@ -202,12 +209,19 @@ class TestProcessDaily:
         )
 
         sea_mask = np.ones((2, 2), dtype=bool)
-        latlon_arr = np.array([[30.0, -10.0], [30.0, -5.0], [35.0, -10.0], [35.0, -5.0]])
+        latlon_arr = np.array(
+            [[30.0, -10.0], [30.0, -5.0], [35.0, -10.0], [35.0, -5.0]]
+        )
         fake_fronts = np.array([[32.0, -7.5]])
 
         with (
-            patch("h2mare.processing.core.fronts.create_base_grid", return_value=(latlon_arr, sea_mask)),
-            patch("h2mare.processing.core.fronts.BOA_aplication", return_value=fake_fronts),
+            patch(
+                "h2mare.processing.core.fronts.create_base_grid",
+                return_value=(latlon_arr, sea_mask),
+            ),
+            patch(
+                "h2mare.processing.core.fronts.BOA_aplication", return_value=fake_fronts
+            ),
         ):
             result = fp._process_daily(da, date)
 
@@ -233,12 +247,19 @@ class TestProcessDaily:
         )
 
         sea_mask = np.ones((2, 2), dtype=bool)
-        latlon_arr = np.array([[30.0, -10.0], [30.0, -5.0], [35.0, -10.0], [35.0, -5.0]])
+        latlon_arr = np.array(
+            [[30.0, -10.0], [30.0, -5.0], [35.0, -10.0], [35.0, -5.0]]
+        )
         fake_fronts = np.array([[32.0, -7.5]])
 
         with (
-            patch("h2mare.processing.core.fronts.create_base_grid", return_value=(latlon_arr, sea_mask)),
-            patch("h2mare.processing.core.fronts.BOA_aplication", return_value=fake_fronts),
+            patch(
+                "h2mare.processing.core.fronts.create_base_grid",
+                return_value=(latlon_arr, sea_mask),
+            ),
+            patch(
+                "h2mare.processing.core.fronts.BOA_aplication", return_value=fake_fronts
+            ),
         ):
             result = fp._process_daily(da, date)
 

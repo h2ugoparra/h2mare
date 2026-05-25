@@ -1,4 +1,5 @@
 """Tests for AVISODownloader.get_rep_availability and get_nrt_availability."""
+
 from unittest.mock import MagicMock, patch
 import pytest
 import msgspec
@@ -44,6 +45,7 @@ def _make_app_config(entry=_ENTRY) -> AppConfig:
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def dl(tmp_path):
     """AVISODownloader with rep+nrt configured and FTP mocked out."""
@@ -72,14 +74,18 @@ def dl_no_nrt(tmp_path):
 # Tests
 # ---------------------------------------------------------------------------
 
-class TestGetRepAvailability:
 
+class TestGetRepAvailability:
     def test_calls_get_dataset_files_with_rep_id(self, dl):
         fake_files = ["rep/file1.nc", "rep/file2.nc"]
         expected = DateRange(pd.Timestamp("1993-01-01"), pd.Timestamp("2023-12-31"))
 
-        with patch.object(dl, "_get_dataset_files", return_value=fake_files) as mock_files, \
-             patch.object(dl, "_get_dataset_availability", return_value=expected):
+        with (
+            patch.object(
+                dl, "_get_dataset_files", return_value=fake_files
+            ) as mock_files,
+            patch.object(dl, "_get_dataset_availability", return_value=expected),
+        ):
             dl.get_rep_availability()
 
         mock_files.assert_called_once_with(dl.var_config.dataset_id_rep)
@@ -88,8 +94,12 @@ class TestGetRepAvailability:
         fake_files = ["rep/file1.nc"]
         expected = DateRange(pd.Timestamp("1993-01-01"), pd.Timestamp("2023-12-31"))
 
-        with patch.object(dl, "_get_dataset_files", return_value=fake_files), \
-             patch.object(dl, "_get_dataset_availability", return_value=expected) as mock_avail:
+        with (
+            patch.object(dl, "_get_dataset_files", return_value=fake_files),
+            patch.object(
+                dl, "_get_dataset_availability", return_value=expected
+            ) as mock_avail,
+        ):
             dl.get_rep_availability()
 
         mock_avail.assert_called_once_with(fake_files)
@@ -97,21 +107,26 @@ class TestGetRepAvailability:
     def test_returns_date_range(self, dl):
         expected = DateRange(pd.Timestamp("1993-01-01"), pd.Timestamp("2023-12-31"))
 
-        with patch.object(dl, "_get_dataset_files", return_value=[]), \
-             patch.object(dl, "_get_dataset_availability", return_value=expected):
+        with (
+            patch.object(dl, "_get_dataset_files", return_value=[]),
+            patch.object(dl, "_get_dataset_availability", return_value=expected),
+        ):
             result = dl.get_rep_availability()
 
         assert result == expected
 
 
 class TestGetNrtAvailability:
-
     def test_calls_get_dataset_files_with_nrt_id(self, dl):
         fake_files = ["nrt/file1.nc"]
         expected = DateRange(pd.Timestamp("2024-01-01"), pd.Timestamp("2025-06-30"))
 
-        with patch.object(dl, "_get_dataset_files", return_value=fake_files) as mock_files, \
-             patch.object(dl, "_get_dataset_availability", return_value=expected):
+        with (
+            patch.object(
+                dl, "_get_dataset_files", return_value=fake_files
+            ) as mock_files,
+            patch.object(dl, "_get_dataset_availability", return_value=expected),
+        ):
             dl.get_nrt_availability()
 
         mock_files.assert_called_once_with(dl.var_config.dataset_id_nrt)
@@ -119,8 +134,10 @@ class TestGetNrtAvailability:
     def test_returns_date_range(self, dl):
         expected = DateRange(pd.Timestamp("2024-01-01"), pd.Timestamp("2025-06-30"))
 
-        with patch.object(dl, "_get_dataset_files", return_value=[]), \
-             patch.object(dl, "_get_dataset_availability", return_value=expected):
+        with (
+            patch.object(dl, "_get_dataset_files", return_value=[]),
+            patch.object(dl, "_get_dataset_availability", return_value=expected),
+        ):
             result = dl.get_nrt_availability()
 
         assert result == expected
@@ -137,12 +154,13 @@ class TestGetNrtAvailability:
 
 
 class TestGetRepAvailabilityCaching:
-
     def test_ftp_called_only_once_on_repeated_calls(self, dl):
         expected = DateRange(pd.Timestamp("1993-01-01"), pd.Timestamp("2023-12-31"))
 
-        with patch.object(dl, "_get_dataset_files", return_value=[]) as mock_files, \
-             patch.object(dl, "_get_dataset_availability", return_value=expected):
+        with (
+            patch.object(dl, "_get_dataset_files", return_value=[]) as mock_files,
+            patch.object(dl, "_get_dataset_availability", return_value=expected),
+        ):
             dl.get_rep_availability()
             dl.get_rep_availability()
 
@@ -151,8 +169,10 @@ class TestGetRepAvailabilityCaching:
     def test_nrt_ftp_called_only_once_on_repeated_calls(self, dl):
         expected = DateRange(pd.Timestamp("2024-01-01"), pd.Timestamp("2025-06-30"))
 
-        with patch.object(dl, "_get_dataset_files", return_value=[]) as mock_files, \
-             patch.object(dl, "_get_dataset_availability", return_value=expected):
+        with (
+            patch.object(dl, "_get_dataset_files", return_value=[]) as mock_files,
+            patch.object(dl, "_get_dataset_availability", return_value=expected),
+        ):
             dl.get_nrt_availability()
             dl.get_nrt_availability()
 
@@ -160,23 +180,29 @@ class TestGetRepAvailabilityCaching:
 
 
 class TestWarnIfRepUpdated:
-
     def test_warning_emitted_when_api_end_date_is_newer(self, dl, tmp_path):
         import pandas as pd
         import numpy as np
         import xarray as xr
 
         # Catalog shows rep data ending 2022-12-31
-        catalog_df = pd.DataFrame([{
-            "path": str(tmp_path / "dummy.zarr"),
-            "filename": "dummy.zarr",
-            "dataset": _ENTRY["dataset_id_rep"],
-            "start_date": pd.Timestamp("2020-01-01"),
-            "end_date": pd.Timestamp("2022-12-31"),
-        }])
+        catalog_df = pd.DataFrame(
+            [
+                {
+                    "path": str(tmp_path / "dummy.zarr"),
+                    "filename": "dummy.zarr",
+                    "dataset": _ENTRY["dataset_id_rep"],
+                    "start_date": pd.Timestamp("2020-01-01"),
+                    "end_date": pd.Timestamp("2022-12-31"),
+                }
+            ]
+        )
 
         from h2mare.storage.zarr_catalog import ZarrCatalog
-        with patch.object(ZarrCatalog, "df", new_callable=lambda: property(lambda self: catalog_df)):
+
+        with patch.object(
+            ZarrCatalog, "df", new_callable=lambda: property(lambda self: catalog_df)
+        ):
             with patch("h2mare.downloader.base.logger") as mock_logger:
                 # API reports rep ending 2023-12-31 — one year newer
                 dl._warn_if_rep_updated(pd.Timestamp("2023-12-31"))
@@ -187,16 +213,23 @@ class TestWarnIfRepUpdated:
         assert "2023-12-31" in msg
 
     def test_no_warning_when_api_end_date_matches_catalog(self, dl, tmp_path):
-        catalog_df = pd.DataFrame([{
-            "path": str(tmp_path / "dummy.zarr"),
-            "filename": "dummy.zarr",
-            "dataset": _ENTRY["dataset_id_rep"],
-            "start_date": pd.Timestamp("2020-01-01"),
-            "end_date": pd.Timestamp("2023-12-31"),
-        }])
+        catalog_df = pd.DataFrame(
+            [
+                {
+                    "path": str(tmp_path / "dummy.zarr"),
+                    "filename": "dummy.zarr",
+                    "dataset": _ENTRY["dataset_id_rep"],
+                    "start_date": pd.Timestamp("2020-01-01"),
+                    "end_date": pd.Timestamp("2023-12-31"),
+                }
+            ]
+        )
 
         from h2mare.storage.zarr_catalog import ZarrCatalog
-        with patch.object(ZarrCatalog, "df", new_callable=lambda: property(lambda self: catalog_df)):
+
+        with patch.object(
+            ZarrCatalog, "df", new_callable=lambda: property(lambda self: catalog_df)
+        ):
             with patch("h2mare.downloader.base.logger") as mock_logger:
                 dl._warn_if_rep_updated(pd.Timestamp("2023-12-31"))
 
@@ -205,7 +238,12 @@ class TestWarnIfRepUpdated:
     def test_no_warning_when_catalog_is_empty(self, dl):
         import pandas as pd
         from h2mare.storage.zarr_catalog import ZarrCatalog
-        with patch.object(ZarrCatalog, "df", new_callable=lambda: property(lambda self: pd.DataFrame())):
+
+        with patch.object(
+            ZarrCatalog,
+            "df",
+            new_callable=lambda: property(lambda self: pd.DataFrame()),
+        ):
             with patch("h2mare.downloader.base.logger") as mock_logger:
                 dl._warn_if_rep_updated(pd.Timestamp("2023-12-31"))
 

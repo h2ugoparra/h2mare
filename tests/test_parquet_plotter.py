@@ -1,4 +1,5 @@
 """Tests for storage/parquet_plotter.py — ParquetPlotter methods."""
+
 from unittest.mock import MagicMock, patch
 
 import plotly.graph_objects as go
@@ -12,8 +13,8 @@ from h2mare.storage.parquet_plotter import ParquetPlotter
 # _agg_key
 # ---------------------------------------------------------------------------
 
-class TestAggKey:
 
+class TestAggKey:
     def test_returns_tuple(self, loaded_indexer):
         plotter = ParquetPlotter(loaded_indexer)
         key = plotter._agg_key("sst", "month", None, None)
@@ -36,8 +37,8 @@ class TestAggKey:
 # clear_cache
 # ---------------------------------------------------------------------------
 
-class TestClearCache:
 
+class TestClearCache:
     def test_empties_cache(self, loaded_indexer):
         plotter = ParquetPlotter(loaded_indexer)
         plotter._cache["dummy_key"] = "dummy_value"
@@ -54,24 +55,28 @@ class TestClearCache:
 # _snap_to_grid
 # ---------------------------------------------------------------------------
 
-class TestSnapToGrid:
 
+class TestSnapToGrid:
     def test_returns_nearest_cell(self, loaded_indexer):
         plotter = ParquetPlotter(loaded_indexer)
-        plotter._grid_coords = pl.DataFrame({
-            "lon": [-10.0, -5.0, 0.0],
-            "lat": [30.0, 35.0, 40.0],
-        })
+        plotter._grid_coords = pl.DataFrame(
+            {
+                "lon": [-10.0, -5.0, 0.0],
+                "lat": [30.0, 35.0, 40.0],
+            }
+        )
         # lon=-7 → nearest is -5; lat=32 → nearest is 30
         result = plotter._snap_to_grid((-7.0, 32.0))
         assert result == (-5.0, 30.0, -5.0, 30.0)
 
     def test_returns_four_element_tuple(self, loaded_indexer):
         plotter = ParquetPlotter(loaded_indexer)
-        plotter._grid_coords = pl.DataFrame({
-            "lon": [-10.0, -5.0],
-            "lat": [30.0, 35.0],
-        })
+        plotter._grid_coords = pl.DataFrame(
+            {
+                "lon": [-10.0, -5.0],
+                "lat": [30.0, 35.0],
+            }
+        )
         result = plotter._snap_to_grid((-10.0, 35.0))
         assert len(result) == 4
 
@@ -80,15 +85,18 @@ class TestSnapToGrid:
 # _get_agg_df
 # ---------------------------------------------------------------------------
 
-class TestGetAggDf:
 
+class TestGetAggDf:
     def test_caches_result_on_second_call(self, loaded_indexer):
         plotter = ParquetPlotter(loaded_indexer)
         fake_df = pl.DataFrame({"time_agg": [1], "sst": [20.0]})
         mock_lf = MagicMock()
         mock_lf.collect.return_value = fake_df
 
-        with patch("h2mare.storage.parquet_plotter.aggregate_by_space_time", return_value=mock_lf) as mock_agg:
+        with patch(
+            "h2mare.storage.parquet_plotter.aggregate_by_space_time",
+            return_value=mock_lf,
+        ) as mock_agg:
             plotter._get_agg_df("sst", "month", None, None)
             plotter._get_agg_df("sst", "month", None, None)
 
@@ -104,8 +112,8 @@ class TestGetAggDf:
 # time_series
 # ---------------------------------------------------------------------------
 
-class TestTimeSeries:
 
+class TestTimeSeries:
     def test_returns_plotly_figure(self, loaded_indexer):
         plotter = ParquetPlotter(loaded_indexer)
         with patch("h2mare.storage.parquet_plotter.get_settings") as mock_get_settings:
@@ -121,7 +129,9 @@ class TestTimeSeries:
     def test_figure_has_one_trace(self, loaded_indexer):
         plotter = ParquetPlotter(loaded_indexer)
         with patch("h2mare.storage.parquet_plotter.get_settings") as mock_get_settings:
-            mock_get_settings.return_value.get_var_info.return_value = {"long_name": "SST"}
+            mock_get_settings.return_value.get_var_info.return_value = {
+                "long_name": "SST"
+            }
             fig = plotter.time_series("sst", "month")
         assert len(fig.data) == 1
 
@@ -130,8 +140,8 @@ class TestTimeSeries:
 # spatial_maps
 # ---------------------------------------------------------------------------
 
-class TestSpatialMaps:
 
+class TestSpatialMaps:
     def test_unknown_variable_raises_value_error(self, loaded_indexer):
         plotter = ParquetPlotter(loaded_indexer)
         with pytest.raises(ValueError, match="not in parquet"):

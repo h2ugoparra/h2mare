@@ -1,4 +1,5 @@
 """Tests for storage/xarray_helpers.py."""
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -29,7 +30,6 @@ def _make_ds(n_time=10, n_lat=4, n_lon=4, dtype=np.float32):
 
 
 class TestGetDatasetEncoding:
-
     def test_returns_encoding_for_each_var(self):
         ds = _make_ds()
         enc = get_dataset_encoding(ds)
@@ -43,7 +43,6 @@ class TestGetDatasetEncoding:
 
 
 class TestUnifiedTimeChunk:
-
     def test_returns_positive_int(self):
         ds = _make_ds(n_time=365)
         chunk = unified_time_chunk(ds)
@@ -60,7 +59,6 @@ class TestUnifiedTimeChunk:
 
 
 class TestHaveVarsUniqueValues:
-
     def test_nonexistent_path_returns_false(self, tmp_path):
         bad_path = tmp_path / "nonexistent.zarr"
         assert have_vars_unique_values(bad_path) is False
@@ -81,7 +79,6 @@ class TestHaveVarsUniqueValues:
 
 
 class TestConvert360To180:
-
     def test_converts_0_360_to_minus180_180(self):
         ds = xr.Dataset(
             {"sst": (["lat", "lon"], np.ones((3, 4)))},
@@ -101,7 +98,6 @@ class TestConvert360To180:
 
 
 class TestChunkDataset:
-
     def test_2d_spatial_dims_stay_full_size(self):
         """lat and lon are always kept at full size."""
         ds = _make_ds(n_time=10, n_lat=50, n_lon=60)
@@ -172,7 +168,6 @@ class TestChunkDataset:
 
 
 class TestRenameDims:
-
     def test_renames_longitude_latitude(self):
         ds = xr.Dataset(
             {"sst": (["latitude", "longitude"], np.ones((3, 3)))},

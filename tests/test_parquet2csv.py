@@ -1,4 +1,5 @@
 """Tests for parquet2csv converter."""
+
 from datetime import date, datetime
 
 import polars as pl
@@ -22,7 +23,9 @@ def parquet_root(tmp_path):
 
 def test_invalid_freq_raises(parquet_root, tmp_path):
     with pytest.raises(ValueError, match="freq must be"):
-        parquet2csv(parquet_root, tmp_path / "out", "2021-01-01", "2021-12-31", freq="hourly")
+        parquet2csv(
+            parquet_root, tmp_path / "out", "2021-01-01", "2021-12-31", freq="hourly"
+        )
 
 
 def test_daily_creates_one_file_per_day(parquet_root, tmp_path):
@@ -88,12 +91,14 @@ def test_year_month_partition_cols_absent(parquet_root, tmp_path):
 
 
 def test_all_nan_rows_dropped(tmp_path):
-    df = pl.DataFrame({
-        "time": [datetime(2021, 1, 1), datetime(2021, 1, 2)],
-        "lat": [30.0, 35.0],
-        "lon": [-10.0, -5.0],
-        "sst": [float("nan"), 20.0],
-    })
+    df = pl.DataFrame(
+        {
+            "time": [datetime(2021, 1, 1), datetime(2021, 1, 2)],
+            "lat": [30.0, 35.0],
+            "lon": [-10.0, -5.0],
+            "sst": [float("nan"), 20.0],
+        }
+    )
     p = tmp_path / "parquet"
     p.mkdir()
     df.write_parquet(p / "data.parquet")
@@ -114,12 +119,14 @@ def test_csv_contains_expected_columns(parquet_root, tmp_path):
 
 
 def test_float64_downcast_to_float32(tmp_path):
-    df = pl.DataFrame({
-        "time": [datetime(2021, 1, 1)],
-        "lat": [30.0],
-        "lon": [-10.0],
-        "sst": pl.Series([20.123456789], dtype=pl.Float64),
-    })
+    df = pl.DataFrame(
+        {
+            "time": [datetime(2021, 1, 1)],
+            "lat": [30.0],
+            "lon": [-10.0],
+            "sst": pl.Series([20.123456789], dtype=pl.Float64),
+        }
+    )
     p = tmp_path / "parquet"
     p.mkdir()
     df.write_parquet(p / "data.parquet")

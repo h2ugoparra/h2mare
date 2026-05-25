@@ -1,4 +1,5 @@
 """Tests for utils/labels.py."""
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -9,7 +10,6 @@ from h2mare.utils.labels import create_filename_label, create_label_from_dataset
 
 
 class TestCreateFilenameLabel:
-
     def test_bbox_object_with_date_range(self):
         bbox = BBox(-10, 30, 20, 50)
         dr = DateRange("2023-01-01", "2023-12-31")
@@ -34,7 +34,6 @@ class TestCreateFilenameLabel:
 
 
 class TestCreateLabelFromDataset:
-
     def _make_ds(self, years):
         times = pd.date_range(f"{years[0]}-01-01", f"{years[-1]}-12-31", freq="MS")
         return xr.Dataset(
@@ -53,6 +52,7 @@ class TestCreateLabelFromDataset:
 
     def test_multi_year_triggers_warning(self, caplog):
         import logging
+
         ds = self._make_ds([2022, 2023])
         with caplog.at_level(logging.WARNING):
             label = create_label_from_dataset(ds, date_format="year")
@@ -60,6 +60,7 @@ class TestCreateLabelFromDataset:
 
     def test_multi_year_no_warning_when_suppressed(self, caplog):
         import logging
+
         ds = self._make_ds([2022, 2023])
         with caplog.at_level(logging.WARNING):
             create_label_from_dataset(ds, date_format="year", warn_multi_year=False)

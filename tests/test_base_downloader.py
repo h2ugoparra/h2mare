@@ -1,4 +1,5 @@
 """Tests for downloader/base.py — BaseDownloader helper methods."""
+
 from unittest.mock import MagicMock, patch
 
 import msgspec
@@ -30,6 +31,7 @@ def _make_config() -> AppConfig:
 
 class ConcreteDownloader(BaseDownloader):
     """Minimal concrete subclass for testing abstract base."""
+
     def run(self, *args, **kwargs) -> bool:
         return True
 
@@ -48,8 +50,8 @@ def dl(tmp_path):
 # __repr__
 # ---------------------------------------------------------------------------
 
-class TestRepr:
 
+class TestRepr:
     def test_repr_contains_var_key(self, dl):
         assert "sst" in repr(dl)
 
@@ -61,8 +63,8 @@ class TestRepr:
 # _cleanup_empty_download_dir
 # ---------------------------------------------------------------------------
 
-class TestCleanupEmptyDownloadDir:
 
+class TestCleanupEmptyDownloadDir:
     def test_removes_empty_download_dir(self, dl):
         dl.download_dir.mkdir(parents=True, exist_ok=True)
         dl._cleanup_empty_download_dir()
@@ -83,8 +85,8 @@ class TestCleanupEmptyDownloadDir:
 # _warn_if_rep_updated
 # ---------------------------------------------------------------------------
 
-class TestWarnIfRepUpdated:
 
+class TestWarnIfRepUpdated:
     # ZarrCatalog is imported locally inside _warn_if_rep_updated, so patch
     # the class at its source module.
     _PATCH_TARGET = "h2mare.storage.zarr_catalog.ZarrCatalog"
@@ -101,6 +103,8 @@ class TestWarnIfRepUpdated:
 
     def test_no_error_when_no_rep_rows_in_catalog(self, dl):
         mock_catalog = MagicMock()
-        mock_catalog.df = pd.DataFrame({"dataset": ["other-ds"], "end_date": ["2023-01-01"]})
+        mock_catalog.df = pd.DataFrame(
+            {"dataset": ["other-ds"], "end_date": ["2023-01-01"]}
+        )
         with patch(self._PATCH_TARGET, return_value=mock_catalog):
             dl._warn_if_rep_updated(pd.Timestamp("2024-01-01"))  # must not raise

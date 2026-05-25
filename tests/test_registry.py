@@ -1,9 +1,9 @@
 """Tests for processing/registry.py — PROCESSORS dict."""
+
 from h2mare.processing.registry import PROCESSORS
 
 
 class TestProcessorsRegistry:
-
     _EXPECTED_KEYS = {
         "atm-instante",
         "atm-accum-avg",
