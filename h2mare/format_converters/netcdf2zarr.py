@@ -410,7 +410,7 @@ class Netcdf2Zarr:
             try:
                 logger.debug(f"Removing raw files from {self.download_root}")
                 safe_rmtree(self.download_root)
-            except Exception:
+            except OSError:
                 logger.exception(f"Could not remove {self.download_root}")
 
     def _resolve_string(self, period: int | tuple[int, int]) -> str:

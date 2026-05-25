@@ -26,8 +26,8 @@ def _force_remove(func, path, exc_info):
     try:
         os.chmod(path, stat.S_IWRITE)
         func(path)
-    except Exception:
-        pass  # If it still fails, ignore and let the retry logic handle it
+    except OSError as e:
+        logger.debug(f"_force_remove: could not remove {path}: {e}")
 
 
 def safe_rmtree(path: Path, retries=10, delay=0.5) -> None:
@@ -153,8 +153,7 @@ def clean_era_dataset(ds: xr.Dataset, var: str) -> xr.Dataset:
             if np.isfinite(da).any():
                 good_times.append(t)
         except Exception:
-            print(f"Corrupted time index: {t}")
-            # corrupted time slice → skip it
+            logger.warning(f"Corrupted time index {t} — skipping.")
             continue
 
     ds = ds.sel(time=good_times)

@@ -553,8 +553,8 @@ class ParquetIndexer:
                         logger.debug(
                             f"Partially-written columns detected (excluded from existing CTE): {partially_written}"
                         )
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f"Could not detect partially-written columns: {e}")
 
             # Exclude time-derived partition cols from existing CTE (re-derived after JOIN);
             # custom partition cols remain so they survive the FULL OUTER JOIN correctly.

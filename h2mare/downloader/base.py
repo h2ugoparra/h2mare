@@ -71,7 +71,10 @@ class BaseDownloader(ABC):
 
         try:
             df = ZarrCatalog(self.var_key, auto_refresh=False).df
-        except Exception:
+        except FileNotFoundError:
+            return
+        except Exception as e:
+            logger.debug(f"Could not check rep catalog for '{self.var_key}': {e}")
             return
 
         if df.empty or "dataset" not in df.columns:
