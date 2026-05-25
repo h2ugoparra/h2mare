@@ -49,6 +49,22 @@ class PipelineManager:
         if variables is None:
             variables = list(self.app_config.variables.keys())
 
+        # Pre-flight: fail fast if any variable's source has no registered downloader
+        unregistered = {
+            var_key: cfg.source
+            for var_key in variables
+            if var_key not in SYSTEM_VAR_KEYS
+            and (cfg := self.app_config.variables.get(var_key)) is not None
+            and cfg.source not in self.registry
+        }
+        if unregistered:
+            for var_key, source in unregistered.items():
+                logger.error(
+                    f"No downloader registered for source '{source}' (variable '{var_key}'). "
+                    f"Registered sources: {sorted(self.registry)}."
+                )
+            return False
+
         _failed = False
 
         for var_key in variables:
@@ -62,10 +78,6 @@ class PipelineManager:
                 continue
 
             DownloaderClass = self.registry.get(var_config.source)
-            if not DownloaderClass:
-                logger.error(f"❌ Downloader {var_config.source} not found.")
-                _failed = True
-                continue
 
             downloader = DownloaderClass(
                 var_key=var_key,
