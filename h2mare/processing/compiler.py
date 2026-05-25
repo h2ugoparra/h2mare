@@ -15,7 +15,7 @@ import pandas as pd
 import xarray as xr
 from loguru import logger
 
-from h2mare.config import AppConfig, settings
+from h2mare.config import AppConfig, get_settings
 from h2mare.downloader.commons import resolve_date_range
 from h2mare.storage.coverage import get_store_coverage, split_time_range
 from h2mare.storage.storage import write_append_zarr
@@ -89,14 +89,14 @@ class Compiler:
             time_resolution: Temporal granularity ('year' or 'month') for file storage. Defaults to 'year'.
             date_format: string date format for output file name.
         """
-        self.app_config = app_config or settings.app_config
+        self.app_config = app_config or get_settings().app_config
         self.var_key = validate_var_key(var_key, self.app_config)
         self.var_config = self.app_config.variables[self.var_key]
 
         self.local_store_root = (
-            local_store_root or settings.ZARR_DIR / self.var_config.local_folder
+            local_store_root or get_settings().ZARR_DIR / self.var_config.local_folder
         )
-        resolved_remote = remote_store_root or settings.STORE_ROOT
+        resolved_remote = remote_store_root or get_settings().STORE_ROOT
         if resolved_remote is None:
             raise ValueError(
                 "remote_store_root must be provided or STORE_ROOT must be set in the environment"
@@ -332,9 +332,9 @@ class Compiler:
         Args:
             ds: Dataset for atts assignment
         """
-        ds.attrs = settings.global_attrs
+        ds.attrs = get_settings().global_attrs
         for var in ds.data_vars:
-            var_info = settings.get_var_info(str(var))
+            var_info = get_settings().get_var_info(str(var))
             ds[var].attrs.update({key: val for key, val in var_info.items()})
         return ds
 
@@ -521,7 +521,7 @@ class Compiler:
 
 
 if __name__ == "__main__":
-    log_path = settings.LOGS_DIR / f"{Path(__file__).stem}.log"
+    log_path = get_settings().LOGS_DIR / f"{Path(__file__).stem}.log"
     logger.add(log_path, level="INFO")
 
     Compiler().run(start_date="2025-01-01", end_date="2025-01-31")

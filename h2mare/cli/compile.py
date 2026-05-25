@@ -24,7 +24,7 @@ import pandas as pd
 import typer
 from loguru import logger
 
-from h2mare.config import settings
+from h2mare.config import get_settings
 
 app = typer.Typer()
 
@@ -68,7 +68,7 @@ def compile(
 ) -> None:
     """Merge per-variable Zarr stores into the unified h2ds compiled dataset."""
 
-    log_path = settings.LOGS_DIR / "h2mare.log"
+    log_path = get_settings().LOGS_DIR / "h2mare.log"
     logger.add(log_path, level="INFO")
 
     if bool(start_date) ^ bool(end_date):
@@ -88,7 +88,7 @@ def compile(
             raise typer.Exit(code=1)
 
     if vars:
-        available = set(settings.app_config.variables.keys())
+        available = set(get_settings().app_config.variables.keys())
         unknown = set(vars) - available
         if unknown:
             typer.echo(
@@ -100,7 +100,7 @@ def compile(
 
     from h2mare.processing.compiler import Compiler
 
-    Compiler(remote_store_root=store_path or settings.STORE_ROOT).run(
+    Compiler(remote_store_root=store_path or get_settings().STORE_ROOT).run(
         start_date=start_date,
         end_date=end_date,
         var_keys=list(vars) if vars else None,

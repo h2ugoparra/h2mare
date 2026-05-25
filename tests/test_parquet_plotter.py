@@ -108,8 +108,8 @@ class TestTimeSeries:
 
     def test_returns_plotly_figure(self, loaded_indexer):
         plotter = ParquetPlotter(loaded_indexer)
-        with patch("h2mare.storage.parquet_plotter.settings") as mock_settings:
-            mock_settings.get_var_info.return_value = {}
+        with patch("h2mare.storage.parquet_plotter.get_settings") as mock_get_settings:
+            mock_get_settings.return_value.get_var_info.return_value = {}
             fig = plotter.time_series("sst", "month")
         assert isinstance(fig, go.Figure)
 
@@ -120,8 +120,8 @@ class TestTimeSeries:
 
     def test_figure_has_one_trace(self, loaded_indexer):
         plotter = ParquetPlotter(loaded_indexer)
-        with patch("h2mare.storage.parquet_plotter.settings") as mock_settings:
-            mock_settings.get_var_info.return_value = {"long_name": "SST"}
+        with patch("h2mare.storage.parquet_plotter.get_settings") as mock_get_settings:
+            mock_get_settings.return_value.get_var_info.return_value = {"long_name": "SST"}
             fig = plotter.time_series("sst", "month")
         assert len(fig.data) == 1
 

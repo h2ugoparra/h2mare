@@ -9,7 +9,7 @@ from typing import Optional
 
 from loguru import logger
 
-from h2mare.config import settings
+from h2mare.config import get_settings
 from h2mare.models import KeyVarConfigEntry
 
 
@@ -22,7 +22,7 @@ def resolve_download_path(
     if download_root is not None:
         path = Path(download_root)
     else:
-        path = settings.DOWNLOADS_DIR / var_config.local_folder
+        path = get_settings().DOWNLOADS_DIR / var_config.local_folder
 
     path = path.resolve()
 
@@ -47,7 +47,7 @@ def resolve_store_path(
     Priority:
         1. Explicit store_root argument
         2. STORE_ROOT environment variable
-        3. settings.ZARR_DIR
+        3. get_settings().ZARR_DIR
 
     Args:
         var_config: Variable configuration (for local_folder)
@@ -62,10 +62,10 @@ def resolve_store_path(
     """
     if store_root is not None:
         path = Path(store_root)
-    elif settings.STORE_ROOT is not None:
-        path = settings.STORE_ROOT / var_config.local_folder
+    elif get_settings().STORE_ROOT is not None:
+        path = get_settings().STORE_ROOT / var_config.local_folder
     else:
-        path = settings.ZARR_DIR / var_config.local_folder
+        path = get_settings().ZARR_DIR / var_config.local_folder
 
     path = path.resolve()
 

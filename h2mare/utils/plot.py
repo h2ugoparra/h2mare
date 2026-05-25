@@ -15,7 +15,7 @@ import polars as pl
 import xarray as xr
 from IPython.display import clear_output, display
 
-from h2mare.config import settings
+from h2mare.config import get_settings
 from h2mare.storage.parquet_helpers import _required_columns
 from h2mare.types import BBox
 
@@ -167,7 +167,7 @@ def plot_maps(
         shrink=0.6,
     )
 
-    legend_label = legend_title or settings.variable_attrs.get(var_name, {}).get(
+    legend_label = legend_title or get_settings().variable_attrs.get(var_name, {}).get(
         "short_name", var_name
     )
     cbar.set_label(legend_label)

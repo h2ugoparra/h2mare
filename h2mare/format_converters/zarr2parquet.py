@@ -14,7 +14,7 @@ import pandas as pd
 import polars as pl
 from loguru import logger
 
-from h2mare.config import settings
+from h2mare.config import get_settings
 from h2mare.storage import ZarrCatalog
 from h2mare.storage.coverage import split_time_range
 from h2mare.storage.parquet_indexer import ParquetIndexer
@@ -47,7 +47,7 @@ class Zarr2Parquet:
             created.  The actual write path is
             ``parquet_root / <dataset_base_name>``.
         store_root: Override for the Zarr store root. Defaults to
-            ``settings.STORE_ROOT``.
+            ``get_settings().STORE_ROOT``.
     """
 
     def __init__(
@@ -140,7 +140,7 @@ class Zarr2Parquet:
         Copy the local Parquet store to a remote location.
 
         If *remote_root* is not provided, defaults to
-        ``settings.STORE_ROOT / "parquet" / var_key``.  The backup is silently
+        ``get_settings().STORE_ROOT / "parquet" / var_key``.  The backup is silently
         skipped when ``STORE_ROOT`` is not configured.
 
         Args:
@@ -148,13 +148,13 @@ class Zarr2Parquet:
                 is appended automatically when omitted.
         """
         if remote_root is None:
-            if settings.STORE_ROOT is None:
+            if get_settings().STORE_ROOT is None:
                 logger.warning(
                     "STORE_ROOT is not set — skipping Parquet backup. "
                     "Set STORE_ROOT in .env or pass remote_root explicitly."
                 )
                 return
-            remote_root = settings.STORE_ROOT / "parquet"
+            remote_root = get_settings().STORE_ROOT / "parquet"
 
         logger.info(f"Backing up Parquet: {self.parquet_root} → {remote_root}")
         try:

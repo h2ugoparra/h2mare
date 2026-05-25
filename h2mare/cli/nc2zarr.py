@@ -36,7 +36,7 @@ from typing import List, Optional
 import typer
 from loguru import logger
 
-from h2mare.config import settings
+from h2mare.config import get_settings
 from h2mare.format_converters.netcdf2zarr import Netcdf2Zarr
 
 app = typer.Typer(
@@ -68,13 +68,13 @@ def convert(
 ) -> None:
     """Convert downloaded raw NetCDF/GRIB files to Zarr for one or more variables."""
 
-    base_dir = input_root if input_root is not None else settings.DOWNLOADS_DIR
+    base_dir = input_root if input_root is not None else get_settings().DOWNLOADS_DIR
 
-    log_path = settings.LOGS_DIR / f"{Path(__file__).stem}.log"
+    log_path = get_settings().LOGS_DIR / f"{Path(__file__).stem}.log"
     logger.add(log_path, level="INFO")
 
     for var in var_keys:
-        var_config = settings.app_config.variables.get(var)
+        var_config = get_settings().app_config.variables.get(var)
         if var_config is None:
             logger.error(f"Unknown variable key '{var}' — skipping. Check config.yaml.")
             continue

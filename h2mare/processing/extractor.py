@@ -20,7 +20,7 @@ import xarray as xr
 from loguru import logger
 from scipy.spatial import KDTree
 
-from h2mare import AppConfig, settings
+from h2mare import AppConfig, get_settings
 from h2mare.storage.zarr_catalog import ZarrCatalog
 from h2mare.types import BBox
 from h2mare.utils.logging_utils import log_time
@@ -227,10 +227,10 @@ class Extractor:
         self.lat_col = lat_col if lat_col is not None else "lat"
         self.crs = crs
 
-        self.app_config = app_config or settings.app_config
+        self.app_config = app_config or get_settings().app_config
 
         self.store_root = (
-            Path(store_root) if store_root is not None else settings.STORE_ROOT
+            Path(store_root) if store_root is not None else get_settings().STORE_ROOT
         )
 
         data_orig = self._resolve_file_format(file_path)
@@ -576,7 +576,7 @@ class Extractor:
 
         var_dict = self._normalize_var_dict(var_dict)
 
-        tmp_path = settings.INTERIM_DIR / "extraction_checkpoint.feather"
+        tmp_path = get_settings().INTERIM_DIR / "extraction_checkpoint.feather"
 
         if tmp_path.exists():
             logger.warning(f"Found checkpoint file: {tmp_path}, resuming.")

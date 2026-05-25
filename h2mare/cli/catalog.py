@@ -21,7 +21,7 @@ from typing import Optional
 import pandas as pd
 import typer
 
-from h2mare.config import settings
+from h2mare.config import get_settings
 
 app = typer.Typer()
 
@@ -105,12 +105,12 @@ def catalog(
         typer.echo("Provide a variable key or use --all.", err=True)
         raise typer.Exit(code=1)
 
-    keys = list(settings.app_config.variables.keys()) if all_vars else [var_key]
+    keys = list(get_settings().app_config.variables.keys()) if all_vars else [var_key]
 
     for key in keys:
-        if key not in settings.app_config.variables:
+        if key not in get_settings().app_config.variables:
             typer.echo(
-                f"Unknown variable key '{key}'. Available: {', '.join(settings.app_config.variables)}.",
+                f"Unknown variable key '{key}'. Available: {', '.join(get_settings().app_config.variables)}.",
                 err=True,
             )
             continue

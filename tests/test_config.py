@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from h2mare.config import Settings
+from h2mare.config import Settings, get_settings
 
 _MINIMAL_CONFIG_YAML = """\
 global_attrs:
@@ -164,3 +164,26 @@ class TestGetAvailableVarKeys:
         keys = s.get_available_var_keys()
         assert isinstance(keys, list)
         assert "sst" in keys
+
+
+# ---------------------------------------------------------------------------
+# get_settings — cached factory
+# ---------------------------------------------------------------------------
+
+class TestGetSettingsFactory:
+
+    def test_returns_settings_instance(self):
+        assert isinstance(get_settings(), Settings)
+
+    def test_same_object_returned_on_repeated_calls(self):
+        assert get_settings() is get_settings()
+
+    def test_cache_clear_produces_fresh_instance(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("H2MARE_ROOT", str(tmp_path))
+        monkeypatch.delenv("STORE_ROOT", raising=False)
+        get_settings.cache_clear()
+        try:
+            s = get_settings()
+            assert s.BASE_DIR == tmp_path.resolve()
+        finally:
+            get_settings.cache_clear()  # restore default behaviour for other tests

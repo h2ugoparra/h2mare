@@ -17,7 +17,7 @@ from loguru import logger
 from numpy.typing import NDArray
 from scipy.ndimage import maximum_filter, median_filter, minimum_filter, sobel
 
-from h2mare import settings
+from h2mare import get_settings
 from h2mare.utils.spatial import haversine_min_distance_kdtree
 
 # Thresholds for different variables (based on literature)
@@ -208,7 +208,7 @@ class FrontProcessor:
         )
 
         # Save to temporary Zarr (auto-cleanup when program exits) Avoid memory issues also
-        zarr_path = settings.INTERIM_DIR / f"{self.var_key}_tmp.zarr"
+        zarr_path = get_settings().INTERIM_DIR / f"{self.var_key}_tmp.zarr"
         da.to_dataset(name=self.var_key).to_zarr(zarr_path, mode="w")
 
         # Reopen lazily from Zarr
@@ -234,7 +234,7 @@ class FrontProcessor:
         result = xr.combine_by_coords(out)
 
         if result is not None:
-            shutil.rmtree(settings.INTERIM_DIR)
+            shutil.rmtree(get_settings().INTERIM_DIR)
             return result
         else:
             # Return an empty DataArray with appropriate dims if nothing was processed

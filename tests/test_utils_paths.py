@@ -38,7 +38,7 @@ class TestResolveDownloadPath:
     def test_falls_back_to_settings_downloads_dir(self, tmp_path):
         mock_settings = MagicMock()
         mock_settings.DOWNLOADS_DIR = tmp_path
-        with patch("h2mare.utils.paths.settings", mock_settings):
+        with patch("h2mare.utils.paths.get_settings", return_value=mock_settings):
             result = resolve_download_path(_VAR_CONFIG, warn_if_missing=False)
         assert result == (tmp_path / _VAR_CONFIG.local_folder).resolve()
 
@@ -52,7 +52,7 @@ class TestResolveStorePath:
     def test_store_dir_used_when_available(self, tmp_path):
         mock_settings = MagicMock()
         mock_settings.STORE_ROOT = tmp_path
-        with patch("h2mare.utils.paths.settings", mock_settings):
+        with patch("h2mare.utils.paths.get_settings", return_value=mock_settings):
             result = resolve_store_path(_VAR_CONFIG, warn_if_missing=False)
         assert result == (tmp_path / _VAR_CONFIG.local_folder).resolve()
 
@@ -60,6 +60,6 @@ class TestResolveStorePath:
         mock_settings = MagicMock()
         mock_settings.STORE_ROOT = None
         mock_settings.ZARR_DIR = tmp_path
-        with patch("h2mare.utils.paths.settings", mock_settings):
+        with patch("h2mare.utils.paths.get_settings", return_value=mock_settings):
             result = resolve_store_path(_VAR_CONFIG, warn_if_missing=False)
         assert result == (tmp_path / _VAR_CONFIG.local_folder).resolve()

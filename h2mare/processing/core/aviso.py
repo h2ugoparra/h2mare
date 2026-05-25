@@ -19,7 +19,7 @@ from loguru import logger
 from numpy.typing import NDArray
 from scipy.spatial import cKDTree  # type: ignore
 
-from h2mare.config import AppConfig, settings
+from h2mare.config import AppConfig, get_settings
 from h2mare.downloader.commons import resolve_date_range
 from h2mare.models import KeyVarConfigEntry
 from h2mare.storage.storage import write_append_zarr
@@ -151,12 +151,12 @@ class EDDIESProcessor:
 
         Args:
             var_key: Variable key that must exist in app_config.variables. Defaults to 'eddies'.
-            app_config (Optional[AppConfig], optional): Application configuration. If None, loads from settings.
-            store_root (Optional[Path]): Root directory for zarr files. If None, uses settings.STORE_ROOT or settings.ZARR_DIR.
-            download_root (Optional[Path]): Root directory with downloaded data. If None, uses settings.DOWNLOADS_DIR.
+            app_config (Optional[AppConfig], optional): Application configuration. If None, loads from get_settings().
+            store_root (Optional[Path]): Root directory for zarr files. If None, uses get_settings().STORE_ROOT or get_settings().ZARR_DIR.
+            download_root (Optional[Path]): Root directory with downloaded data. If None, uses get_settings().DOWNLOADS_DIR.
             grid cell size for lon and lat, (dx and dy respectively).
         """
-        self.app_config = app_config or settings.app_config
+        self.app_config = app_config or get_settings().app_config
         self.var_key = validate_var_key(var_key, self.app_config)
         self.var_config = self.app_config.variables[self.var_key]
 
@@ -423,7 +423,7 @@ class EDDIESProcessor:
     def _set_attrs(self, ds: xr.Dataset) -> xr.Dataset:
         """Set dataset variables attributes from yaml variable_attrs."""
         for var in ds.data_vars:
-            var_info = settings.get_var_info(str(var))
+            var_info = get_settings().get_var_info(str(var))
             ds[var].attrs.update({key: val for key, val in var_info.items()})
         return ds
 
@@ -511,7 +511,7 @@ def process_fsle(ds: xr.Dataset, var_config: KeyVarConfigEntry) -> xr.Dataset:
 
 
 if __name__ == "__main__":
-    log_path = settings.LOGS_DIR / f"{Path(__file__).stem}.log"
+    log_path = get_settings().LOGS_DIR / f"{Path(__file__).stem}.log"
     logger.add(log_path, level="INFO")
 
     ed_proc = EDDIESProcessor()

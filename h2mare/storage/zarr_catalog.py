@@ -19,7 +19,7 @@ import pandas as pd
 import xarray as xr
 from loguru import logger
 
-from h2mare.config import AppConfig, settings
+from h2mare.config import AppConfig, get_settings
 from h2mare.types import BBox, DateLike, DateRange, TimeResolution
 from h2mare.utils.datetime_utils import normalize_date
 from h2mare.utils.labels import create_label_from_dataset
@@ -71,9 +71,9 @@ class ZarrCatalog:
         Args:
             var_key (str): Variable key that must exist in app_config.variables
             time_resolution: Temporal granularity for file storage ('year' or 'month'). Defaults to 'year'.
-            app_config (Optional[AppConfig], optional): Application configuration. If None, loads from settings.
-            store_root (Optional[Path]): Root directory for zarr files. If None, uses settings.STORE_ROOT or settings.ZARR_DIR.
-            metadata_root (Optional[Path]): Root directory for catalog parquet files. If None, uses settings.METADATA_DIR.
+            app_config (Optional[AppConfig], optional): Application configuration. If None, loads from get_settings().
+            store_root (Optional[Path]): Root directory for zarr files. If None, uses get_settings().STORE_ROOT or get_settings().ZARR_DIR.
+            metadata_root (Optional[Path]): Root directory for catalog parquet files. If None, uses get_settings().METADATA_DIR.
             auto_refresh (bool): Automatically check for changes on access. Defaults to True.
 
         Raises:
@@ -84,7 +84,7 @@ class ZarrCatalog:
             >>> catalog = ZarrCatalog("ssh")
         """
         # Load config
-        self.app_config = app_config or settings.app_config
+        self.app_config = app_config or get_settings().app_config
         self.var_key = validate_var_key(var_key, self.app_config)
         self.var_config = self.app_config.variables[var_key]
 
@@ -92,7 +92,7 @@ class ZarrCatalog:
 
         # Setup directories
         self.store_root = resolve_store_path(self.var_config, store_root)
-        self.metadata_root = metadata_root or settings.METADATA_DIR
+        self.metadata_root = metadata_root or get_settings().METADATA_DIR
 
         self.auto_refresh = auto_refresh
         self._cached_state: Optional[DirectoryState] = None
@@ -1164,9 +1164,9 @@ class ZarrCatalog:
 
 
 if __name__ == "__main__":
-    from h2mare.config import settings
+    from h2mare.config import get_settings
 
-    var_list = settings.get_available_var_keys()
+    var_list = get_settings().get_available_var_keys()
     for var_key in var_list:
         repo = ZarrCatalog(var_key)
         print(repo)

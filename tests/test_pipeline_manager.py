@@ -237,9 +237,9 @@ class TestCleanup:
         empty_dir = tmp_path / "downloads" / "sst"
         empty_dir.mkdir(parents=True)
 
-        with patch("h2mare.pipeline_manager.settings") as mock_settings, \
+        with patch("h2mare.pipeline_manager.get_settings") as mock_get_settings, \
              patch("h2mare.pipeline_manager.Netcdf2Zarr"):
-            mock_settings.DOWNLOADS_DIR = tmp_path / "downloads"
+            mock_get_settings.return_value.DOWNLOADS_DIR = tmp_path / "downloads"
             manager.run()
 
         assert not empty_dir.exists()
@@ -253,9 +253,9 @@ class TestCleanup:
         non_empty_dir.mkdir(parents=True)
         (non_empty_dir / "data.nc").write_text("data")
 
-        with patch("h2mare.pipeline_manager.settings") as mock_settings, \
+        with patch("h2mare.pipeline_manager.get_settings") as mock_get_settings, \
              patch("h2mare.pipeline_manager.Netcdf2Zarr"):
-            mock_settings.DOWNLOADS_DIR = tmp_path / "downloads"
+            mock_get_settings.return_value.DOWNLOADS_DIR = tmp_path / "downloads"
             manager.run()
 
         assert non_empty_dir.exists()
@@ -284,11 +284,11 @@ class TestCleanup:
         class _DummyDownloader(BaseDownloader):
             def run(self, *a, **kw): ...
 
-        with patch("h2mare.downloader.base.settings") as mock_settings:
-            mock_settings.app_config = cfg
-            mock_settings.DOWNLOADS_DIR = tmp_path
-            mock_settings.STORE_ROOT = None
-            mock_settings.ZARR_DIR = tmp_path / "zarr"
+        with patch("h2mare.downloader.base.get_settings") as mock_get_settings:
+            mock_get_settings.return_value.app_config = cfg
+            mock_get_settings.return_value.DOWNLOADS_DIR = tmp_path
+            mock_get_settings.return_value.STORE_ROOT = None
+            mock_get_settings.return_value.ZARR_DIR = tmp_path / "zarr"
             d = _DummyDownloader("sst", app_config=cfg, download_root=tmp_path)
 
         d._cleanup_empty_download_dir()

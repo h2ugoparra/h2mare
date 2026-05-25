@@ -8,7 +8,7 @@ from typing import List, Optional, Type, Union
 import pandas as pd
 from loguru import logger
 
-from h2mare import AppConfig, settings
+from h2mare import AppConfig, get_settings
 from h2mare.format_converters.netcdf2zarr import Netcdf2Zarr
 
 
@@ -105,7 +105,7 @@ class PipelineManager:
             self.no_parquet or self.no_compile or self.no_convert or self.dry_run
         )
         if not _skip_parquet:
-            from h2mare.config import settings
+            from h2mare.config import get_settings
             from h2mare.format_converters.zarr2parquet import Zarr2Parquet
 
             logger.info("Starting Parquet conversion step (h2ds)")
@@ -113,7 +113,7 @@ class PipelineManager:
                 h2ds_local_folder = self.app_config.variables["h2ds"].local_folder
                 converter = Zarr2Parquet(
                     var_key="h2ds",
-                    parquet_root=settings.PARQUET_DIR,
+                    parquet_root=get_settings().PARQUET_DIR,
                     store_root=self.store_root / h2ds_local_folder,
                 )
                 converter.run(
@@ -129,7 +129,7 @@ class PipelineManager:
 
     def _cleanup_empty_download_dirs(self, variables: List[str]) -> None:
         """Remove per-variable download subdirectories that are empty after the pipeline run."""
-        downloads_root = settings.DOWNLOADS_DIR
+        downloads_root = get_settings().DOWNLOADS_DIR
         for var_key in variables:
             var_config = self.app_config.variables.get(var_key)
             if var_config is None:

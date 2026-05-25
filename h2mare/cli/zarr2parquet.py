@@ -35,7 +35,7 @@ from typing import List, Optional
 import typer
 from loguru import logger
 
-from h2mare.config import settings
+from h2mare.config import get_settings
 
 app = typer.Typer(
     help="Convert compiled Zarr stores to Hive-partitioned Parquet."
@@ -69,7 +69,7 @@ def parquet(
         help=(
             "Root directory for Parquet output. "
             "Each variable is written to a <out-dir>/<var-key> sub-directory. "
-            "Defaults to settings.PARQUET_DIR."
+            "Defaults to get_settings().PARQUET_DIR."
         ),
     ),
     store_path: Optional[Path] = typer.Option(
@@ -100,7 +100,7 @@ def parquet(
 ) -> None:
     """Convert compiled Zarr stores to Hive-partitioned Parquet for one or more variable keys."""
 
-    log_path = settings.LOGS_DIR / "h2mare.log"
+    log_path = get_settings().LOGS_DIR / "h2mare.log"
     logger.add(log_path, level="INFO")
 
     # ---- Validate date arguments ----
@@ -125,7 +125,7 @@ def parquet(
     # ---- Resolve variable keys ----
     keys = list(var_keys) if var_keys else ["h2ds"]
 
-    available = set(settings.app_config.variables.keys())
+    available = set(get_settings().app_config.variables.keys())
     unknown = set(keys) - available
     if unknown:
         typer.echo(
@@ -136,7 +136,7 @@ def parquet(
         raise typer.Exit(code=1)
 
     # ---- Resolve output root ----
-    parquet_base = out_dir or settings.PARQUET_DIR
+    parquet_base = out_dir or get_settings().PARQUET_DIR
 
     # ---- Run conversion for each variable ----
     from h2mare.format_converters.zarr2parquet import Zarr2Parquet

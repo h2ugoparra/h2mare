@@ -13,7 +13,7 @@ import pandas as pd
 import xarray as xr
 from loguru import logger
 
-from h2mare import settings
+from h2mare import get_settings
 from h2mare.storage.xarray_helpers import rename_dims, unified_time_chunk
 from h2mare.storage.zarr_catalog import ZarrCatalog
 from h2mare.utils.spatial import clip_land_data
@@ -392,7 +392,7 @@ def add_engineered_ekman(da: xr.DataArray):
     Args:
         da: (xarray.DataArray) DataArray with variable 'ekman_pumping'
     """
-    store_dir = settings.STORE_ROOT
+    store_dir = get_settings().STORE_ROOT
     if store_dir is not None:
         clim_dir = store_dir / "Climatology"
     else:

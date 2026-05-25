@@ -37,7 +37,7 @@ import pandas as pd
 import typer
 from loguru import logger
 
-from h2mare.config import settings
+from h2mare.config import get_settings
 from h2mare.downloader.aviso_downloader import AVISODownloader
 from h2mare.downloader.cds_downloader import CDSDownloader
 from h2mare.downloader.cmems_downloader import CMEMSDownloader
@@ -135,7 +135,7 @@ def run(
 ) -> None:
     """Download and convert climate/ocean data for one or more variable keys."""
 
-    log_path = settings.LOGS_DIR / "h2mare.log"
+    log_path = get_settings().LOGS_DIR / "h2mare.log"
     logger.add(log_path, level="INFO")
     logging.getLogger("urllib3.connectionpool").setLevel(logging.ERROR)
 
@@ -157,7 +157,7 @@ def run(
             raise typer.Exit(code=1)
 
     # Validate variable keys
-    available = set(settings.app_config.variables.keys())
+    available = set(get_settings().app_config.variables.keys())
     selected = list(vars) if vars else list(available)
     unknown = set(selected) - available
     if unknown:
@@ -168,7 +168,7 @@ def run(
         )
         raise typer.Exit(code=1)
 
-    store_root = store_path or settings.STORE_ROOT
+    store_root = store_path or get_settings().STORE_ROOT
     if store_root is None:
         typer.echo(
             "Error: STORE_ROOT is not set. Define it in .env or pass --store-path.",
@@ -177,7 +177,7 @@ def run(
         raise typer.Exit(code=1)
 
     PipelineManager(
-        app_config=settings.app_config,
+        app_config=get_settings().app_config,
         registry=DOWNLOADER_REGISTRY,
         store_root=store_root,
         dry_run=dry_run,

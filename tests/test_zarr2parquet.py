@@ -267,8 +267,8 @@ class TestSyncData:
     def test_skips_when_store_root_is_none(self, tmp_path):
         """sync_data() returns without error when STORE_ROOT is not configured."""
         z = _make_converter(tmp_path)
-        with patch("h2mare.format_converters.zarr2parquet.settings") as mock_settings:
-            mock_settings.STORE_ROOT = None
+        with patch("h2mare.format_converters.zarr2parquet.get_settings") as mock_get_settings:
+            mock_get_settings.return_value.STORE_ROOT = None
             z.sync_data()  # must not raise
 
     def test_copies_to_explicit_remote_root(self, tmp_path):

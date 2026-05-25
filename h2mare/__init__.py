@@ -8,12 +8,13 @@ Main components:
 
 __version__ = "0.1.0"
 
-from .config import settings
+from .config import get_settings, settings
 from .models import AppConfig, KeyVarConfigEntry, VariablesConfig
 from .types import BBox, DateLike, DateRange, DownloadTask, TimeResolution
 from .validators import validate_time_resolution, validate_var_key, validate_var_keys
 
 __all__ = [
+    "get_settings",
     "settings",
     "AppConfig",
     "VariablesConfig",

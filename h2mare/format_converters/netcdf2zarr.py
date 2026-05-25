@@ -16,7 +16,7 @@ from loguru import logger
 
 import h2mare.processing.core.aviso as aviso
 import h2mare.processing.core.cds as cds
-from h2mare.config import AppConfig, settings
+from h2mare.config import AppConfig, get_settings
 from h2mare.processing.registry import PROCESSORS
 from h2mare.storage.storage import write_append_zarr
 from h2mare.storage.xarray_helpers import chunk_dataset, rename_dims
@@ -52,7 +52,7 @@ class Netcdf2Zarr:
             date_format: string date format for output file name.
         """
 
-        self.app_config = app_config or settings.app_config
+        self.app_config = app_config or get_settings().app_config
         self.var_key = validate_var_key(var_key, self.app_config)
         self.var_config = self.app_config.variables[self.var_key]
 
@@ -434,7 +434,7 @@ class Netcdf2Zarr:
 
 
 if __name__ == "__main__":
-    log_path = settings.LOGS_DIR / f"{Path(__file__).stem}.log"
+    log_path = get_settings().LOGS_DIR / f"{Path(__file__).stem}.log"
     logger.add(log_path, level="INFO")
 
     var_key = "eddies"

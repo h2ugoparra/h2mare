@@ -9,7 +9,7 @@ from typing import Optional
 import pandas as pd
 from loguru import logger
 
-from h2mare.config import AppConfig, settings
+from h2mare.config import AppConfig, get_settings
 from h2mare.utils.paths import resolve_store_path
 from h2mare.validators import validate_var_key
 
@@ -36,12 +36,12 @@ class BaseDownloader(ABC):
         store_root: Optional[Path] = None,
         download_root: Optional[Path] = None,
     ) -> None:
-        self.app_config = app_config or settings.app_config
+        self.app_config = app_config or get_settings().app_config
         self.var_key = validate_var_key(var_key, self.app_config)
         self.var_config = self.app_config.variables[self.var_key]
 
         self.store_root = resolve_store_path(self.var_config, store_root)
-        download_dir = download_root or settings.DOWNLOADS_DIR
+        download_dir = download_root or get_settings().DOWNLOADS_DIR
         self.download_dir = download_dir / self.var_config.local_folder
         self.download_dir.mkdir(parents=True, exist_ok=True)
 

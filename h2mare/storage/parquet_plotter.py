@@ -8,7 +8,7 @@ import plotly.graph_objects as go
 import polars as pl
 from loguru import logger
 
-from h2mare import settings
+from h2mare import get_settings
 from h2mare.storage.parquet_helpers import aggregate_by_space_time, aggregate_by_time
 from h2mare.utils.plot import plot_maps
 
@@ -143,7 +143,7 @@ class ParquetPlotter:
         result = result.collect(engine="streaming")
 
         time_col = "time_plot" if "time_plot" in result.columns else "time_agg"
-        long_name = settings.get_var_info(var_name).get("long_name", var_name)
+        long_name = get_settings().get_var_info(var_name).get("long_name", var_name)
 
         fig = go.Figure()
         fig.add_trace(

@@ -5,6 +5,7 @@ Configuration management for h2mare project
 from __future__ import annotations
 
 import os
+from functools import lru_cache
 from pathlib import Path
 from typing import Optional
 
@@ -202,4 +203,15 @@ class Settings:
         return self._app_config
 
 
-settings = Settings()
+
+@lru_cache(maxsize=1)
+def get_settings() -> Settings:
+    """Return the application-wide Settings instance (cached after first call).
+
+    Tests can reset the cache with ``get_settings.cache_clear()`` before
+    monkeypatching environment variables to obtain a fresh instance.
+    """
+    return Settings()
+
+
+settings = get_settings()  # backward-compatible alias
