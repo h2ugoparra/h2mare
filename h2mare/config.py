@@ -12,6 +12,7 @@ from typing import Optional
 import msgspec
 import yaml
 from dotenv import load_dotenv
+from loguru import logger
 
 from h2mare.models import AppConfig
 
@@ -137,7 +138,17 @@ class Settings:
         with open(config_path, "r") as f:
             config_dict = yaml.safe_load(f) or {}
 
-        # Extract global and varibale metadata (not part of AppConfig())
+        # Warn on unrecognised top-level keys — catches typos like "varibles:"
+        _KNOWN_KEYS = {"variables", "global_attrs", "variable_attrs"}
+        unknown = set(config_dict) - _KNOWN_KEYS
+        if unknown:
+            logger.warning(
+                f"config.yaml contains unrecognised top-level key(s): "
+                f"{sorted(unknown)} — these will be ignored. "
+                f"Expected keys: {sorted(_KNOWN_KEYS)}."
+            )
+
+        # Extract global and variable metadata (not part of AppConfig)
         self._global_attrs = config_dict.get("global_attrs", {})
         self._variable_attrs = config_dict.get("variable_attrs", {})
 
