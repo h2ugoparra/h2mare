@@ -30,6 +30,8 @@ uv run h2mare run [OPTIONS]
 
 When `--start-date` / `--end-date` are omitted the pipeline infers the missing date range from the existing store.
 
+The command exits with code `0` if all steps succeed and code `1` if any download, conversion, compile, or Parquet step fails. Errors are logged but the run continues across variables, so a non-zero exit code means at least one step failed — check the log for details.
+
 **Examples**
 
 ```bash

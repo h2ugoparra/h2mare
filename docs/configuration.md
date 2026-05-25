@@ -38,6 +38,10 @@ variables:
 | `data_file` | no | Filename of the static source file at the configured output resolution (e.g. 0.25°). Used by compile-only variables such as `bathy` |
 | `data_file_hires` | no | Filename of the high-resolution static source file. Used by `bathy` when extracting at full native resolution (e.g. from SHP geometries) |
 
+### Validation
+
+h2mare warns at load time if `config.yaml` contains top-level keys other than `variables`, `global_attrs`, and `variable_attrs`. Unknown keys are ignored, but the warning helps catch typos like `varibles:` before they cause a silent misconfiguration.
+
 ### The `h2ds` key
 
 The special `h2ds` variable defines the output grid for the compile step:
