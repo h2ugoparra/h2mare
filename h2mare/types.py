@@ -19,11 +19,17 @@ import xarray as xr
 DateLike = str | pd.Timestamp | datetime | date
 
 
-def _to_datetime(value) -> datetime:
-    """Delegate to datetime_utils.to_datetime using a lazy import to break the circular dependency."""
-    from h2mare.utils.datetime_utils import to_datetime
-
-    return to_datetime(value)
+def to_datetime(value) -> datetime:
+    """Coerce date, pd.Timestamp, str, or datetime to stdlib datetime."""
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, date):
+        return datetime(value.year, value.month, value.day)
+    if isinstance(value, str):
+        return datetime.fromisoformat(value)
+    if hasattr(value, "to_pydatetime"):  # pd.Timestamp
+        return value.to_pydatetime()
+    raise TypeError(f"Cannot convert {type(value)} to datetime")
 
 
 class TimeResolution(str, Enum):
@@ -42,10 +48,10 @@ class DateRange:
 
     def __post_init__(self):
         """Coerce inputs to datetime and normalize to midnight."""
-        self.start = _to_datetime(self.start).replace(
+        self.start = to_datetime(self.start).replace(
             hour=0, minute=0, second=0, microsecond=0
         )
-        self.end = _to_datetime(self.end).replace(
+        self.end = to_datetime(self.end).replace(
             hour=0, minute=0, second=0, microsecond=0
         )
         if self.start > self.end:
@@ -123,7 +129,7 @@ class DateRange:
         end = df[time_col].max()
         if start is None or end is None:
             raise ValueError(f"Column '{time_col}' is empty or all null.")
-        return cls(start=_to_datetime(start), end=_to_datetime(end))
+        return cls(start=to_datetime(start), end=to_datetime(end))
 
     @classmethod
     def from_polars_lazy(cls, df: pl.LazyFrame, time_col: str = "time") -> DateRange:
@@ -132,7 +138,7 @@ class DateRange:
             [pl.col(time_col).min().alias("start"), pl.col(time_col).max().alias("end")]
         ).collect()
         return cls(
-            start=_to_datetime(result["start"][0]), end=_to_datetime(result["end"][0])
+            start=to_datetime(result["start"][0]), end=to_datetime(result["end"][0])
         )
 
     @classmethod
