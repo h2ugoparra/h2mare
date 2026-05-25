@@ -17,7 +17,7 @@ from loguru import logger
 
 from h2mare.config import AppConfig, get_settings
 from h2mare.models import SYSTEM_VAR_KEYS
-from h2mare.downloader.commons import resolve_date_range
+from h2mare.utils.date_range import resolve_date_range
 from h2mare.storage.coverage import get_store_coverage, split_time_range
 from h2mare.storage.storage import write_append_zarr
 from h2mare.storage.xarray_helpers import chunk_dataset

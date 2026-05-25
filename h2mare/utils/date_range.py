@@ -1,6 +1,4 @@
-"""Shared functions for downloaders. Except for CDSDownloader because of latest day for download.
-See .cds_downloader for details.
-"""
+"""Utility for resolving a download/processing date range from store coverage."""
 
 from __future__ import annotations
 

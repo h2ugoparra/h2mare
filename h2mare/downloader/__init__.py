@@ -4,7 +4,7 @@ from .cds_downloader import CDSDownloader
 from .cmems_downloader import CMEMSDownloader, generate_copernicus_patterns
 from .cmems_downloader import download_original as cmems_download_original
 from .cmems_downloader import download_subset as cmems_download_subset
-from .commons import resolve_date_range
+from h2mare.utils.date_range import resolve_date_range
 
 __all__ = [
     "BaseDownloader",

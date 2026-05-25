@@ -20,7 +20,7 @@ from numpy.typing import NDArray
 from scipy.spatial import cKDTree  # type: ignore
 
 from h2mare.config import AppConfig, get_settings
-from h2mare.downloader.commons import resolve_date_range
+from h2mare.utils.date_range import resolve_date_range
 from h2mare.models import KeyVarConfigEntry
 from h2mare.storage.storage import write_append_zarr
 from h2mare.storage.xarray_helpers import (

@@ -1,10 +1,10 @@
-"""Tests for downloader/commons.py — resolve_date_range."""
+"""Tests for utils/date_range.py — resolve_date_range."""
 from unittest.mock import patch
 
 import pandas as pd
 import pytest
 
-from h2mare.downloader.commons import resolve_date_range
+from h2mare.utils.date_range import resolve_date_range
 from h2mare.types import DateRange
 
 
@@ -24,13 +24,13 @@ class TestResolveDateRange:
         assert pd.Timestamp(result.start) == pd.Timestamp(result.end)
 
     def test_no_store_coverage_raises_value_error(self):
-        with patch("h2mare.downloader.commons.get_store_coverage", return_value=None):
+        with patch("h2mare.utils.date_range.get_store_coverage", return_value=None):
             with pytest.raises(ValueError, match="No existing data"):
                 resolve_date_range("sst", None, None)
 
     def test_start_inferred_as_day_after_store_end(self):
         coverage = DateRange("2020-01-01", "2021-12-31")
-        with patch("h2mare.downloader.commons.get_store_coverage", return_value=coverage):
+        with patch("h2mare.utils.date_range.get_store_coverage", return_value=coverage):
             result = resolve_date_range("sst", None, "2022-06-30")
         assert pd.Timestamp(result.start) == pd.Timestamp("2022-01-01")
 
@@ -38,7 +38,7 @@ class TestResolveDateRange:
         coverage = DateRange("2015-01-01", "2019-12-31")
         now = pd.Timestamp("2024-06-15")
         with (
-            patch("h2mare.downloader.commons.get_store_coverage", return_value=coverage),
+            patch("h2mare.utils.date_range.get_store_coverage", return_value=coverage),
             patch("pandas.Timestamp.now", return_value=now),
         ):
             result = resolve_date_range("sst", "2020-01-01", None)
