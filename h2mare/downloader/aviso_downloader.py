@@ -13,8 +13,8 @@ from tqdm import tqdm
 
 from h2mare.config import AppConfig
 from h2mare.downloader.base import BaseDownloader
-from h2mare.utils.date_range import resolve_date_range
 from h2mare.types import DateLike, DateRange
+from h2mare.utils.date_range import resolve_date_range
 from h2mare.utils.datetime_utils import normalize_date
 
 warnings.filterwarnings("ignore")

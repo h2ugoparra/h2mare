@@ -8,7 +8,7 @@ from typing import List, Optional, Type, Union
 import pandas as pd
 from loguru import logger
 
-from h2mare import AppConfig, SYSTEM_VAR_KEYS, get_settings
+from h2mare import SYSTEM_VAR_KEYS, AppConfig, get_settings
 from h2mare.format_converters.netcdf2zarr import Netcdf2Zarr
 
 

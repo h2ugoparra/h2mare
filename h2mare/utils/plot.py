@@ -19,7 +19,6 @@ from h2mare.config import get_settings
 from h2mare.storage.parquet_helpers import _required_columns
 from h2mare.types import BBox
 
-
 _PANEL_WIDTH = 3.0  # inches per panel column
 _WSPACE = -0.15     # fractional horizontal gap between panels
 _HSPACE = 0.20      # fractional vertical gap between panels (must fit panel titles)

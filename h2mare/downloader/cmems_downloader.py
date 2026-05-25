@@ -17,9 +17,9 @@ from loguru import logger
 from h2mare import AppConfig
 from h2mare.downloader.base import BaseDownloader
 from h2mare.downloader.cmems_utils import CMEMSAPIError, get_dataset_time_range
-from h2mare.utils.date_range import resolve_date_range
 from h2mare.storage import split_time_range
 from h2mare.types import DateLike, DateRange, DownloadTask, TimeResolution
+from h2mare.utils.date_range import resolve_date_range
 from h2mare.utils.datetime_utils import normalize_date
 
 warnings.filterwarnings("ignore")

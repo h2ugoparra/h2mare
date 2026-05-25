@@ -1,10 +1,11 @@
+from h2mare.utils.date_range import resolve_date_range
+
 from .aviso_downloader import AVISODownloader
 from .base import BaseDownloader
 from .cds_downloader import CDSDownloader
 from .cmems_downloader import CMEMSDownloader, generate_copernicus_patterns
 from .cmems_downloader import download_original as cmems_download_original
 from .cmems_downloader import download_subset as cmems_download_subset
-from h2mare.utils.date_range import resolve_date_range
 
 __all__ = [
     "BaseDownloader",
