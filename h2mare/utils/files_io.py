@@ -101,7 +101,7 @@ def move_files(
     source_dir: str | Path, destination_dir: str | Path, file_extension: Optional[str]
 ):
     """
-    Function to move files from source_fir to destination_dir based on file_extension (e.g. 'nc', 'zarr')
+    Function to move files from source_dir to destination_dir based on file_extension (e.g. 'nc', 'zarr')
     """
     source_dir = Path(source_dir)
     destination_dir = Path(destination_dir)
@@ -132,7 +132,7 @@ def unizp_files(zip_path: str | Path, extract_dir: str | Path) -> None:
 
 
 def clean_era_dataset(ds: xr.Dataset, var: str) -> xr.Dataset:
-    """Check for corrupted varibales in ERA5 files"""
+    """Check for corrupted variables in ERA5 files."""
     # 1. Ensure time is datetime64
     if not np.issubdtype(ds["time"].dtype, np.datetime64):
         ds = xr.decode_cf(ds)

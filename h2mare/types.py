@@ -83,7 +83,7 @@ class DateRange:
         Args:
             format: - "date" shows date_range (YYYY-MM-DD-YYYY-MM-DD)
                     - "year" shows year (YYYY). For single year files, as convenioned for zarr files
-                    -  "yearmonth" (YYYY-MM). Fir monthly files.
+                    -  "yearmonth" (YYYY-MM). For monthly files.
 
         Returns:
             Formatted date label
