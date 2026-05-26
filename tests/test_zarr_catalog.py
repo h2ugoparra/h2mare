@@ -171,7 +171,7 @@ class TestDatasetColumn:
         zarr_path = _write_zarr(tmp_path, ds)
         catalog = _make_catalog(tmp_path)
 
-        rows = catalog._extract_zarr_metadata(zarr_path)
+        rows = catalog._scanner._extract_zarr_metadata(zarr_path)
 
         assert len(rows) == 1
         assert rows[0]["dataset"] == _ENTRY["dataset_id_rep"]
@@ -200,7 +200,7 @@ class TestDatasetColumn:
         zarr.consolidate_metadata(str(zarr_path))
         catalog = _make_catalog(tmp_path)
 
-        rows = catalog._extract_zarr_metadata(zarr_path)
+        rows = catalog._scanner._extract_zarr_metadata(zarr_path)
 
         assert len(rows) == 2
         assert rows[0]["dataset"] == "REP_ID"
@@ -231,7 +231,7 @@ class TestDatasetColumn:
         )
         catalog = _make_catalog(tmp_path)
 
-        rows = catalog._extract_zarr_metadata(zarr_path)
+        rows = catalog._scanner._extract_zarr_metadata(zarr_path)
 
         assert len(rows) == 2
         assert rows[0]["dataset"] == "REP_ID"

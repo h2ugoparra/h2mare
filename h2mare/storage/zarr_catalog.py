@@ -7,11 +7,8 @@ of processed zarr files, enabling efficient dataset discovery and metadata queri
 
 from __future__ import annotations
 
-import hashlib
 import json
 from collections import defaultdict
-from dataclasses import dataclass
-from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal, Optional, Sequence, Union
 
@@ -20,30 +17,12 @@ import xarray as xr
 from loguru import logger
 
 from h2mare.config import AppConfig, get_settings
+from h2mare.storage.zarr_scanner import ZarrDirectoryScanner
 from h2mare.types import BBox, DateLike, DateRange, TimeResolution
 from h2mare.utils.datetime_utils import normalize_date
 from h2mare.utils.labels import create_label_from_dataset
 from h2mare.utils.paths import resolve_store_path
 from h2mare.validators import validate_time_resolution, validate_var_key
-
-
-@dataclass
-class DirectoryState:
-    """Represents the state of zarr files in a directory."""
-
-    files: dict[str, float]  # filenmae -> mtime
-    count: int
-    last_modified: float
-
-    def __eq__(self, other: object) -> bool:
-        if not isinstance(other, DirectoryState):
-            return NotImplemented
-        return self.files == other.files
-
-    def __hash__(self) -> int:
-        # Create a stable hash from sorted files
-        file_str = ",".join(f"{k}:{v}" for k, v in sorted(self.files.items()))
-        return int(hashlib.md5(file_str.encode()).hexdigest()[:16], 16)
 
 
 # ================ Convenience functions for quick access ==========================
@@ -95,7 +74,9 @@ class ZarrCatalog:
         self.metadata_root = metadata_root or get_settings().METADATA_DIR
 
         self.auto_refresh = auto_refresh
-        self._cached_state: Optional[DirectoryState] = None
+        self._scanner = ZarrDirectoryScanner(
+            self.store_root, self.time_resolution, self.var_config
+        )
         self._df_cache: Optional[pd.DataFrame] = None
 
         if auto_refresh:
@@ -160,181 +141,17 @@ class ZarrCatalog:
             return pd.DataFrame()
 
     def _scan_and_build(self) -> pd.DataFrame:
-        """
-        Scan zarr files and build fresh catalog.
-
-        Returns:
-            New catalog DataFrame
-        """
+        """Scan zarr files via the scanner and build a fresh catalog DataFrame."""
         logger.info(f"Scanning {self.store_root}")
-        records = self._scan_zarr_files()
+        records = self._scanner.scan()
 
         if not records:
             return pd.DataFrame()
 
         df = pd.DataFrame(records)
         df = df.sort_values("start_date")
-
-        # Save to disk
         self._save_catalog(df)
-
         return df
-
-    def _scan_zarr_files(self) -> list[dict]:
-        """
-        Scan zarr files and extract metadata from every zarr in store_root.
-
-        Returns:
-            List of record dictionaries (may be multiple per zarr file when
-            provenance sidecars split rep and nrt into separate rows).
-        """
-        if not self.store_root.exists():
-            logger.warning(f"Store directory not found: {self.store_root}")
-            return []
-
-        zarr_files = sorted(self.store_root.glob("*.zarr"))
-
-        records: list[dict] = []
-
-        for zarr_path in zarr_files:
-            try:
-                record_list = self._extract_zarr_metadata(zarr_path)
-                if record_list:
-                    records.extend(record_list)
-            except (OSError, RuntimeError) as e:
-                logger.warning(f"Failed to read {zarr_path.name}: {e}")
-
-        logger.info(f"Scan complete: {len(zarr_files)} zarr files read")
-        return records
-
-    def _get_directory_state(self) -> DirectoryState:
-        """
-        Scan directory and return current state.
-
-        Returns:
-            DirectoryState with file mtimes
-
-        Raises:
-            FileNotFoundError: If store_root doesn't exist
-        """
-        if not self.store_root.exists():
-            raise FileNotFoundError(f"Store directory not found: {self.store_root}")
-
-        files: dict[str, float] = {}
-
-        try:
-            for entry in self.store_root.iterdir():
-                if entry.is_dir() and entry.name.endswith(".zarr"):
-                    files[entry.name] = entry.stat().st_mtime
-        except PermissionError as e:
-            logger.warning(f"Permission denied scanning {self.store_root}: {e}")
-            return DirectoryState(files={}, count=0, last_modified=0.0)
-
-        if not files:
-            return DirectoryState(files={}, count=0, last_modified=0.0)
-
-        return DirectoryState(
-            files=files,
-            count=len(files),
-            last_modified=max(files.values()),
-        )
-
-    def _extract_zarr_metadata(self, zarr_path: Path) -> list[dict]:
-        """
-        Extract metadata from a single zarr file.
-
-        Returns one dict per source dataset. When a provenance sidecar
-        ``{stem}_prov.json`` exists next to the zarr directory the result
-        contains one entry per dataset_id recorded there (typically two for
-        files that blend rep and nrt data). Falls back to a single row using
-        ``dataset_id_rep`` when no sidecar is present.
-
-        Args:
-            zarr_path: Path to .zarr directory
-
-        Returns:
-            List of record dicts (empty on failure)
-        """
-        try:
-            ds = xr.open_zarr(zarr_path, consolidated=False)
-
-            # Actual time coverage — always from the zarr's time coordinate,
-            # never from provenance (which can be stale after appends).
-            time_min = pd.to_datetime(ds.time.min().compute().item()).normalize()
-            time_max = pd.to_datetime(ds.time.max().compute().item()).normalize()
-
-            xmin = ds.lon.min().compute().item()
-            ymin = ds.lat.min().compute().item()
-            xmax = ds.lon.max().compute().item()
-            ymax = ds.lat.max().compute().item()
-
-            period_value = (
-                time_min.year
-                if self.time_resolution == TimeResolution.YEAR
-                else f"{time_min.year}-{time_min.month:02d}"
-            )
-
-            base = {
-                "path": str(zarr_path),
-                "filename": zarr_path.name,
-                "xmin": xmin,
-                "ymin": ymin,
-                "xmax": xmax,
-                "ymax": ymax,
-                "variables": list(ds.data_vars.keys()),
-                "file_mtime": zarr_path.stat().st_mtime,
-                "scanned_at": datetime.now(),
-                "period": period_value,
-                "start_date": time_min,
-                "end_date": time_max,
-                "num_timesteps": len(ds.time),
-            }
-
-            # Use provenance only for dataset_id / dataset_type — one row per source.
-            # Dates are clamped to the actual zarr time range so stale provenance
-            # never overrides what is physically in the file.
-            raw = ds.attrs.get("source_datasets")
-            if raw is None:
-                prov_file = zarr_path.parent / (zarr_path.stem + "_prov.json")
-                if prov_file.exists():
-                    raw = prov_file.read_text()
-
-            if raw is not None:
-                sources = json.loads(raw)
-                records = []
-                for i, src in enumerate(sources):
-                    p_start = pd.to_datetime(src["start_date"]).normalize()
-                    p_end = pd.to_datetime(src["end_date"]).normalize()
-                    # First entry anchors to time_min: early data may have been
-                    # appended before these provenance records were written.
-                    rec_start = time_min if i == 0 else max(p_start, time_min)
-                    # The last source may have been extended by subsequent appends
-                    # so trust time_max over provenance for its end date.
-                    # Earlier sources are complete periods with fixed boundaries.
-                    rec_end = (
-                        time_max if i == len(sources) - 1 else min(p_end, time_max)
-                    )
-                    if rec_start > rec_end:
-                        continue
-                    n_ts = len(ds.sel(time=slice(rec_start, rec_end)).time)
-                    records.append(
-                        {
-                            **base,
-                            "dataset": src["dataset_id"],
-                            "start_date": rec_start,
-                            "end_date": rec_end,
-                            "num_timesteps": n_ts,
-                        }
-                    )
-                if records:
-                    return records
-
-            # No valid provenance: single row, dataset = rep id
-            return [{**base, "dataset": self.var_config.dataset_id_rep}]
-
-        except (OSError, KeyError, ValueError, RuntimeError) as e:
-            logger.error(f"Error extracting metadata from {zarr_path}: {e}")
-            return []
 
     def _save_catalog(self, df: pd.DataFrame) -> None:
         """
@@ -351,34 +168,8 @@ class ZarrCatalog:
         logger.info(f"Saved catalog with {len(df)} entries to {self.catalog_path}")
 
     def has_changes(self) -> bool:
-        """
-        Check if directory has changed since last scan.
-
-        Returns:
-            True if changes detected or first time checking
-        """
-        try:
-            current_state = self._get_directory_state()
-        except FileNotFoundError:
-            logger.debug(f"Store directory not found: {self.store_root}")
-            return False
-
-        # First time - no changes yet
-        if self._cached_state is None:
-            self._cached_state = current_state
-            return False
-
-        # Compare states
-        has_changed = current_state != self._cached_state
-
-        if has_changed:
-            logger.info(
-                f"Changes detected in {self.store_root}: "
-                f"{self._cached_state.count} → {current_state.count} files"
-            )
-            self._cached_state = current_state
-
-        return has_changed
+        """Check if the store directory has changed since the last scan."""
+        return self._scanner.has_changes()
 
     def refresh(self, force: bool = False) -> pd.DataFrame:
         """
@@ -444,53 +235,14 @@ class ZarrCatalog:
             return self._df_cache
 
     def reload(self) -> pd.DataFrame:
-        """
-        Force reload from disk or rescan.
-
-        Returns:
-            Fresh catalog DataFrame
-        """
+        """Force reload from disk or rescan."""
         self._df_cache = None
-        self._cached_state = None
+        self._scanner.reset()
         return self.refresh(force=True)
 
     def get_change_summary(self) -> dict[str, Any]:
-        """
-        Get detailed summary of changes.
-
-        Returns:
-            Dictionary with added, removed, and modified files
-        """
-        try:
-            current_state = self._get_directory_state()
-        except FileNotFoundError:
-            return {"error": "Store directory not found"}
-
-        if self._cached_state is None:
-            return {
-                "added": list(current_state.files.keys()),
-                "removed": [],
-                "modified": [],
-                "total": current_state.count,
-            }
-
-        old_files = set(self._cached_state.files.keys())
-        new_files = set(current_state.files.keys())
-
-        added = new_files - old_files
-        removed = old_files - new_files
-        modified = {
-            f
-            for f in old_files & new_files
-            if self._cached_state.files[f] != current_state.files[f]
-        }
-
-        return {
-            "added": sorted(added),
-            "removed": sorted(removed),
-            "modified": sorted(modified),
-            "total": current_state.count,
-        }
+        """Return a summary of added / removed / modified zarr files."""
+        return self._scanner.get_change_summary()
 
     # ==================== Query Methods ====================
     def _find_overlapping_files(
@@ -926,32 +678,6 @@ class ZarrCatalog:
             logger.error(f"Failed to apply bbox: {e}")
             return ds
 
-    def _scan_variables_from_files(self) -> set[str]:
-        """Scan zarr files to extract variable names."""
-        if not self.store_root.exists():
-            logger.warning(f"Store directory not found: {self.store_root}")
-            return set()
-
-        zarr_files = sorted(self.store_root.glob("*.zarr"))
-
-        if not zarr_files:
-            logger.debug("No zarr files found")
-            return set()
-
-        all_vars = set()
-
-        for zarr_path in zarr_files:
-            try:
-                # Lightweight metadata-only open
-                ds = xr.open_zarr(zarr_path, decode_cf=False)
-                all_vars.update(ds.data_vars.keys())
-                ds.close()
-            except Exception as e:
-                logger.warning(f"Could not read variables from {zarr_path.name}: {e}")
-                continue
-
-        return all_vars
-
     # ==================== Metadata Queries ====================
     def get_variables(self) -> set[str]:
         """
@@ -973,7 +699,7 @@ class ZarrCatalog:
             return all_vars
 
         # Fallback: scan files directly
-        return self._scan_variables_from_files()
+        return self._scanner.scan_variables()
 
     def get_time_coverage(self) -> DateRange | None:
         """
