@@ -15,13 +15,14 @@ import polars as pl
 from loguru import logger
 
 from h2mare.config import get_settings
+from h2mare.format_converters.base import BaseConverter
 from h2mare.storage import ZarrCatalog
 from h2mare.storage.coverage import split_time_range
 from h2mare.storage.parquet_indexer import ParquetIndexer
 from h2mare.types import DateRange, TimeResolution
 
 
-class Zarr2Parquet:
+class Zarr2Parquet(BaseConverter):
     """
     Convert a compiled Zarr store to a Hive-partitioned Parquet store.
 
@@ -83,7 +84,7 @@ class Zarr2Parquet:
         end_date: str | pd.Timestamp | None = None,
         time_resolution: TimeResolution = TimeResolution.MONTH,
         depth: float | None = None,
-    ) -> None:
+    ) -> bool:
         """
         Convert Zarr data to Parquet for the resolved date range.
 
@@ -134,6 +135,8 @@ class Zarr2Parquet:
             finally:
                 del ddf_new
                 gc.collect()
+
+        return True
 
     def sync_data(self, remote_root: Optional[Path] = None) -> None:
         """
