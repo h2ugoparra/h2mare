@@ -15,7 +15,6 @@ from h2mare.config import AppConfig
 from h2mare.downloader.base import BaseDownloader
 from h2mare.types import DateLike, DateRange
 from h2mare.utils.date_range import resolve_date_range
-from h2mare.utils.datetime_utils import normalize_date
 
 warnings.filterwarnings("ignore")
 
@@ -101,25 +100,6 @@ class AVISODownloader(BaseDownloader):
         self.ftp.cwd(dataset_id)  # adjust path
         self._current_dataset_id = dataset_id
         return self.ftp
-
-    # ==================== Dates and data coverage Resolution ====================
-    def _resolve_date_range(
-        self,
-        start_date: DateLike | None,
-        end_date: DateLike | None,
-    ) -> DateRange:
-        """
-        Resolve storage date range for download.
-        Priority:
-            1. Explicit arguments
-            2. Default dates from __init__
-            3. Latest date from store + 1 day to today
-        """
-        # Use explicit args, fall back to defaults
-        start = normalize_date(start_date) if start_date else None
-        end = normalize_date(end_date) if end_date else None
-
-        return resolve_date_range(self.var_key, start=start, end=end)
 
     def _get_dataset_files(self, dataset_id: str) -> list[str]:
         """Get list of files for a given dataset_id from FTP."""
@@ -401,7 +381,7 @@ class AVISODownloader(BaseDownloader):
         Returns:
             True if downloads were executed, False if skipped (no tasks or dry run).
         """
-        requested_range = self._resolve_date_range(start_date, end_date)
+        requested_range = resolve_date_range(self.var_key, start=start_date, end=end_date)
 
         tasks = self._create_download_tasks(requested_range)
 

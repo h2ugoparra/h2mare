@@ -20,7 +20,6 @@ from h2mare.downloader.cmems_utils import CMEMSAPIError, get_dataset_time_range
 from h2mare.storage import split_time_range
 from h2mare.types import DateLike, DateRange, DownloadTask, TimeResolution
 from h2mare.utils.date_range import resolve_date_range
-from h2mare.utils.datetime_utils import normalize_date
 
 warnings.filterwarnings("ignore")
 
@@ -287,19 +286,6 @@ class CMEMSDownloader(BaseDownloader):
 
         return self._nrt_availability
 
-    def _resolve_date_range(
-        self,
-        start_date: Optional[DateLike] = None,
-        end_date: Optional[DateLike] = None,
-    ) -> DateRange:
-        """
-        Resolve download date range.
-        If no dates are passed, infers from the local store and dataset availability.
-        """
-        start = normalize_date(start_date) if start_date else None
-        end = normalize_date(end_date) if end_date else None
-        return resolve_date_range(self.var_key, start=start, end=end)
-
     def _create_download_tasks(
         self,
         requested_range: DateRange,
@@ -395,7 +381,7 @@ class CMEMSDownloader(BaseDownloader):
         """
 
         # Resolve date range
-        requested_range = self._resolve_date_range(start_date, end_date)
+        requested_range = resolve_date_range(self.var_key, start=start_date, end=end_date)
 
         # Create download tasks
         tasks = self._create_download_tasks(requested_range)
