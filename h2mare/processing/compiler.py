@@ -10,7 +10,6 @@ from pathlib import Path
 from typing import Literal, Optional
 
 import ephem
-import numpy as np
 import pandas as pd
 import xarray as xr
 from loguru import logger
@@ -24,7 +23,7 @@ from h2mare.storage.zarr_catalog import ZarrCatalog
 from h2mare.types import BBox, DateLike, DateRange, TimeResolution
 from h2mare.utils.date_range import resolve_date_range
 from h2mare.utils.datetime_utils import normalize_date
-from h2mare.utils.spatial import GridBuilder, clip_land_data
+from h2mare.utils.spatial import GridBuilder
 from h2mare.validators import validate_time_resolution, validate_var_key
 
 warnings.filterwarnings("ignore", category=RuntimeWarning)
@@ -345,150 +344,22 @@ class Compiler:
         self,
         var_key: str,
         date_range: DateRange,
-        depth_range: list[float] = [0, 100, 500, 1000],
     ) -> Optional[xr.Dataset]:
-        """
-        Process each var_key.
+        """Dispatch var_key to its registered compile processor (or the default)."""
+        # Lazy import breaks the compiler.py ↔ compiler_registry.py cycle.
+        from h2mare.processing.compiler_registry import (
+            COMPILE_PROCESSORS,
+            compile_default,
+        )
 
-        Args:
-            var_key: Variable key from app_config.variables
-            start_date: Start date to process
-            end_date: End date to proces
-            depth_range: For 'o2' var_key with depth dim
-        """
+        is_system = var_key in SYSTEM_VAR_KEYS
+        catalog = None if is_system else ZarrCatalog(var_key)
 
-        if var_key not in SYSTEM_VAR_KEYS:
-            vk_catalog = ZarrCatalog(var_key)
-            if not self._has_overlap(var_key, date_range, vk_catalog):
-                return None
-
-        if var_key == "bathy":
-            return self._process_bathy()
-
-        if var_key == "moon":
-            return self._process_moon(date_range)
-
-        if var_key == "o2":
-            return self._process_o2(vk_catalog, date_range, depth_range)
-
-        if var_key == "thetao":
-            return self._process_thetao(vk_catalog, date_range)
-
-        # General case
-        try:
-            ds = vk_catalog.open_dataset(
-                start_date=date_range.start,
-                end_date=date_range.end,
-                bbox=self.var_config.bbox,
-            )
-        except FileNotFoundError:
-            logger.warning(
-                f"No data for {var_key} during {date_range.start.date()}–{date_range.end.date()} — skipping."
-            )
+        if not is_system and not self._has_overlap(var_key, date_range, catalog):
             return None
 
-        if var_key == "atm-accum-avg":
-            ds = ds.drop_vars(["dayofyear", "month", "quantile"])
-
-        if var_key == "sst":
-            ds = postprocess_sst_fdist(ds)
-
-        return ds.interp_like(self.base_grid, method="linear", assume_sorted=True)
-
-    def _process_bathy(self):
-        var_cfg = self.app_config.variables["bathy"]
-        if var_cfg.data_file is None:
-            raise ValueError("bathy config entry is missing required 'data_file' field")
-        data_path = self.remote_store_root / var_cfg.local_folder / var_cfg.data_file
-        ds = xr.open_dataset(data_path).sel(
-            lon=slice(self.bbox.xmin, self.bbox.xmax),
-            lat=slice(self.bbox.ymin, self.bbox.ymax),
-        )
-        return ds.interp_like(self.base_grid, method="linear", assume_sorted=True)
-
-    def _process_moon(self, date_range: DateRange) -> xr.Dataset:
-        """
-        Moon ilumination data process for each day of a given daterange.
-        Lat/lon points are the mean values of base_grid and the same for all days.
-        """
-        dates = pd.date_range(date_range.start, date_range.end, freq="D")
-        lat = self.base_grid.lat.mean().values
-        lon = self.base_grid.lon.mean().values
-        moon_phase = calculate_moon_phase(lat, lon, dates)
-        da = xr.DataArray(
-            np.broadcast_to(
-                np.array(moon_phase)[:, None, None],
-                (len(dates), len(self.base_grid.lat), len(self.base_grid.lon)),
-            ),
-            name="moon_phase",
-            dims=["time", "lat", "lon"],
-            coords={
-                "time": dates,
-                "lat": self.base_grid.lat,
-                "lon": self.base_grid.lon,
-            },
-        )
-        return clip_land_data(da.to_dataset())
-
-    def _process_o2(
-        self, catalog: ZarrCatalog, date_range: DateRange, depths: list[float]
-    ) -> xr.Dataset | None:
-        """
-        Create Dissolved oxygen variables for specified depth intervals
-        """
-        try:
-            ds = catalog.open_dataset(
-                start_date=date_range.start,
-                end_date=date_range.end,
-                bbox=self.bbox,
-            )
-        except FileNotFoundError:
-            logger.warning(
-                f"No data for o2 during {date_range.start.date()}–{date_range.end.date()} — skipping."
-            )
-            return None
-        # Select all target depths at once and interpolate the full (time, lat, lon, depth)
-        # array in one pass — avoids calling interp_like once per depth level
-        ds_depths = ds.sel(depth=depths, method="nearest")
-        ds_interp = ds_depths.interp_like(
-            self.base_grid, method="linear", assume_sorted=True
-        )
-        return xr.Dataset(
-            {
-                f"o2_{target}": ds_interp.o2.isel(depth=i).drop_vars("depth")
-                for i, target in enumerate(depths)
-            }
-        )
-
-    def _process_thetao(
-        self,
-        catalog: ZarrCatalog,
-        date_range: DateRange,
-        depths: list[float] = [100, 200, 500, 1000],
-    ) -> xr.Dataset | None:
-        """Create potential temperature variables for specified depth intervals"""
-        try:
-            ds = catalog.open_dataset(
-                start_date=date_range.start,
-                end_date=date_range.end,
-                bbox=self.bbox,
-                chunks={"depth": 1},
-            )
-        except FileNotFoundError:
-            logger.warning(
-                f"No data for thetao during {date_range.start.date()}–{date_range.end.date()} — skipping."
-            )
-            return None
-        ds_depths = ds.sel(depth=depths, method="nearest")
-        ds_interp = ds_depths.interp_like(
-            self.base_grid, method="linear", assume_sorted=True
-        )
-        return xr.Dataset(
-            {
-                f"thetao_{target}": ds_interp.thetao.isel(depth=i).drop_vars("depth")
-                for i, target in enumerate(depths)
-            }
-        )
+        processor = COMPILE_PROCESSORS.get(var_key, compile_default)
+        return processor(self, catalog, date_range)
 
     # ============== UTILITIES ===================
     def _has_overlap(
