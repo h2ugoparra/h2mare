@@ -6,6 +6,7 @@ from .cds_downloader import CDSDownloader
 from .cmems_downloader import CMEMSDownloader, generate_copernicus_patterns
 from .cmems_downloader import download_original as cmems_download_original
 from .cmems_downloader import download_subset as cmems_download_subset
+from .registry import DOWNLOADER_REGISTRY
 
 __all__ = [
     "BaseDownloader",
@@ -16,4 +17,5 @@ __all__ = [
     "CDSDownloader",
     "AVISODownloader",
     "resolve_date_range",
+    "DOWNLOADER_REGISTRY",
 ]

@@ -38,16 +38,8 @@ import typer
 from loguru import logger
 
 from h2mare.config import get_settings
-from h2mare.downloader.aviso_downloader import AVISODownloader
-from h2mare.downloader.cds_downloader import CDSDownloader
-from h2mare.downloader.cmems_downloader import CMEMSDownloader
+from h2mare.downloader.registry import DOWNLOADER_REGISTRY
 from h2mare.pipeline_manager import PipelineManager
-
-DOWNLOADER_REGISTRY = {
-    "cmems": CMEMSDownloader,
-    "aviso": AVISODownloader,
-    "cds": CDSDownloader,
-}
 
 app = typer.Typer()
 
