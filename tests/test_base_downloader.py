@@ -86,6 +86,95 @@ class TestCleanupEmptyDownloadDir:
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# _retry_call
+# ---------------------------------------------------------------------------
+
+
+class TestRetryCall:
+    def test_returns_result_on_immediate_success(self, dl):
+        result = dl._retry_call(lambda: 99, max_attempts=3, wait_min=0, wait_max=0)
+        assert result == 99
+
+    def test_retries_on_failure_and_returns_on_eventual_success(self, dl):
+        call_count = 0
+
+        def flaky():
+            nonlocal call_count
+            call_count += 1
+            if call_count < 3:
+                raise ConnectionError("transient")
+            return "done"
+
+        result = dl._retry_call(flaky, max_attempts=3, wait_min=0, wait_max=0)
+        assert result == "done"
+        assert call_count == 3
+
+    def test_reraises_after_exhausting_all_attempts(self, dl):
+        def always_fails():
+            raise RuntimeError("permanent failure")
+
+        with pytest.raises(RuntimeError, match="permanent failure"):
+            dl._retry_call(always_fails, max_attempts=3, wait_min=0, wait_max=0)
+
+    def test_attempt_count_matches_max_attempts(self, dl):
+        calls = []
+
+        def always_fails():
+            calls.append(1)
+            raise ValueError("fail")
+
+        with pytest.raises(ValueError):
+            dl._retry_call(always_fails, max_attempts=2, wait_min=0, wait_max=0)
+
+        assert len(calls) == 2
+
+    def test_logs_warning_before_each_retry(self, dl):
+        call_count = 0
+
+        def flaky():
+            nonlocal call_count
+            call_count += 1
+            if call_count < 3:
+                raise ValueError("retry me")
+            return True
+
+        with patch("h2mare.downloader.base.logger") as mock_logger:
+            dl._retry_call(flaky, max_attempts=3, wait_min=0, wait_max=0)
+
+        # 2 failures before success → before_sleep called twice → 2 warnings
+        assert mock_logger.warning.call_count == 2
+
+    def test_warning_includes_attempt_number_and_exception(self, dl):
+        call_count = 0
+
+        def flaky():
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise TimeoutError("connection timed out")
+            return True
+
+        with patch("h2mare.downloader.base.logger") as mock_logger:
+            dl._retry_call(flaky, max_attempts=3, wait_min=0, wait_max=0)
+
+        msg = mock_logger.warning.call_args[0][0]
+        assert "attempt 1" in msg
+        assert "TimeoutError" in msg
+        assert "connection timed out" in msg
+
+    def test_no_warning_logged_on_first_attempt_success(self, dl):
+        with patch("h2mare.downloader.base.logger") as mock_logger:
+            dl._retry_call(lambda: "ok", max_attempts=3, wait_min=0, wait_max=0)
+
+        mock_logger.warning.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# _warn_if_rep_updated
+# ---------------------------------------------------------------------------
+
+
 class TestWarnIfRepUpdated:
     # ZarrCatalog is imported locally inside _warn_if_rep_updated, so patch
     # the class at its source module.

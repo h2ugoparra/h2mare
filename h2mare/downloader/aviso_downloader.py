@@ -99,6 +99,7 @@ class AVISODownloader(BaseDownloader):
     def adjust_ftp_path_to_dataset(self, dataset_id: str) -> FTP:
         self.ftp.cwd("/")
         self.ftp.cwd(dataset_id)  # adjust path
+        self._current_dataset_id = dataset_id
         return self.ftp
 
     # ==================== Dates and data coverage Resolution ====================
@@ -267,56 +268,26 @@ class AVISODownloader(BaseDownloader):
 
     # ==================== Download Execution ====================
     def download_file(self, path: str, output_dir: Optional[Path] = None) -> None:
-        """Download individual files from FTP."""
+        """Download individual files from FTP, with retry and automatic reconnection."""
         local_path = (output_dir or self.download_dir) / path.split("/")[-1]
-        logger.debug(f"📥 Downloading {path} to {local_path}")
+        logger.debug(f"Downloading {path} to {local_path}")
 
-        try:
-            self.ftp.voidcmd("TYPE I")  # switch to binary mode for SIZE command
-            file_size = self.ftp.size(path)
-        except Exception as e:
-            logger.warning(f"⚠️ Error getting file size for {path}: {e}")
-            file_size = None
-
-        with open(local_path, "wb") as f:
-            if file_size:
-                with tqdm(
-                    total=file_size, unit="B", unit_scale=True, desc=path.split("/")[-1]
-                ) as pbar:
-
-                    def callback(data):
-                        f.write(data)
-                        pbar.update(len(data))
-
-                    self.ftp.retrbinary(f"RETR {path}", callback)
-            else:
-                # Fallback if file_size is unknown
-                self.ftp.retrbinary(f"RETR {path}", f.write)
-
-        logger.success(f"Downloaded {path.split('/')[-1]} to {local_path}")
-
-    def download_parallel(
-        self,
-        paths: list[str],
-        dataset_id: str,
-        output_dir: Optional[Path] = None,
-        max_workers: int = 2,
-    ):
-        """Download multiple FSLE files in parallel using multiple FTP connections."""
-        output_dir = output_dir or self.download_dir
-
-        def download_single(
-            path: str, dataset_id: str = dataset_id, output_dir: Path = output_dir
-        ):
-            # Each thread gets its own FTP connection
-            ftp = self.connect_ftp()
-            ftp.cwd(dataset_id)
+        def _attempt() -> None:
+            # Reconnect if the connection is no longer alive.
             try:
-                local_path = output_dir / path.split("/")[-1]
-                ftp.voidcmd("TYPE I")
-                file_size = ftp.size(path)
+                self.ftp.voidcmd("NOOP")
+            except Exception:
+                logger.debug("FTP connection lost — reconnecting")
+                self.ftp = self.connect_ftp()
+                dataset_id = getattr(self, "_current_dataset_id", None)
+                if dataset_id:
+                    self.adjust_ftp_path_to_dataset(dataset_id)
+
+            try:
+                self.ftp.voidcmd("TYPE I")
+                file_size = self.ftp.size(path)
             except Exception as e:
-                logger.warning(f"⚠️ Error getting file size for {path}: {e}")
+                logger.warning(f"Error getting file size for {path}: {e}")
                 file_size = None
 
             with open(local_path, "wb") as f:
@@ -332,11 +303,62 @@ class AVISODownloader(BaseDownloader):
                             f.write(data)
                             pbar.update(len(data))
 
-                        ftp.retrbinary(f"RETR {path}", callback)
+                        self.ftp.retrbinary(f"RETR {path}", callback)
                 else:
-                    ftp.retrbinary(f"RETR {path}", f.write)
+                    self.ftp.retrbinary(f"RETR {path}", f.write)
 
-            ftp.quit()
+        self._retry_call(_attempt, max_attempts=3, wait_min=10, wait_max=60)
+        logger.success(f"Downloaded {path.split('/')[-1]} to {local_path}")
+
+    def download_parallel(
+        self,
+        paths: list[str],
+        dataset_id: str,
+        output_dir: Optional[Path] = None,
+        max_workers: int = 2,
+    ):
+        """Download multiple FSLE files in parallel using multiple FTP connections."""
+        output_dir = output_dir or self.download_dir
+
+        def download_single(
+            path: str, dataset_id: str = dataset_id, output_dir: Path = output_dir
+        ):
+            # Each retry creates a fresh FTP connection — safe without reconnect logic.
+            def _attempt() -> None:
+                ftp = self.connect_ftp()
+                ftp.cwd(dataset_id)
+                try:
+                    local_path = output_dir / path.split("/")[-1]
+                    try:
+                        ftp.voidcmd("TYPE I")
+                        file_size = ftp.size(path)
+                    except Exception as e:
+                        logger.warning(f"Error getting file size for {path}: {e}")
+                        file_size = None
+
+                    with open(local_path, "wb") as f:
+                        if file_size:
+                            with tqdm(
+                                total=file_size,
+                                unit="B",
+                                unit_scale=True,
+                                desc=path.split("/")[-1],
+                            ) as pbar:
+
+                                def callback(data):
+                                    f.write(data)
+                                    pbar.update(len(data))
+
+                                ftp.retrbinary(f"RETR {path}", callback)
+                        else:
+                            ftp.retrbinary(f"RETR {path}", f.write)
+                finally:
+                    try:
+                        ftp.quit()
+                    except Exception:
+                        pass
+
+            self._retry_call(_attempt, max_attempts=3, wait_min=10, wait_max=60)
             return path
 
         with ThreadPoolExecutor(max_workers=max_workers) as executor:

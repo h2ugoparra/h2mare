@@ -461,36 +461,32 @@ class CMEMSDownloader(BaseDownloader):
             List of downloaded file paths
         """
 
-        try:
-            if self.var_config.subset:
-                chunks = split_time_range(task.date_range, time_split)
+        if self.var_config.subset:
+            chunks = split_time_range(task.date_range, time_split)
 
-                logger.info(
-                    f"Split into {len(chunks)} chunk(s) ({time_split} intervals)"
+            logger.info(
+                f"Split into {len(chunks)} chunk(s) ({time_split} intervals)"
+            )
+
+            for i, chunk in enumerate(chunks, 1):
+                logger.debug(
+                    f"Chunk {i}/{len(chunks)}: "
+                    f"{chunk.start.date()} to {chunk.end.date()}"
                 )
-
-                for i, chunk in enumerate(chunks, 1):
-                    logger.debug(
-                        f"Chunk {i}/{len(chunks)}: "
-                        f"{chunk.start.date()} to {chunk.end.date()}"
-                    )
-                    self.download_subset(
-                        task.dataset_id,
-                        pd.to_datetime(chunk.start),
-                        pd.to_datetime(chunk.end),
-                        output_dir,
-                    )
-            else:
-                self.download_original(
+                self._retry_call(
+                    self.download_subset,
                     task.dataset_id,
-                    pd.to_datetime(task.date_range.start),
-                    pd.to_datetime(task.date_range.end),
+                    pd.to_datetime(chunk.start),
+                    pd.to_datetime(chunk.end),
                     output_dir,
                 )
-        except Exception as e:
-            logger.error(
-                f"  ✗ Download failed for {chunk.start.date()} to "
-                f"{chunk.end.date()}: {e}"
+        else:
+            self._retry_call(
+                self.download_original,
+                task.dataset_id,
+                pd.to_datetime(task.date_range.start),
+                pd.to_datetime(task.date_range.end),
+                output_dir,
             )
 
     def download_subset(

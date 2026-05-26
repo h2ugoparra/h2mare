@@ -218,5 +218,9 @@ class CDSDownloader(BaseDownloader):
             / f"{self.var_config.dataset_id_rep}_{self.var_key}_{geotime_label}.grib"
         )
 
-        client.retrieve(self.var_config.dataset_id_rep, request).download(outfile)
+        self._retry_call(
+            lambda: client.retrieve(self.var_config.dataset_id_rep, request).download(
+                outfile
+            )
+        )
         logger.success(f"Downloaded {outfile.name} to {outfile.parent}")
