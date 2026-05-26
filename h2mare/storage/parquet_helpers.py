@@ -199,3 +199,72 @@ def aggregate_by_time(
     result = lf2.group_by(key).agg(agg_exprs).rename({key: "time_agg"}).sort("time_agg")
 
     return result
+
+
+def aggregate_by_time_stats(
+    lf: pl.LazyFrame,
+    var_name: str,
+    *,
+    agg_by: Literal["day", "week", "month", "season", "year"],
+    time_col: str = "time",
+) -> pl.LazyFrame:
+    """
+    Aggregates a variable by time, computing mean, std, min, and max per bucket.
+
+    Args:
+        lf: LazyFrame for aggregation.
+        var_name: Variable name for aggregation.
+        agg_by: Time range for aggregation. Options are: day, week, month, season, year.
+        time_col: Time column name. Defaults to 'time'.
+
+    Returns:
+        pl.LazyFrame: Columns 'time_agg', '{var}_mean', '{var}_std', '{var}_min', '{var}_max'.
+    """
+    _required_columns(lf, [var_name, time_col])
+
+    agg_exprs = [
+        pl.col(var_name).mean().alias(f"{var_name}_mean"),
+        pl.col(var_name).std(ddof=1).alias(f"{var_name}_std"),
+        pl.col(var_name).min().alias(f"{var_name}_min"),
+        pl.col(var_name).max().alias(f"{var_name}_max"),
+    ]
+
+    if agg_by == "day":
+        key = time_col
+        lf2 = lf
+
+    elif agg_by == "week":
+        key = "week_start"
+        lf2 = lf.with_columns(pl.col(time_col).dt.truncate("1w").alias(key))
+    elif agg_by == "month":
+        key = "month_start"
+        lf2 = lf.with_columns(pl.col(time_col).dt.truncate("1mo").alias(key))
+    elif agg_by == "year":
+        key = "year_start"
+        lf2 = lf.with_columns(pl.col(time_col).dt.truncate("1y").alias(key))
+    elif agg_by == "season":
+        key = "season"
+
+        SEASON_EXPR = (
+            pl.when(pl.col(time_col).dt.month().is_in([12, 1, 2]))
+            .then(4)
+            .when(pl.col(time_col).dt.month().is_in([3, 4, 5]))
+            .then(1)
+            .when(pl.col(time_col).dt.month().is_in([6, 7, 8]))
+            .then(2)
+            .otherwise(3)
+        )
+
+        YEAR_EXPR = (
+            pl.when(pl.col(time_col).dt.month() == 12)
+            .then(pl.col(time_col).dt.year() + 1)
+            .otherwise(pl.col(time_col).dt.year())
+        )
+
+        lf2 = lf.with_columns(season=YEAR_EXPR * 10 + SEASON_EXPR)
+    else:
+        raise ValueError(f"Unsupported aggregation: {agg_by}")
+
+    result = lf2.group_by(key).agg(agg_exprs).rename({key: "time_agg"}).sort("time_agg")
+
+    return result

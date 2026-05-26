@@ -3,6 +3,7 @@ from .parquet_catalog import ParquetCatalog
 from .parquet_helpers import (
     aggregate_by_space_time,
     aggregate_by_time,
+    aggregate_by_time_stats,
     polars_float64_to_float32,
 )
 from .parquet_indexer import ParquetIndexer
@@ -30,6 +31,7 @@ __all__ = [
     "split_time_range",
     "aggregate_by_space_time",
     "aggregate_by_time",
+    "aggregate_by_time_stats",
     "polars_float64_to_float32",
     "chunk_dataset",
     "have_vars_unique_values",

@@ -4,12 +4,17 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Literal, Optional, Union
 
+import numpy as np
 import plotly.graph_objects as go
 import polars as pl
 from loguru import logger
 
 from h2mare import get_settings
-from h2mare.storage.parquet_helpers import aggregate_by_space_time, aggregate_by_time
+from h2mare.storage.parquet_helpers import (
+    aggregate_by_space_time,
+    aggregate_by_time,
+    aggregate_by_time_stats,
+)
 from h2mare.utils.plot import plot_maps
 
 if TYPE_CHECKING:
@@ -164,6 +169,182 @@ class ParquetPlotter:
             xaxis_title="Time",
             yaxis_title="Value",
             xaxis=dict(rangeslider=dict(visible=True), type="date"),
+        )
+        return fig
+
+    # ------------------------------------------------------------------ #
+    #  Statistics summary                                                  #
+    # ------------------------------------------------------------------ #
+
+    def stats_summary(
+        self,
+        var_name: str,
+        agg_by: Literal["day", "week", "month", "season", "year"],
+        *,
+        dates: Optional[Union[list, tuple]] = None,
+        bbox: Optional[tuple[float, float, float, float]] = None,
+        lowess_frac: float = 0.3,
+    ) -> go.Figure:
+        """
+        Interactive composite plot of mean, ±1 std, min, and max over time.
+
+        Each statistic is computed per time bucket after spatially aggregating all
+        grid cells. LOWESS trend lines are overlaid for mean, min, and max.
+
+        Args:
+            var_name: Variable name to plot.
+            agg_by: Temporal aggregation granularity (day, week, month, season, year).
+            dates: Temporal filter. Pass a ``(start, end)`` tuple for a contiguous
+                range or a ``list`` of discrete dates. A 2-element tuple is always
+                treated as a range. Defaults to the full dataset.
+            bbox: Spatial filter as a 4-tuple ``(xmin, ymin, xmax, ymax)``.
+                Defaults to full extent.
+            lowess_frac: Fraction of data used for each local LOWESS fit (0 < frac ≤ 1).
+                Lower values follow the data more closely; higher values produce a
+                smoother curve. Defaults to 0.3.
+
+        Note:
+            Seasonal values are assigned to the first month of the respective season
+            (e.g. spring → March 1st). ``std`` is ``null`` for buckets with a single
+            observation; Plotly renders those as gaps in the shaded band.
+
+        Returns:
+            go.Figure with mean (solid), ±1 std band (shaded), min/max (dashed),
+            and LOWESS trend lines for mean, min, and max (dotted).
+        """
+        if var_name not in self._idx.get_schema():
+            raise ValueError(f"'{var_name}' not in parquet column names.")
+
+        lf = self._idx.scan(
+            dates=dates, bbox=bbox, columns=[self._idx.time_col, var_name]
+        )
+        result = aggregate_by_time_stats(lf, var_name, agg_by=agg_by)
+
+        if agg_by == "season":
+            result = result.with_columns(
+                time_plot=pl.datetime(
+                    pl.col("time_agg") // 10,
+                    pl.when(pl.col("time_agg") % 10 == 1)
+                    .then(3)
+                    .when(pl.col("time_agg") % 10 == 2)
+                    .then(6)
+                    .when(pl.col("time_agg") % 10 == 3)
+                    .then(9)
+                    .otherwise(12),
+                    1,
+                )
+            )
+
+        result = result.collect(engine="streaming")
+
+        time_col = "time_plot" if "time_plot" in result.columns else "time_agg"
+        long_name = get_settings().get_var_info(var_name).get("long_name", var_name)
+
+        x = result[time_col].to_numpy()
+        mean_arr = result[f"{var_name}_mean"].to_numpy()
+        std_arr = result[f"{var_name}_std"].to_numpy()
+
+        x_numeric = x.astype("float64")
+        min_arr = result[f"{var_name}_min"].to_numpy()
+        max_arr = result[f"{var_name}_max"].to_numpy()
+
+        from statsmodels.nonparametric.smoothers_lowess import lowess
+
+        def _trend(y: np.ndarray) -> np.ndarray:
+            mask = ~np.isnan(y)
+            return lowess(y[mask], x_numeric[mask], frac=lowess_frac, return_sorted=False)
+
+        mean_trend = _trend(mean_arr)
+        min_trend = _trend(min_arr)
+        max_trend = _trend(max_arr)
+
+        fig = go.Figure()
+        # Shaded ±1 std band — two invisible boundary traces with fill between them
+        fig.add_trace(
+            go.Scatter(
+                x=x,
+                y=mean_arr - std_arr,
+                mode="lines",
+                line=dict(width=0),
+                showlegend=False,
+                legendgroup="std",
+                hoverinfo="skip",
+            )
+        )
+        fig.add_trace(
+            go.Scatter(
+                x=x,
+                y=mean_arr + std_arr,
+                mode="lines",
+                line=dict(width=0),
+                fill="tonexty",
+                fillcolor="rgba(99, 110, 250, 0.2)",
+                name="±1 std",
+                legendgroup="std",
+                hoverinfo="skip",
+            )
+        )
+        fig.add_trace(
+            go.Scatter(
+                x=x,
+                y=mean_arr,
+                mode="lines",
+                name="mean",
+                line=dict(color="rgb(99, 110, 250)", width=2),
+            )
+        )
+        fig.add_trace(
+            go.Scatter(
+                x=x,
+                y=mean_trend,
+                mode="lines",
+                name="mean_trend",
+                line=dict(dash="dot", color="rgb(99, 110, 250)", width=1),
+            )
+        )
+        fig.add_trace(
+            go.Scatter(
+                x=x,
+                y=min_arr,
+                mode="lines",
+                name="min",
+                line=dict(dash="dash", color="rgb(239, 85, 59)", width=1),
+            )
+        )
+        fig.add_trace(
+            go.Scatter(
+                x=x,
+                y=min_trend,
+                mode="lines",
+                name="min_trend",
+                line=dict(dash="dot", color="rgb(239, 85, 59)", width=1),
+            )
+        )
+        fig.add_trace(
+            go.Scatter(
+                x=x,
+                y=max_arr,
+                mode="lines",
+                name="max",
+                line=dict(dash="dash", color="rgb(0, 204, 150)", width=1),
+            )
+        )
+        fig.add_trace(
+            go.Scatter(
+                x=x,
+                y=max_trend,
+                mode="lines",
+                name="max_trend",
+                line=dict(dash="dot", color="rgb(0, 204, 150)", width=1),
+            )
+        )
+        fig.update_layout(
+            title=f"{long_name} — Statistics Summary",
+            xaxis_title="Time",
+            yaxis_title="Value",
+            xaxis=dict(rangeslider=dict(visible=True), type="date"),
+            plot_bgcolor="white",
+            paper_bgcolor="white",
         )
         return fig
 
