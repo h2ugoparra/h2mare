@@ -1,10 +1,12 @@
 from .coverage import get_store_coverage, split_time_range
+from .parquet_catalog import ParquetCatalog
 from .parquet_helpers import (
     aggregate_by_space_time,
     aggregate_by_time,
     polars_float64_to_float32,
 )
 from .parquet_indexer import ParquetIndexer
+from .parquet_store import ParquetStore
 from .storage import write_append_zarr
 from .xarray_helpers import (
     chunk_dataset,
@@ -20,6 +22,8 @@ from .zarr_catalog import ZarrCatalog
 __all__ = [
     "ZarrCatalog",
     "ParquetIndexer",
+    "ParquetStore",
+    "ParquetCatalog",
     "get_store_coverage",
     "split_time_range",
     "aggregate_by_space_time",

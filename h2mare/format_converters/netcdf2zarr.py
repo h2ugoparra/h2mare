@@ -17,6 +17,7 @@ from loguru import logger
 import h2mare.processing.core.aviso as aviso
 import h2mare.processing.core.cds as cds
 from h2mare.config import AppConfig, get_settings
+from h2mare.format_converters.base import BaseConverter
 from h2mare.processing.registry import PROCESSORS
 from h2mare.storage.storage import write_append_zarr
 from h2mare.storage.xarray_helpers import chunk_dataset, rename_dims
@@ -29,7 +30,7 @@ from h2mare.validators import validate_time_resolution, validate_var_key
 warnings.filterwarnings("ignore")
 
 
-class Netcdf2Zarr:
+class Netcdf2Zarr(BaseConverter):
     def __init__(
         self,
         var_key: str,
@@ -64,7 +65,7 @@ class Netcdf2Zarr:
         self.catalog = ZarrCatalog(self.var_key, store_root=store_root)
         self.store_root = self.catalog.store_root
 
-    def run(self) -> None:
+    def run(self) -> bool:
 
         logger.info(
             f"Initializing Netcdf -> Zarr conversion for variable key: {self.var_key.upper()}"
@@ -74,7 +75,7 @@ class Netcdf2Zarr:
         if self.var_key == "eddies":
             self._process_eddies()
             self.catalog.refresh(force=True)
-            return
+            return True
 
         file_groups = self._group_map(groupby=self.time_resolution)
 
@@ -83,7 +84,7 @@ class Netcdf2Zarr:
 
         self.catalog.refresh(force=True)
         self._cleanup_downloads()
-        return
+        return True
 
     # ========= DATA PREPARATION FUNCTIONS =========
 

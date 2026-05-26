@@ -13,6 +13,7 @@ from h2mare.storage.parquet_helpers import aggregate_by_space_time, aggregate_by
 from h2mare.utils.plot import plot_maps
 
 if TYPE_CHECKING:
+    from h2mare.storage.parquet_catalog import ParquetCatalog
     from h2mare.storage.parquet_indexer import ParquetIndexer
 
 
@@ -27,7 +28,7 @@ class ParquetPlotter:
         >>> indexer.plot.monthly_map("sst")
     """
 
-    def __init__(self, indexer: ParquetIndexer) -> None:
+    def __init__(self, indexer: "ParquetCatalog | ParquetIndexer") -> None:
         self._idx = indexer
         self._cache: dict = {}
         self._grid_coords: pl.DataFrame | None = None

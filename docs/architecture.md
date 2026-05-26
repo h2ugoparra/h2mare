@@ -18,8 +18,10 @@ Zarr2Parquet                         (uses ParquetIndexer)
 Extractor                            (uses ParquetIndexer)
 parquet2csv                          (reads Parquet directly)
 
-ParquetIndexer
-  └── ParquetPlotter
+ParquetIndexer  (facade)
+  ├── ParquetStore   (writes: add_data, overlap resolution, atomic I/O)
+  ├── ParquetCatalog (reads: scan, load, coverage queries)
+  └── ParquetPlotter (via catalog.plot)
         ├── time_series()
         └── spatial_maps()
 ```
@@ -82,19 +84,30 @@ Geometry extraction uses `rioxarray.rio.clip()` and is parallelised with `Thread
 
 ---
 
-## ParquetIndexer
+## ParquetIndexer / ParquetStore / ParquetCatalog
 
-`ParquetIndexer` (`storage/parquet_indexer.py`) manages the Hive-partitioned Parquet store (`year=YYYY/month=MM/`). It is used by `Zarr2Parquet` to persist h2ds data and can be used directly for analysis.
+`ParquetIndexer` (`storage/parquet_indexer.py`) is the primary interface for the Hive-partitioned Parquet store (`year=YYYY/month=MM/`). It is used by `Zarr2Parquet` to persist h2ds data and can be used directly for analysis.
 
-Key behaviors:
+Internally it is a thin facade over two focused classes that can also be used directly:
+
+| Class | Module | Responsibility |
+|---|---|---|
+| `ParquetStore` | `storage/parquet_store.py` | All filesystem I/O — `add_data`, atomic partition writes, DuckDB overlap resolution, schema management |
+| `ParquetCatalog` | `storage/parquet_catalog.py` | Read interface — `scan`, `load`, coverage queries; wraps a `ParquetStore` |
+| `ParquetIndexer` | `storage/parquet_indexer.py` | Facade combining both; preserves the original API for existing call-sites |
+
+Key behaviors (implemented in `ParquetStore`):
 
 - **Atomic writes** — each partition is written to a `.tmp_write_YYYY_MM` directory and renamed into place, preventing corrupt reads during a write.
 - **Overlap resolution** — when new data overlaps existing partitions in time or columns, `resolve_dims_overlap()` merges them with a single DuckDB `FULL OUTER JOIN` across all affected files, then rewrites each partition atomically.
-- **Lazy scanning** — `scan()` returns a Polars `LazyFrame` filtered by date range and/or bounding box without loading the full dataset; `load()` collects it.
 - **Schema evolution** — new columns in incoming data are detected and added to the physical schema; missing columns in existing partitions are backfilled with nulls.
 - **Float32 storage** — float64 columns are downcast to float32 on write to reduce file size.
 
-`ParquetIndexer` exposes a `plot` cached property that returns a `ParquetPlotter` instance. The cache is invalidated automatically after each `add_data()` call.
+Key behaviors (implemented in `ParquetCatalog`):
+
+- **Lazy scanning** — `scan()` returns a Polars `LazyFrame` filtered by date range and/or bounding box without loading the full dataset; `load()` collects it.
+
+`ParquetIndexer` exposes a `plot` cached property (backed by `ParquetCatalog`) that returns a `ParquetPlotter` instance. The cache is invalidated automatically after each `add_data()` call.
 
 ---
 
