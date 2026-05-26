@@ -248,3 +248,66 @@ class TestWarnIfRepUpdated:
                 dl._warn_if_rep_updated(pd.Timestamp("2023-12-31"))
 
         mock_logger.warning.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# adjust_ftp_path_to_dataset
+# ---------------------------------------------------------------------------
+
+
+class TestAdjustFtpPath:
+    def test_stores_current_dataset_id(self, dl):
+        dl.adjust_ftp_path_to_dataset("/dataset/fsle/rep")
+        assert dl._current_dataset_id == "/dataset/fsle/rep"
+
+    def test_updates_dataset_id_on_second_call(self, dl):
+        dl.adjust_ftp_path_to_dataset("/dataset/fsle/rep")
+        dl.adjust_ftp_path_to_dataset("/dataset/fsle/nrt")
+        assert dl._current_dataset_id == "/dataset/fsle/nrt"
+
+    def test_navigates_ftp_to_dataset_directory(self, dl):
+        dl.adjust_ftp_path_to_dataset("/dataset/fsle/rep")
+        dl.ftp.cwd.assert_called_with("/dataset/fsle/rep")
+
+
+# ---------------------------------------------------------------------------
+# download_file
+# ---------------------------------------------------------------------------
+
+
+class TestDownloadFile:
+    def _make_new_ftp(self):
+        """FTP mock that succeeds: TYPE I works, size raises (→ file_size=None), retrbinary no-ops."""
+        ftp = MagicMock()
+        ftp.voidcmd.return_value = None
+        ftp.size.side_effect = Exception("size unavailable")
+        ftp.retrbinary.return_value = None
+        return ftp
+
+    def test_creates_output_file(self, dl, tmp_path):
+        dl.ftp.voidcmd.return_value = None  # NOOP succeeds
+        dl.ftp.size.side_effect = Exception("no size")
+
+        dl.download_file("/dataset/fsle/rep/file.nc", output_dir=tmp_path)
+
+        assert (tmp_path / "file.nc").exists()
+
+    def test_reconnects_when_noop_raises(self, dl, tmp_path):
+        dl.ftp.voidcmd.side_effect = Exception("connection lost")
+
+        new_ftp = self._make_new_ftp()
+        with patch.object(dl, "connect_ftp", return_value=new_ftp):
+            dl.download_file("/dataset/fsle/rep/file.nc", output_dir=tmp_path)
+
+        assert dl.ftp is new_ftp
+
+    def test_navigates_to_current_dataset_after_reconnect(self, dl, tmp_path):
+        dl._current_dataset_id = "/dataset/fsle/rep"
+        dl.ftp.voidcmd.side_effect = Exception("connection lost")
+
+        new_ftp = self._make_new_ftp()
+        with patch.object(dl, "connect_ftp", return_value=new_ftp):
+            dl.download_file("/dataset/fsle/rep/file.nc", output_dir=tmp_path)
+
+        # After reconnect, adjust_ftp_path_to_dataset must navigate to the dataset dir.
+        new_ftp.cwd.assert_called_with("/dataset/fsle/rep")

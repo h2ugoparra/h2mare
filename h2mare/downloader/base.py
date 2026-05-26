@@ -4,10 +4,11 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Optional
+from typing import Any, Callable, Optional
 
 import pandas as pd
 from loguru import logger
+from tenacity import Retrying, stop_after_attempt, wait_exponential
 
 from h2mare.config import AppConfig, get_settings
 from h2mare.utils.paths import resolve_store_path
@@ -94,6 +95,39 @@ class BaseDownloader(ABC):
                 f"to {api_rep_end.date()} (API) — "
                 "new reprocessed data is available."
             )
+
+    def _retry_call(
+        self,
+        fn: Callable[..., Any],
+        *args: Any,
+        max_attempts: int = 3,
+        wait_min: float = 30,
+        wait_max: float = 300,
+        **kwargs: Any,
+    ) -> Any:
+        """Execute fn(*args, **kwargs) with exponential-backoff retry on any exception.
+
+        Logs a warning before each sleep so the user can see what failed and when
+        the next attempt will run. After max_attempts, re-raises the last exception.
+        """
+        label = f"{type(self).__name__}[{self.var_key}]"
+
+        def _before_sleep(retry_state) -> None:
+            exc = retry_state.outcome.exception()
+            wait = retry_state.next_action.sleep
+            logger.warning(
+                f"{label}: attempt {retry_state.attempt_number} failed "
+                f"({type(exc).__name__}: {exc}). Retrying in {wait:.0f}s."
+            )
+
+        for attempt in Retrying(
+            stop=stop_after_attempt(max_attempts),
+            wait=wait_exponential(multiplier=1, min=wait_min, max=wait_max),
+            before_sleep=_before_sleep,
+            reraise=True,
+        ):
+            with attempt:
+                return fn(*args, **kwargs)
 
     def _cleanup_empty_download_dir(self) -> None:
         """Remove the per-variable download subdirectory if it is empty after a run."""

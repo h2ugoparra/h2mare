@@ -14,7 +14,7 @@ from h2mare.downloader.cmems_downloader import (
     generate_copernicus_patterns,
 )
 from h2mare.models import AppConfig
-from h2mare.types import DateRange, DownloadTask
+from h2mare.types import DateRange, DownloadTask, TimeResolution
 
 
 # ---------------------------------------------------------------------------
@@ -33,6 +33,7 @@ _ENTRY = {
 }
 
 _ENTRY_NO_NRT = {**_ENTRY, "dataset_id_nrt": None}
+_ENTRY_NO_SUBSET = {**_ENTRY, "subset": False, "dataset_id_nrt": None}
 
 
 def _make_config(entry=_ENTRY) -> AppConfig:
@@ -44,6 +45,16 @@ def dl(tmp_path):
     return CMEMSDownloader(
         "sst",
         app_config=_make_config(),
+        store_root=tmp_path / "store",
+        download_root=tmp_path,
+    )
+
+
+@pytest.fixture
+def dl_no_subset(tmp_path):
+    return CMEMSDownloader(
+        "sst",
+        app_config=_make_config(_ENTRY_NO_SUBSET),
         store_root=tmp_path / "store",
         download_root=tmp_path,
     )
@@ -234,3 +245,73 @@ class TestWriteManifest:
         assert records[1]["dataset_type"] == "nrt"
         assert records[0]["start"] == "2021-01-01"
         assert records[1]["end"] == "2022-06-30"
+
+
+# ---------------------------------------------------------------------------
+# CMEMSDownloader._execute_task
+# ---------------------------------------------------------------------------
+
+
+class TestExecuteTask:
+    # Patch _retry_call to call fn once without retry delay so tests are fast
+    # and isolated from retry mechanics (which are tested in test_base_downloader).
+    _NO_RETRY = {"side_effect": lambda fn, *a, **kw: fn(*a)}
+
+    def test_subset_true_calls_download_subset_per_chunk(self, dl):
+        task = DownloadTask(
+            dataset_id="cmems-rep-sst",
+            date_range=DateRange("2020-01-01", "2020-03-31"),
+            dataset_type="rep",
+        )
+        with (
+            patch.object(dl, "download_subset") as mock_subset,
+            patch.object(dl, "_retry_call", **self._NO_RETRY),
+        ):
+            dl._execute_task(task, TimeResolution.MONTH)
+
+        assert mock_subset.call_count == 3  # Jan, Feb, Mar
+
+    def test_subset_false_calls_download_original_once(self, dl_no_subset):
+        task = DownloadTask(
+            dataset_id="cmems-rep-sst",
+            date_range=DateRange("2020-01-01", "2020-12-31"),
+            dataset_type="rep",
+        )
+        with (
+            patch.object(dl_no_subset, "download_original") as mock_original,
+            patch.object(dl_no_subset, "_retry_call", **self._NO_RETRY),
+        ):
+            dl_no_subset._execute_task(task, TimeResolution.MONTH)
+
+        mock_original.assert_called_once()
+
+    def test_exception_from_download_propagates(self, dl):
+        # Verifies the old silent-swallow bug is gone: errors must bubble up.
+        task = DownloadTask(
+            dataset_id="cmems-rep-sst",
+            date_range=DateRange("2020-01-01", "2020-01-31"),
+            dataset_type="rep",
+        )
+        with (
+            patch.object(dl, "download_subset", side_effect=ConnectionError("API down")),
+            patch.object(dl, "_retry_call", **self._NO_RETRY),
+        ):
+            with pytest.raises(ConnectionError, match="API down"):
+                dl._execute_task(task, TimeResolution.MONTH)
+
+    def test_subset_true_passes_chunk_dates_to_download_subset(self, dl):
+        task = DownloadTask(
+            dataset_id="cmems-rep-sst",
+            date_range=DateRange("2020-06-01", "2020-06-30"),
+            dataset_type="rep",
+        )
+        with (
+            patch.object(dl, "download_subset") as mock_subset,
+            patch.object(dl, "_retry_call", **self._NO_RETRY),
+        ):
+            dl._execute_task(task, TimeResolution.MONTH)
+
+        call_args = mock_subset.call_args
+        assert call_args[0][0] == "cmems-rep-sst"
+        assert pd.Timestamp(call_args[0][1]) == pd.Timestamp("2020-06-01")
+        assert pd.Timestamp(call_args[0][2]) == pd.Timestamp("2020-06-30")
