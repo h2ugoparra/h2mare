@@ -10,11 +10,13 @@ H2MARE is a five-stage pipeline: **Download → Convert → Compile → Index �
 CLI (h2mare/cli/main.py)
   └── PipelineManager
         ├── Downloader (CMEMSDownloader | AVISODownloader | CDSDownloader)
-        ├── Netcdf2Zarr
-        │     └── ZarrCatalog        (metadata index per variable)
+        │     └── DOWNLOADER_REGISTRY  (downloader/registry.py)
+        ├── Netcdf2Zarr : BaseConverter
+        │     └── ZarrCatalog
+        │           └── ZarrDirectoryScanner  (filesystem I/O + metadata)
         └── Compiler
 
-Zarr2Parquet                         (uses ParquetIndexer)
+Zarr2Parquet : BaseConverter         (uses ParquetIndexer)
 Extractor                            (uses ParquetIndexer)
 parquet2csv                          (reads Parquet directly)
 
@@ -31,15 +33,16 @@ ParquetIndexer  (facade)
 ## Stage 1 — Download
 
 **Classes:** `CMEMSDownloader`, `AVISODownloader`, `CDSDownloader`  
+**Registry:** `DOWNLOADER_REGISTRY` (`downloader/registry.py`) — maps source keys (`"cmems"`, `"aviso"`, `"cds"`) to their downloader classes; passed into `PipelineManager` at startup.  
 **Output:** raw NetCDF or GRIB files in `data/raw/downloads/<local_folder>/`
 
-Each downloader resolves the date range to fetch (explicit or inferred from the existing store), splits it into yearly or monthly tasks (`DownloadTask`), and calls the provider API. For CMEMS variables the downloader automatically switches from the reprocessed (`rep`) dataset to the near-real-time (`nrt`) dataset at the appropriate date boundary.
+Each downloader resolves the date range to fetch (explicit or inferred from the existing store via `resolve_date_range`), splits it into yearly or monthly tasks (`DownloadTask`), and calls the provider API. For CMEMS variables the downloader automatically switches from the reprocessed (`rep`) dataset to the near-real-time (`nrt`) dataset at the appropriate date boundary.
 
 ---
 
 ## Stage 2 — Convert
 
-**Class:** `Netcdf2Zarr` (`format_converters/netcdf2zarr.py`)  
+**Class:** `Netcdf2Zarr` (`format_converters/netcdf2zarr.py`) — extends `BaseConverter`  
 **Output:** Zarr stores in `$STORE_ROOT/<local_folder>/`
 
 Raw files are opened with xarray, regridded to a daily time axis, and written (or appended) as chunked Zarr stores. `ZarrCatalog` updates its Parquet index after each write so subsequent runs can resume from where they left off.
@@ -61,15 +64,28 @@ Special variables handled outside the general path:
 
 ---
 
-## ZarrCatalog
+## ZarrCatalog / ZarrDirectoryScanner
 
-`ZarrCatalog` maintains metadata for each variable key. It tracks:
+`ZarrCatalog` (`storage/zarr_catalog.py`) maintains a Parquet metadata index for each variable key and owns the query and dataset-opening interface. It holds a `ZarrDirectoryScanner` instance that handles all filesystem I/O.
+
+| Class | Module | Responsibility |
+|---|---|---|
+| `ZarrDirectoryScanner` | `storage/zarr_scanner.py` | Filesystem I/O — mtime snapshots, change detection, zarr metadata extraction |
+| `ZarrCatalog` | `storage/zarr_catalog.py` | Catalog persistence, range queries, `open_dataset` |
+
+`ZarrCatalog` tracks per-variable:
 
 - File paths, modification times, and scan timestamps
 - Temporal coverage (`start_date`, `end_date`) and provenance per source dataset
 - Spatial extent and variable names
 
-The catalog is used by `open_dataset` for efficient range queries without opening every Zarr file. It auto-detects stale entries by comparing disk file names and modification times against the index on each cold-start load.
+`ZarrDirectoryScanner` detects stale catalog entries by comparing disk file names and modification times against the cached state on each access. `ZarrCatalog.refresh()` delegates to the scanner and rewrites the Parquet index only when changes are detected.
+
+---
+
+## BaseConverter
+
+`BaseConverter` (`format_converters/base.py`) is the shared ABC for `Netcdf2Zarr` and `Zarr2Parquet`. It enforces an abstract `run() -> bool` method and a default no-op `validate()` hook, providing a stable contract for any future converter (e.g. `GRIB2Zarr`).
 
 ---
 
