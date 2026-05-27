@@ -120,6 +120,7 @@ def _append_data(var_key: str, ds_new: xr.Dataset, path: Path) -> None:
     logger.debug(f"Saving concatenated dataset to {tmp_path}")
 
     for attempt in range(1, 4):
+        shutil.rmtree(tmp_path, ignore_errors=True)
         try:
             ds_out.to_zarr(tmp_path, align_chunks=True)
             break
@@ -131,7 +132,6 @@ def _append_data(var_key: str, ds_new: xr.Dataset, path: Path) -> None:
             logger.warning(
                 f"[Attempt {attempt}/3] Failed saving to {tmp_path}: {e}. Retrying."
             )
-            shutil.rmtree(tmp_path, ignore_errors=True)
             time.sleep(2**attempt)
 
     # Release all file handles on path before the swap.  On Windows, open zarr
