@@ -14,7 +14,6 @@ import pandas as pd
 import xarray as xr
 from loguru import logger
 
-from h2mare.storage.xarray_helpers import have_vars_unique_values
 from h2mare.types import BBox, DateRange
 
 
@@ -111,9 +110,6 @@ def _append_data(var_key: str, ds_new: xr.Dataset, path: Path) -> None:
         else:
             ds_out = ds_new
 
-    # Check if file is corrupted (warning only — does not abort)
-    have_vars_unique_values(ds_out)
-
     # Co-locate tmp with destination so rename stays on the same drive (atomic on Windows/NTFS)
     tmp_path = path.with_name(path.name + ".tmp")
 
@@ -122,7 +118,7 @@ def _append_data(var_key: str, ds_new: xr.Dataset, path: Path) -> None:
     for attempt in range(1, 4):
         shutil.rmtree(tmp_path, ignore_errors=True)
         try:
-            ds_out.to_zarr(tmp_path, align_chunks=True)
+            ds_out.to_zarr(tmp_path)
             break
         except Exception as e:
             if attempt == 3:
