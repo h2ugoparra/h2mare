@@ -509,7 +509,8 @@ def process_fsle(
     ds = convert360_180(ds)
     if var_config.bbox is not None:
         xmin, ymin, xmax, ymax = var_config.bbox
-    return ds.sel(lon=slice(xmin, xmax), lat=slice(ymin, ymax))
+        return ds.sel(lon=slice(xmin, xmax), lat=slice(ymin, ymax))
+    return ds
 
 
 if __name__ == "__main__":
