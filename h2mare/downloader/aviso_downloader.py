@@ -381,7 +381,9 @@ class AVISODownloader(BaseDownloader):
         Returns:
             True if downloads were executed, False if skipped (no tasks or dry run).
         """
-        requested_range = resolve_date_range(self.var_key, start=start_date, end=end_date)
+        requested_range = resolve_date_range(
+            self.var_key, start=start_date, end=end_date
+        )
 
         tasks = self._create_download_tasks(requested_range)
 

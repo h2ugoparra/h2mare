@@ -381,7 +381,9 @@ class CMEMSDownloader(BaseDownloader):
         """
 
         # Resolve date range
-        requested_range = resolve_date_range(self.var_key, start=start_date, end=end_date)
+        requested_range = resolve_date_range(
+            self.var_key, start=start_date, end=end_date
+        )
 
         # Create download tasks
         tasks = self._create_download_tasks(requested_range)
@@ -450,9 +452,7 @@ class CMEMSDownloader(BaseDownloader):
         if self.var_config.subset:
             chunks = split_time_range(task.date_range, time_split)
 
-            logger.info(
-                f"Split into {len(chunks)} chunk(s) ({time_split} intervals)"
-            )
+            logger.info(f"Split into {len(chunks)} chunk(s) ({time_split} intervals)")
 
             for i, chunk in enumerate(chunks, 1):
                 logger.debug(

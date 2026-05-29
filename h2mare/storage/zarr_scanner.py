@@ -33,6 +33,7 @@ class DirectoryState:
         file_str = ",".join(f"{k}:{v}" for k, v in sorted(self.files.items()))
         return int(hashlib.md5(file_str.encode()).hexdigest()[:16], 16)
 
+
 if TYPE_CHECKING:
     from h2mare.models import KeyVarConfigEntry
 
@@ -127,9 +128,7 @@ class ZarrDirectoryScanner:
         old = set(self._cached_state.files.keys())
         new = set(current.files.keys())
         modified = {
-            f
-            for f in old & new
-            if self._cached_state.files[f] != current.files[f]
+            f for f in old & new if self._cached_state.files[f] != current.files[f]
         }
         return {
             "added": sorted(new - old),

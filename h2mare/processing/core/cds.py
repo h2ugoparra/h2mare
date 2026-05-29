@@ -20,6 +20,9 @@ from h2mare.utils.spatial import clip_land_data
 
 warnings.filterwarnings("ignore")
 
+_EKMAN_P90_FILE = "cds_ekman-monthly-90thquantile_80W-10E-0N-70N_1998-2017.nc"
+_EKMAN_DOY_FILE = "cds_ekman-doy-mean_80W-10E-0N-70N_1998-2017.nc"
+
 
 # ----------------------------
 #   ---- Helpers ----
@@ -400,14 +403,10 @@ def add_engineered_ekman(da: xr.DataArray):
             "Directory for Ekman pumping Climatological data not found"
         )
 
-    p90 = xr.open_dataset(
-        clim_dir / "cds_ekman-montly-90thquantile_80W-10E-0-70N_1998-2017.nc"
-    )["ekman_pumping_anom"]
+    p90 = xr.open_dataset(clim_dir / _EKMAN_P90_FILE)["ekman_pumping_anom"]
     p90 = p90.chunk({"month": -1, "lat": 200, "lon": 200})
 
-    clim_doy = xr.open_dataset(
-        clim_dir / "cds_ekman-doy-mean_80W-10E-0-70N_1998-2017.nc"
-    )
+    clim_doy = xr.open_dataset(clim_dir / _EKMAN_DOY_FILE)
     clim_doy = clim_doy.chunk({"dayofyear": -1, "lat": 200, "lon": 200})
 
     # Get previous days for rowling mean

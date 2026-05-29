@@ -252,7 +252,9 @@ class ParquetPlotter:
 
         def _trend(y: np.ndarray) -> np.ndarray:
             mask = ~np.isnan(y)
-            return lowess(y[mask], x_numeric[mask], frac=lowess_frac, return_sorted=False)
+            return lowess(
+                y[mask], x_numeric[mask], frac=lowess_frac, return_sorted=False
+            )
 
         mean_trend = _trend(mean_arr)
         min_trend = _trend(min_arr)
