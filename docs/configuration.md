@@ -33,6 +33,7 @@ variables:
 | `source` | yes | Provider: `cmems`, `aviso`, or `cds` |
 | `pattern` | yes | Regex for extracting date ranges from raw filenames |
 | `subset` | no | Whether to spatially subset on download (default `false`) |
+| `merge_time_step` | no | Set to `true` for CDS/ERA5 accumulated or averaged variables whose GRIB files have a 2-D `time × step` coordinate grid instead of a flat `time` axis (e.g. `atm-accum-avg`, `radiation`). Triggers a preprocess step that merges the two dimensions and trims overlapping timestamps at month edges. Default `false`. |
 | `bbox` | no | Bounding box for subset. If omitted, the full available extent is downloaded |
 | `depth_range` | no | Depth range for 3D variables (e.g. `o2`) |
 | `data_file` | no | Filename of the static source file at the configured output resolution (e.g. 0.25°). Used by compile-only variables such as `bathy` |
@@ -77,4 +78,5 @@ CDS / ERA5 credentials are handled by the `cdsapi` package and stored in `~/.cds
 
 1. Add an entry under `variables:` in `config.yaml` with the correct `source`, `dataset_id_rep`, and `local_folder`.
 2. Add `variable_attrs` entries for each output variable name (used to set metadata in compiled Zarr files).
-3. If the source is new, implement a downloader class inheriting from `BaseDownloader` and register it in `h2mare/cli/main.py`.
+3. If the variable is a CDS/ERA5 accumulated or averaged product (GRIB files with a `time × step` structure), set `merge_time_step: true` in its config entry.
+4. If the source is new, implement a downloader class inheriting from `BaseDownloader` and register it in `h2mare/cli/main.py`.

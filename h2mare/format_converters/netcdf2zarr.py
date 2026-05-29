@@ -365,9 +365,7 @@ class Netcdf2Zarr(BaseConverter):
             engine=engine,
             decode_timedelta=True,
             chunks={"time": 1, "depth": 1},
-            preprocess=(
-                preprocess if self.var_key in {"radiation", "atm-accum-avg"} else None
-            ),
+            preprocess=(preprocess if self.var_config.merge_time_step else None),
         )
 
     def process_dataset(self, ds: xr.Dataset) -> xr.Dataset:

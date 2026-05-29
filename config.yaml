@@ -123,6 +123,7 @@ variables:
     source: cds
     pattern: (\d{4}-\d{2}-\d{2})-(\d{4}-\d{2}-\d{2})
     subset: true
+    merge_time_step: true
     bbox: [-80, 0, 10, 70]
 
   radiation:
@@ -136,6 +137,7 @@ variables:
     source: cds
     pattern: (\d{4}-\d{2}-\d{2})-(\d{4}-\d{2}-\d{2})
     subset: true
+    merge_time_step: true
     bbox: [-80, 0, 10, 70]
 
   waves:

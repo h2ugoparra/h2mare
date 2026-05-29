@@ -17,6 +17,7 @@ class KeyVarConfigEntry(msgspec.Struct):
     pattern: str
     dataset_id_nrt: Optional[str] = None
     subset: Optional[bool] = True
+    merge_time_step: bool = False
     bbox: Optional[tuple[float, float, float, float]] = None
     depth_range: Optional[tuple[float, float]] = None
     data_file: Optional[str] = None
