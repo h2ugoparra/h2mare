@@ -368,11 +368,11 @@ def compute_curl_and_ekman(
     return out
 
 
-def get_previous_dates_da(da: xr.DataArray):
+def get_previous_dates_da(da: xr.DataArray, var_key: str):
     """Get previous 15-days for ekman lag calculation"""
     da_dt_ini = da.time.values[0]
 
-    repo = ZarrCatalog("atm-accum-avg")
+    repo = ZarrCatalog(var_key)
 
     date_prev = pd.to_datetime(da_dt_ini) - pd.Timedelta(days=15)
     ds_prev = repo.open_dataset(
@@ -392,7 +392,7 @@ def get_previous_dates_da(da: xr.DataArray):
         return da
 
 
-def add_engineered_ekman(da: xr.DataArray):
+def add_engineered_ekman(da: xr.DataArray, var_key: str):
     """Compute Ekman pumping related variables.
     Args:
         da: (xarray.DataArray) DataArray with variable 'ekman_pumping'
@@ -415,7 +415,7 @@ def add_engineered_ekman(da: xr.DataArray):
     da_dt_ini = da.time.values[0]
     da_dt_fin = da.time.values[-1]
 
-    da = get_previous_dates_da(da)
+    da = get_previous_dates_da(da, var_key)
 
     # Try to make it more efficient
     da = da.chunk({"time": 30, "lat": 200, "lon": 200})
@@ -562,7 +562,9 @@ def daily_waves(
 
 
 def process_atm_accum_avg(
-    ds: xr.Dataset, var_config: Optional[KeyVarConfigEntry] = None
+    ds: xr.Dataset,
+    var_config: Optional[KeyVarConfigEntry] = None,
+    var_key: str | None = None,
 ) -> xr.Dataset:
     """A first preprocessing is done in processor.py because data overlap at adjacent days in monthly grib files"""
     datasets = []
@@ -573,7 +575,8 @@ def process_atm_accum_avg(
                 ds_tmp["ekman_pumping"]
                 for ds_tmp in datasets
                 if "ekman_pumping" in ds_tmp.data_vars
-            ]
+            ],
+            var_key=var_key or "atm-accum-avg",
         )
     )
     datasets.append(daily_total_rain(ds))
@@ -584,7 +587,9 @@ def process_atm_accum_avg(
 
 
 def process_atm_instante(
-    ds: xr.Dataset, var_config: Optional[KeyVarConfigEntry] = None
+    ds: xr.Dataset,
+    var_config: Optional[KeyVarConfigEntry] = None,
+    var_key: str | None = None,
 ) -> xr.Dataset:
     datasets = []
     ds = rename_dims(ds)
@@ -600,7 +605,9 @@ def process_atm_instante(
 
 
 def process_radiation(
-    ds: xr.Dataset, var_config: Optional[KeyVarConfigEntry] = None
+    ds: xr.Dataset,
+    var_config: Optional[KeyVarConfigEntry] = None,
+    var_key: str | None = None,
 ) -> xr.Dataset:
     """A first preprocessing is done in processor.py because data overlap at adjacent days in monthly grib files"""
     datasets = []
@@ -612,7 +619,9 @@ def process_radiation(
 
 
 def process_waves(
-    ds: xr.Dataset, var_config: Optional[KeyVarConfigEntry] = None
+    ds: xr.Dataset,
+    var_config: Optional[KeyVarConfigEntry] = None,
+    var_key: str | None = None,
 ) -> xr.Dataset:
     ds = rename_dims(ds)
     ds = ds.chunk(

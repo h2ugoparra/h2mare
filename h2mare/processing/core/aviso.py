@@ -495,7 +495,9 @@ def _process_daily_static(
 # ================================================
 # ================ FSLE PROCESSOR ================
 # ================================================
-def process_fsle(ds: xr.Dataset, var_config: KeyVarConfigEntry) -> xr.Dataset:
+def process_fsle(
+    ds: xr.Dataset, var_config: KeyVarConfigEntry, var_key: str | None = None
+) -> xr.Dataset:
     """
     Process AVISO FSLE raw data, which is currently downloaded globally.
 

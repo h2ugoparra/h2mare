@@ -12,7 +12,9 @@ from h2mare.storage.xarray_helpers import ds_float64_to_float32
 
 
 def process_ssh(
-    ds: xr.Dataset, var_config: Optional[KeyVarConfigEntry] = None
+    ds: xr.Dataset,
+    var_config: Optional[KeyVarConfigEntry] = None,
+    var_key: str | None = None,
 ) -> xr.Dataset:
     """Process sea surface height vars: adt and sla _std and gke (geostrophic kinentic energy variables"""
 
@@ -41,7 +43,9 @@ def process_ssh(
 
 
 def process_chl(
-    ds: xr.Dataset, var_config: Optional[KeyVarConfigEntry] = None
+    ds: xr.Dataset,
+    var_config: Optional[KeyVarConfigEntry] = None,
+    var_key: str | None = None,
 ) -> xr.Dataset:
     """Process chlorophyll dataset"""
     var_key = "chl"
@@ -55,7 +59,9 @@ def process_chl(
 
 
 def process_sst(
-    ds: xr.Dataset, var_config: Optional[KeyVarConfigEntry] = None
+    ds: xr.Dataset,
+    var_config: Optional[KeyVarConfigEntry] = None,
+    var_key: str | None = None,
 ) -> xr.Dataset:
     """Process sea surface temperature downloaded dataset"""
     var_key = "sst"
@@ -82,7 +88,9 @@ def process_sst(
 
 
 def process_mld(
-    ds: xr.Dataset, var_config: Optional[KeyVarConfigEntry] = None
+    ds: xr.Dataset,
+    var_config: Optional[KeyVarConfigEntry] = None,
+    var_key: str | None = None,
 ) -> xr.Dataset:
     """Process mixed layer depth dataset"""
     return ds.rename_vars({"mlotst": "mld"})

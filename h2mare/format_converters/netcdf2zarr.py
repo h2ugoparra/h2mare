@@ -375,7 +375,7 @@ class Netcdf2Zarr(BaseConverter):
 
         processor = PROCESSORS.get(self.var_key)
         if processor:
-            ds = processor(ds, self.var_config)
+            ds = processor(ds, self.var_config, self.var_key)
 
         return chunk_dataset(ds)
 
