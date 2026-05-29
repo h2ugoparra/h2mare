@@ -104,8 +104,11 @@ class Compiler:
             )
         self.remote_store_root: Path = resolved_remote
 
-        if self.var_config.bbox is not None:
-            self.bbox = BBox.from_tuple(self.var_config.bbox)
+        if self.var_config.bbox is None:
+            raise ValueError(
+                f"var_key '{self.var_key}' config must have a bbox for compilation"
+            )
+        self.bbox = BBox.from_tuple(self.var_config.bbox)
 
         self.time_resolution = validate_time_resolution(time_resolution)
         self.date_format: Literal["year", "date", "yearmonth"] = date_format
