@@ -48,13 +48,13 @@ def process_chl(
     var_key: str | None = None,
 ) -> xr.Dataset:
     """Process chlorophyll dataset"""
-    var_key = "chl"
+    _var = "chl"
     ds = (
-        ds.rename_vars({"CHL": var_key})
+        ds.rename_vars({"CHL": _var})
         .astype("float32")
         .chunk({"time": 1, "lat": 500, "lon": 500})
     )
-    ds_fdist = FrontProcessor(var_key).from_dataset(ds)
+    ds_fdist = FrontProcessor(_var).from_dataset(ds)
     return xr.merge([ds, ds_fdist], join="outer")
 
 
@@ -64,26 +64,26 @@ def process_sst(
     var_key: str | None = None,
 ) -> xr.Dataset:
     """Process sea surface temperature downloaded dataset"""
-    var_key = "sst"
-    ds = ds.rename_vars({"analysed_sst": var_key})
-    ds["sst"] = (
-        (ds["sst"] - 273.15)
+    _var = "sst"
+    ds = ds.rename_vars({"analysed_sst": _var})
+    ds[_var] = (
+        (ds[_var] - 273.15)
         .astype("float32")
         .chunk({"time": 1, "lat": 500, "lon": 500})
     )
 
     # Run front detection process (lazy)
-    ds_fdist = FrontProcessor(var_key).from_dataset(ds)
+    ds_fdist = FrontProcessor(_var).from_dataset(ds)
 
     # Calculate sea surface temperature standard deviation
     da_std = (
-        ds["sst"]
+        ds[_var]
         .rolling(lon=3, lat=3, center=True, min_periods=1)
         .construct(lon="lon_win", lat="lat_win")
         .std(dim=["lon_win", "lat_win"], skipna=True)
         .astype("float32")
     )
-    ds["sst_std"] = da_std
+    ds[f"{_var}_std"] = da_std
     return xr.merge([ds, ds_fdist], join="outer")
 
 
