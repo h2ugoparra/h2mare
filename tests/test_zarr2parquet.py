@@ -178,6 +178,49 @@ class TestRun:
 
         z.run("1998-01-01", "1998-01-31")  # must not raise
 
+    def test_returns_false_when_all_chunks_fail(self, tmp_path):
+        """run() returns False when every chunk raises."""
+        z = _make_converter(tmp_path)
+        z.zarr_repo.open_dataset.side_effect = RuntimeError("zarr read error")
+
+        assert z.run("1998-01-01", "1998-03-31") is False
+
+    def test_returns_false_when_any_chunk_fails(self, tmp_path):
+        """run() returns False even when only one of several chunks fails."""
+        z = _make_converter(tmp_path)
+
+        mock_ds = MagicMock()
+        mock_ds.dims = {}
+        mock_ds.to_dataframe.return_value.reset_index.return_value = MagicMock()
+
+        # First chunk succeeds, second fails, third succeeds.
+        z.zarr_repo.open_dataset.side_effect = [
+            mock_ds,
+            RuntimeError("zarr read error"),
+            mock_ds,
+        ]
+
+        with patch("h2mare.format_converters.zarr2parquet.pl") as mock_pl:
+            mock_pl.from_pandas.return_value = MagicMock()
+            result = z.run("1998-01-01", "1998-03-31")
+
+        assert result is False
+
+    def test_returns_true_when_all_chunks_succeed(self, tmp_path):
+        """run() returns True when every chunk converts without error."""
+        z = _make_converter(tmp_path)
+
+        mock_ds = MagicMock()
+        mock_ds.dims = {}
+        mock_ds.to_dataframe.return_value.reset_index.return_value = MagicMock()
+        z.zarr_repo.open_dataset.return_value = mock_ds
+
+        with patch("h2mare.format_converters.zarr2parquet.pl") as mock_pl:
+            mock_pl.from_pandas.return_value = MagicMock()
+            result = z.run("1998-01-01", "1998-03-31")
+
+        assert result is True
+
 
 # ---------------------------------------------------------------------------
 # run() — depth filtering
