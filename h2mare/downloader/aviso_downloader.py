@@ -13,7 +13,7 @@ from tqdm import tqdm
 
 from h2mare.config import AppConfig
 from h2mare.downloader.base import BaseDownloader
-from h2mare.types import DateLike, DateRange
+from h2mare.types import DateLike, DateRange, FTPDownloadTask
 from h2mare.utils.date_range import resolve_date_range
 
 warnings.filterwarnings("ignore")
@@ -197,7 +197,7 @@ class AVISODownloader(BaseDownloader):
 
     def _create_download_tasks(
         self, requested_range: DateRange
-    ) -> list[tuple[str, str]]:
+    ) -> list[FTPDownloadTask]:
         """
         Split date range into download tasks based on dataset availability.
 
@@ -209,13 +209,14 @@ class AVISODownloader(BaseDownloader):
             requested_range: Date range to download
 
         Returns:
-            List of (filepath, source) tuples where source is 'rep' or 'nrt'.
+            List of FTPDownloadTask objects.
         """
-        tasks: list[tuple[str, str]] = []
+        tasks: list[FTPDownloadTask] = []
 
         rep_files = self._get_dataset_files(self.var_config.dataset_id_rep)
         rep_avail = self._get_dataset_availability(rep_files)
 
+        nrt_avail = None
         if self.var_config.dataset_id_nrt:
             nrt_files = self._get_dataset_files(self.var_config.dataset_id_nrt)
             nrt_avail = self._get_dataset_availability(nrt_files)
@@ -224,7 +225,7 @@ class AVISODownloader(BaseDownloader):
         rep_overlap = requested_range.intersection(rep_avail)
         if rep_overlap:
             rep_files = self._filter_files_by_range(rep_files, rep_overlap)
-            tasks.extend((fp, "rep") for fp in rep_files)
+            tasks.extend(FTPDownloadTask(filepath=fp, source="rep") for fp in rep_files)
 
         # NRT covers anything beyond REP's end date, if available
         if nrt_avail:
@@ -237,7 +238,9 @@ class AVISODownloader(BaseDownloader):
             nrt_overlap = nrt_request.intersection(nrt_avail)
             if nrt_overlap:
                 nrt_files = self._filter_files_by_range(nrt_files, nrt_overlap)
-                tasks.extend((fp, "nrt") for fp in nrt_files)
+                tasks.extend(
+                    FTPDownloadTask(filepath=fp, source="nrt") for fp in nrt_files
+                )
 
         if not tasks:
             logger.warning(
@@ -405,8 +408,8 @@ class AVISODownloader(BaseDownloader):
 
         base_dir = output_dir or self.download_dir
 
-        rep_paths = [path for path, source in tasks if source == "rep"]
-        nrt_paths = [path for path, source in tasks if source == "nrt"]
+        rep_paths = [t.filepath for t in tasks if t.source == "rep"]
+        nrt_paths = [t.filepath for t in tasks if t.source == "nrt"]
 
         rep_dir = base_dir / "rep"
         nrt_dir = base_dir / "nrt"
@@ -437,16 +440,16 @@ class AVISODownloader(BaseDownloader):
                     max_workers=max_workers,
                 )
         else:
-            for path, source in tasks:
-                dest = rep_dir if source == "rep" else nrt_dir
+            for task in tasks:
+                dest = rep_dir if task.source == "rep" else nrt_dir
                 dataset_id = (
                     self.var_config.dataset_id_rep
-                    if source == "rep"
+                    if task.source == "rep"
                     else self.var_config.dataset_id_nrt
                 )
                 if dataset_id:
                     self.adjust_ftp_path_to_dataset(dataset_id)
-                self.download_file(path, dest)
+                self.download_file(task.filepath, dest)
 
         # Disconnect FTP
         # self.ftp.quit()

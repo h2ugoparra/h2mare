@@ -346,3 +346,14 @@ class DownloadTask:
             f"DownloadTask(dataset={self.dataset_id}, "
             f"type={self.dataset_type}, {self.date_range})"
         )
+
+
+@dataclass
+class FTPDownloadTask:
+    """Represents a single FTP file download task (used by AVISODownloader)."""
+
+    filepath: str
+    source: Literal["rep", "nrt"]  # reprocessed or near-real-time
+
+    def __repr__(self) -> str:
+        return f"FTPDownloadTask(filepath={self.filepath}, source={self.source})"

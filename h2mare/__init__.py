@@ -10,7 +10,14 @@ __version__ = "0.1.0"
 
 from .config import get_settings, settings
 from .models import SYSTEM_VAR_KEYS, AppConfig, KeyVarConfigEntry, VariablesConfig
-from .types import BBox, DateLike, DateRange, DownloadTask, TimeResolution
+from .types import (
+    BBox,
+    DateLike,
+    DateRange,
+    DownloadTask,
+    FTPDownloadTask,
+    TimeResolution,
+)
 from .validators import validate_time_resolution, validate_var_key, validate_var_keys
 
 __all__ = [
@@ -25,6 +32,7 @@ __all__ = [
     "BBox",
     "TimeResolution",
     "DownloadTask",
+    "FTPDownloadTask",
     "validate_var_key",
     "validate_var_keys",
     "validate_time_resolution",
