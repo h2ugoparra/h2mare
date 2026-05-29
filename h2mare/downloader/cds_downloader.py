@@ -112,10 +112,16 @@ class CDSDownloader(BaseDownloader):
         """
         Resolve storage date range for download. Download monthly files by convention if date not specified.
 
+        This intentionally does NOT delegate to the shared ``resolve_date_range`` utility.
+        ERA5 reanalysis fields are continuously improved for ~10 days after publication, so
+        downloading the current partial month would capture a preliminary version that will
+        change. The end-date policy therefore always snaps to the last complete month:
+        if today is day ≤ 10, end = last day of month-2; otherwise end = last day of month-1.
+
         Priority:
             1. Explicit arguments
             2. Default dates from __init__
-            3. Last day of the previous month if monthday +10 from today, else before previous month
+            3. Last day of the previous complete month (see ERA5 10-day rule above)
 
         Args:
             start_date: Explicit start date
