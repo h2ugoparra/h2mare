@@ -14,8 +14,6 @@ import pandas as pd
 import xarray as xr
 from loguru import logger
 
-import h2mare.processing.core.aviso as aviso
-import h2mare.processing.core.cds as cds
 from h2mare.config import AppConfig, get_settings
 from h2mare.format_converters.base import BaseConverter
 from h2mare.processing.registry import PROCESSORS
@@ -269,6 +267,8 @@ class Netcdf2Zarr(BaseConverter):
 
     # ========= PROCESSING FUNCTIONS =========
     def _process_eddies(self):
+        import h2mare.processing.core.aviso as aviso
+
         try:
             ed_processor = aviso.EDDIESProcessor(
                 store_root=self.store_root,
@@ -352,9 +352,8 @@ class Netcdf2Zarr(BaseConverter):
         engine = "cfgrib" if first_ext in {".grib", ".grb"} else "netcdf4"
 
         def preprocess(ds: xr.Dataset) -> xr.Dataset:
-            """
-            Preprocess radiation variables because of duplicated time values at month edges
-            """
+            import h2mare.processing.core.cds as cds
+
             ds = rename_dims(ds)
             ds = cds.merge_time_step(ds)
             return cds._get_ds_for_month(ds)
