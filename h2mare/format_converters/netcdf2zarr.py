@@ -375,10 +375,7 @@ class Netcdf2Zarr(BaseConverter):
 
         processor = PROCESSORS.get(self.var_key)
         if processor:
-            if self.var_key in {"fsle"}:
-                ds = processor(ds, self.var_config)
-            else:
-                ds = processor(ds)
+            ds = processor(ds, self.var_config)
 
         return chunk_dataset(ds)
 

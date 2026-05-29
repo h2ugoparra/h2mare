@@ -7,6 +7,7 @@ Process downloaded CDS-ERA5 hourly grib data to daily means.
 # RunTimeWarning: data has 0 and nan, a warning is emitted by NumPy (via np.divide) while Dask is evaluating a task
 # UserWarning: Zarr possible incmpatilibility outside Python ecosystem
 import warnings
+from typing import Optional
 
 import numpy as np
 import pandas as pd
@@ -14,6 +15,7 @@ import xarray as xr
 from loguru import logger
 
 from h2mare import get_settings
+from h2mare.models import KeyVarConfigEntry
 from h2mare.storage.xarray_helpers import rename_dims, unified_time_chunk
 from h2mare.storage.zarr_catalog import ZarrCatalog
 from h2mare.utils.spatial import clip_land_data
@@ -559,7 +561,9 @@ def daily_waves(
 # -----------------------------------------
 
 
-def process_atm_accum_avg(ds: xr.Dataset) -> xr.Dataset:
+def process_atm_accum_avg(
+    ds: xr.Dataset, var_config: Optional[KeyVarConfigEntry] = None
+) -> xr.Dataset:
     """A first preprocessing is done in processor.py because data overlap at adjacent days in monthly grib files"""
     datasets = []
     datasets.append(compute_curl_and_ekman(ds))
@@ -579,7 +583,9 @@ def process_atm_accum_avg(ds: xr.Dataset) -> xr.Dataset:
     return merged.isel(lat=slice(None, None, -1))
 
 
-def process_atm_instante(ds: xr.Dataset) -> xr.Dataset:
+def process_atm_instante(
+    ds: xr.Dataset, var_config: Optional[KeyVarConfigEntry] = None
+) -> xr.Dataset:
     datasets = []
     ds = rename_dims(ds)
     ds = ds.chunk(
@@ -593,7 +599,9 @@ def process_atm_instante(ds: xr.Dataset) -> xr.Dataset:
     return merged.isel(lat=slice(None, None, -1))
 
 
-def process_radiation(ds: xr.Dataset) -> xr.Dataset:
+def process_radiation(
+    ds: xr.Dataset, var_config: Optional[KeyVarConfigEntry] = None
+) -> xr.Dataset:
     """A first preprocessing is done in processor.py because data overlap at adjacent days in monthly grib files"""
     datasets = []
     for var in ds.data_vars:
@@ -603,7 +611,9 @@ def process_radiation(ds: xr.Dataset) -> xr.Dataset:
     return merged.isel(lat=slice(None, None, -1))
 
 
-def process_waves(ds: xr.Dataset) -> xr.Dataset:
+def process_waves(
+    ds: xr.Dataset, var_config: Optional[KeyVarConfigEntry] = None
+) -> xr.Dataset:
     ds = rename_dims(ds)
     ds = ds.chunk(
         {"time": unified_time_chunk(ds), "lat": len(ds.lat), "lon": len(ds.lon)}

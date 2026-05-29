@@ -1,12 +1,19 @@
 """Function to process downloaded datasets from CMEMS"""
 
+from __future__ import annotations
+
+from typing import Optional
+
 import xarray as xr
 
+from h2mare.models import KeyVarConfigEntry
 from h2mare.processing.core.fronts import FrontProcessor
 from h2mare.storage.xarray_helpers import ds_float64_to_float32
 
 
-def process_ssh(ds: xr.Dataset) -> xr.Dataset:
+def process_ssh(
+    ds: xr.Dataset, var_config: Optional[KeyVarConfigEntry] = None
+) -> xr.Dataset:
     """Process sea surface height vars: adt and sla _std and gke (geostrophic kinentic energy variables"""
 
     # Convert o float32 and 1 time step to avoid memory issues
@@ -33,7 +40,9 @@ def process_ssh(ds: xr.Dataset) -> xr.Dataset:
     return ds_var
 
 
-def process_chl(ds: xr.Dataset) -> xr.Dataset:
+def process_chl(
+    ds: xr.Dataset, var_config: Optional[KeyVarConfigEntry] = None
+) -> xr.Dataset:
     """Process chlorophyll dataset"""
     var_key = "chl"
     ds = (
@@ -45,7 +54,9 @@ def process_chl(ds: xr.Dataset) -> xr.Dataset:
     return xr.merge([ds, ds_fdist], join="outer")
 
 
-def process_sst(ds: xr.Dataset) -> xr.Dataset:
+def process_sst(
+    ds: xr.Dataset, var_config: Optional[KeyVarConfigEntry] = None
+) -> xr.Dataset:
     """Process sea surface temperature downloaded dataset"""
     var_key = "sst"
     ds = ds.rename_vars({"analysed_sst": var_key})
@@ -70,6 +81,8 @@ def process_sst(ds: xr.Dataset) -> xr.Dataset:
     return xr.merge([ds, ds_fdist], join="outer")
 
 
-def process_mld(ds: xr.Dataset) -> xr.Dataset:
+def process_mld(
+    ds: xr.Dataset, var_config: Optional[KeyVarConfigEntry] = None
+) -> xr.Dataset:
     """Process mixed layer depth dataset"""
     return ds.rename_vars({"mlotst": "mld"})
