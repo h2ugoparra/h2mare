@@ -225,3 +225,26 @@ class TestVariableAddition:
         assert "thetao_100" in ds.data_vars
         assert "thetao_500" in ds.data_vars
         ds.close()
+
+
+# ---------------------------------------------------------------------------
+# _append_data — overlap resolution
+# ---------------------------------------------------------------------------
+
+
+class TestOverlapResolution:
+    def test_no_duplicate_timestamps_when_new_starts_before_old(self, tmp_path):
+        """
+        When new data starts before old data and ends before old data ends,
+        _resolve_overlap produces an empty subset. Previously the fallback
+        returned ds_old, causing duplicate time steps after concat.
+        After the fix, the fallback returns None and no duplicates appear.
+        """
+        path = tmp_path / "sst.zarr"
+        _make_ds("2020-01-05", n_days=5).to_zarr(path)  # Jan 5–9
+        _append_data("sst", _make_ds("2020-01-03", n_days=5), path)  # Jan 3–7
+
+        ds = xr.open_zarr(path, consolidated=False)
+        times = pd.DatetimeIndex(ds.time.values)
+        assert times.is_unique, "Duplicate timestamps after append"
+        ds.close()

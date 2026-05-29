@@ -212,6 +212,6 @@ def _resolve_overlap(ds_new: xr.Dataset, path: Path) -> Optional[xr.Dataset]:
         cutoff_date = daterange_new.start - pd.Timedelta(days=1)
         start_date = min(daterange_old.start, daterange_new.start)
         ds_subset = ds_old.sel(time=slice(start_date, cutoff_date))
-        return ds_subset if len(ds_subset.time) > 0 else ds_old
+        return ds_subset if len(ds_subset.time) > 0 else None
 
     return ds_old
