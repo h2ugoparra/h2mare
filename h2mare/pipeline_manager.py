@@ -92,7 +92,9 @@ class PipelineManager:
                     end_date=self.end_date,
                 )
             except Exception as e:
-                logger.error(f"Download failed for '{var_key}': {e}")
+                logger.opt(exception=True).error(
+                    f"Download failed for '{var_key}': {e}"
+                )
                 _failed = True
                 continue
 
@@ -102,7 +104,9 @@ class PipelineManager:
             try:
                 Netcdf2Zarr(var_key).run()
             except Exception as e:
-                logger.error(f"Processing failed for '{var_key}': {e}")
+                logger.opt(exception=True).error(
+                    f"Processing failed for '{var_key}': {e}"
+                )
                 _failed = True
 
         if not self.no_compile and not self.no_convert and not self.dry_run:
@@ -118,7 +122,7 @@ class PipelineManager:
                     zarr_backup_dir=self.zarr_backup_dir,
                 )
             except Exception as e:
-                logger.error(f"Compile step failed: {e}")
+                logger.opt(exception=True).error(f"Compile step failed: {e}")
                 _failed = True
 
         _skip_parquet = (
@@ -143,7 +147,7 @@ class PipelineManager:
                 if not self.no_parquet_backup:
                     converter.sync_data(remote_root=self.parquet_backup_dir)
             except Exception as e:
-                logger.error(f"Parquet conversion step failed: {e}")
+                logger.opt(exception=True).error(f"Parquet conversion step failed: {e}")
                 _failed = True
 
         self._cleanup_empty_download_dirs(variables)
