@@ -98,6 +98,12 @@ class Settings:
             return Path(store_dir).resolve()
         return None
 
+    @property
+    def CLIMATOLOGY_DIR(self) -> Path | None:
+        if self.STORE_ROOT is None:
+            return None
+        return self.STORE_ROOT / "Climatology"
+
     def ensure_directories(self):
         """Create necessary directories on first run."""
         dirs = [

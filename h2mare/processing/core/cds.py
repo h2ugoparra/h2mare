@@ -397,10 +397,8 @@ def add_engineered_ekman(da: xr.DataArray, var_key: str):
     Args:
         da: (xarray.DataArray) DataArray with variable 'ekman_pumping'
     """
-    store_dir = get_settings().STORE_ROOT
-    if store_dir is not None:
-        clim_dir = store_dir / "Climatology"
-    else:
+    clim_dir = get_settings().CLIMATOLOGY_DIR
+    if clim_dir is None:
         raise FileNotFoundError(
             "Directory for Ekman pumping Climatological data not found"
         )
