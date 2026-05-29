@@ -111,6 +111,7 @@ class Zarr2Parquet(BaseConverter):
             f"{start.date()} → {end.date()} ({len(periods)} chunk(s))"
         )
 
+        _failed = False
         for period in periods:
             dt_ini, dt_end = period.start, period.end
             logger.info(f"  chunk {dt_ini.date()} → {dt_end.date()}")
@@ -128,15 +129,16 @@ class Zarr2Parquet(BaseConverter):
                 ds.close()
                 self.indexer.add_data(ddf_new)
             except Exception as e:
-                logger.error(
+                logger.opt(exception=True).error(
                     f"Failed to convert '{self.var_key}' "
                     f"for {dt_ini.date()} → {dt_end.date()}: {e}"
                 )
+                _failed = True
             finally:
                 del ddf_new
                 gc.collect()
 
-        return True
+        return not _failed
 
     def sync_data(self, remote_root: Optional[Path] = None) -> None:
         """
