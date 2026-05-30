@@ -160,7 +160,7 @@ class Netcdf2Zarr(BaseConverter):
         if not match:
             return []
 
-        if self.var_config.subset and self.var_key != "fsle":
+        if self.var_config.filename_date_range:
             start, end = map(pd.to_datetime, match.groups())
             return list(pd.date_range(start, end, freq="D"))
 
@@ -173,7 +173,7 @@ class Netcdf2Zarr(BaseConverter):
         match = re.search(self.var_config.pattern, file.name)
         if not match:
             return None
-        if self.var_config.subset and self.var_key != "fsle":
+        if self.var_config.filename_date_range:
             start, end = map(pd.to_datetime, match.groups())
             return start, end
         date = pd.to_datetime("-".join(match.groups()))

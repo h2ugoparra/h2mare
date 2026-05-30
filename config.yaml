@@ -10,6 +10,7 @@ variables:
     source: cmems
     pattern: (\d{4}-\d{2}-\d{2})-(\d{4}-\d{2}-\d{2}) #(\d{8})* Check this because it was original files pattern
     subset: true
+    filename_date_range: true
     bbox: [-80, 0, 10, 70]
 
   ssh:
@@ -18,8 +19,9 @@ variables:
     dataset_id_rep: cmems_obs-sl_glo_phy-ssh_my_allsat-l4-duacs-0.125deg_P1D
     dataset_id_nrt: cmems_obs-sl_glo_phy-ssh_nrt_allsat-l4-duacs-0.125deg_P1D
     source: cmems
-    pattern: (\d{4}-\d{2}-\d{2})-(\d{4}-\d{2}-\d{2}) 
+    pattern: (\d{4}-\d{2}-\d{2})-(\d{4}-\d{2}-\d{2})
     subset: true
+    filename_date_range: true
     bbox: [-180, -90, 180, 90]
 
   mld:
@@ -29,6 +31,7 @@ variables:
     source: cmems
     pattern: (\d{4}-\d{2}-\d{2})-(\d{4}-\d{2}-\d{2})
     subset: true
+    filename_date_range: true
     bbox: [-80, 0, 10, 70]
 
   thetao:
@@ -38,6 +41,7 @@ variables:
     source: cmems
     pattern: (\d{4}-\d{2}-\d{2})-(\d{4}-\d{2}-\d{2})
     subset: true
+    filename_date_range: true
     bbox: [-80, 0, 10, 70]
     depth_range: [0, 1000]
 
@@ -48,6 +52,7 @@ variables:
     source: cmems
     pattern: (\d{4}-\d{2}-\d{2})-(\d{4}-\d{2}-\d{2})
     subset: true
+    filename_date_range: true
     bbox: [-80, 0, 10, 70]
 
   seapodym:
@@ -66,6 +71,7 @@ variables:
     source: cmems
     pattern: (\d{4}-\d{2}-\d{2})-(\d{4}-\d{2}-\d{2})
     subset: true
+    filename_date_range: true
     bbox: [-80, 0, 10, 70]
     depth_range: [0, 1000]
     
@@ -104,12 +110,13 @@ variables:
       mean_sea_level_pressure,
       10m_u_component_of_wind,
       10m_v_component_of_wind,
-      total_cloud_cover,  
+      total_cloud_cover,
       ]
     dataset_id_rep: reanalysis-era5-single-levels
     source: cds
     pattern: (\d{4}-\d{2}-\d{2})-(\d{4}-\d{2}-\d{2})
     subset: true
+    filename_date_range: true
     bbox: [-80, 0, 10, 70]
 
   atm-accum-avg:
@@ -117,12 +124,13 @@ variables:
     variables: [
       total_precipitation,
       mean_northward_turbulent_surface_stress,
-      mean_eastward_turbulent_surface_stress,   
+      mean_eastward_turbulent_surface_stress,
       ]
     dataset_id_rep: reanalysis-era5-single-levels
     source: cds
     pattern: (\d{4}-\d{2}-\d{2})-(\d{4}-\d{2}-\d{2})
     subset: true
+    filename_date_range: true
     merge_time_step: true
     bbox: [-80, 0, 10, 70]
 
@@ -137,6 +145,7 @@ variables:
     source: cds
     pattern: (\d{4}-\d{2}-\d{2})-(\d{4}-\d{2}-\d{2})
     subset: true
+    filename_date_range: true
     merge_time_step: true
     bbox: [-80, 0, 10, 70]
 
@@ -150,6 +159,7 @@ variables:
     source: cds
     pattern: (\d{4}-\d{2}-\d{2})-(\d{4}-\d{2}-\d{2})
     subset: true
+    filename_date_range: true
     bbox: [-80, 0, 10, 70]
 
   bathy:

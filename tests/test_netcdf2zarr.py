@@ -26,6 +26,7 @@ _SST_ENTRY_SUBSET = {
     "source": "cmems",
     "pattern": r"(\d{8})_(\d{8})",
     "subset": True,
+    "filename_date_range": True,
     "bbox": (-80, 0, 10, 70),
 }
 
@@ -33,6 +34,7 @@ _SST_ENTRY_SINGLE = {
     **_SST_ENTRY_SUBSET,
     "pattern": r"(\d{4})(\d{2})(\d{2})",
     "subset": False,
+    "filename_date_range": False,
 }
 
 _MLD_ENTRY = {
@@ -42,6 +44,7 @@ _MLD_ENTRY = {
     "source": "cmems",
     "pattern": r"(\d{8})_(\d{8})",
     "subset": True,
+    "filename_date_range": True,
 }
 
 
@@ -104,14 +107,14 @@ class TestResolveString:
 
 
 class TestParseFileDates:
-    def test_subset_true_expands_date_range(self, converter):
+    def test_filename_date_range_true_expands_date_range(self, converter):
         f = Path("sst_20210101_20210131.nc")
         dates = converter._parse_file_dates(f)
         assert len(dates) == 31
         assert dates[0] == pd.Timestamp("2021-01-01")
         assert dates[-1] == pd.Timestamp("2021-01-31")
 
-    def test_subset_false_returns_single_date(self, single_converter):
+    def test_filename_date_range_false_returns_single_date(self, single_converter):
         f = Path("sst_20210115.nc")
         dates = single_converter._parse_file_dates(f)
         assert len(dates) == 1

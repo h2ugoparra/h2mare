@@ -10,17 +10,39 @@ import msgspec
 class KeyVarConfigEntry(msgspec.Struct):
     """Configuration for a single Key variable/dataset."""
 
+    # Subdirectory under STORE_ROOT for this variable's Zarr files.
     local_folder: str
+    # Variable names to extract from source files.
     variables: str | list[str]
+    # Reprocessed (multiyear) dataset identifier.
     dataset_id_rep: str
+    # Provider: "cmems", "aviso", or "cds".
     source: str
+    # Regex for extracting dates from raw filenames.
     pattern: str
+    # Near-real-time dataset identifier. Omit for reanalysis-only products.
     dataset_id_nrt: Optional[str] = None
+    # Whether to spatially subset on download (default True).
     subset: Optional[bool] = True
+    # Set True for CDS/ERA5 accumulated or averaged variables whose GRIB files
+    # have a 2-D time×step coordinate grid instead of a flat time axis
+    # (e.g. atm-accum-avg, radiation). Triggers a preprocess step that merges
+    # the two dimensions and trims overlapping timestamps at month edges.
     merge_time_step: bool = False
+    # Set True when the filename pattern has two capture groups encoding a
+    # (start, end) date range (e.g. CMEMS/CDS: "2021-01-01-2021-01-31.nc").
+    # Set False (default) when the pattern yields a single date
+    # (e.g. AVISO FSLE: "_20210115_").
+    filename_date_range: bool = False
+    # Bounding box [xmin, ymin, xmax, ymax] for spatial subsetting.
     bbox: Optional[tuple[float, float, float, float]] = None
+    # Depth range [min_depth, max_depth] for 3-D variables (e.g. o2, thetao).
     depth_range: Optional[tuple[float, float]] = None
+    # Filename of the static source file at the configured output resolution.
+    # Used by compile-only variables such as bathy.
     data_file: Optional[str] = None
+    # High-resolution static source file. Used by bathy when extracting at
+    # full native resolution (e.g. from SHP geometries).
     data_file_hires: Optional[str] = None
 
     def __post_init__(self):
