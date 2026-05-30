@@ -16,7 +16,6 @@ from h2mare.processing.compiler import (
     calculate_moon_phase,
     postprocess_sst_fdist,
 )
-from h2mare.storage.var_coverage_index import VarCoverageIndex
 from h2mare.types import DateRange
 
 
@@ -126,20 +125,17 @@ class TestPostprocessSstFdist:
 # ---------------------------------------------------------------------------
 
 
-def _make_coverage_index(tmp_path, data: dict[str, str]) -> VarCoverageIndex:
-    idx = VarCoverageIndex(tmp_path / "h2ds_var_coverage.json")
-    for k, v in data.items():
-        idx.update(k, pd.Timestamp(v))
-    return idx
+def _setup_compiler(compiler, source_coverage, h2ds_var_ends):
+    """
+    Inject source coverage and mock _get_h2ds_var_end to return
+    the given per-variable h2ds end dates (None = never compiled).
+    """
+    compiler.var_keys = list(source_coverage.keys()) + [compiler.var_key]
+    compiler._source_coverage = source_coverage
+    compiler._get_h2ds_var_end = lambda vkey: h2ds_var_ends.get(vkey)
 
 
 class TestResolveCompileRange:
-    def _setup(self, compiler, source_coverage, index_data, tmp_path):
-        """Inject the two pieces of state that _resolve_compile_range reads."""
-        compiler.var_keys = list(source_coverage.keys()) + [compiler.var_key]
-        compiler._source_coverage = source_coverage
-        compiler._coverage_index = _make_coverage_index(tmp_path, index_data)
-
     def test_explicit_dates_bypass_inference(self, compiler):
         start = pd.Timestamp("2021-01-01")
         end = pd.Timestamp("2021-12-31")
@@ -154,139 +150,71 @@ class TestResolveCompileRange:
         mock_resolve.assert_called_once_with(compiler.var_key, start, end)
         assert pd.Timestamp(result.start) == start
 
-    def test_fresh_var_starts_from_source_start(self, compiler, tmp_path):
-        """No index entry → compile from source catalog start."""
-        self._setup(
+    def test_fresh_h2ds_starts_from_source_start(self, compiler):
+        """h2ds empty (None) → compile from source catalog start."""
+        _setup_compiler(
             compiler,
             source_coverage={"sst": DateRange("2000-01-01", "2026-05-29")},
-            index_data={},
-            tmp_path=tmp_path,
+            h2ds_var_ends={"sst": None},
         )
         result = compiler._resolve_compile_range(None, None)
         assert pd.Timestamp(result.start) == pd.Timestamp("2000-01-01")
         assert pd.Timestamp(result.end) == pd.Timestamp("2026-05-29")
 
-    def test_incremental_gap_from_index_end(self, compiler, tmp_path):
-        """Index entry exists → gap starts the day after the recorded end."""
-        self._setup(
+    def test_incremental_gap_from_h2ds_end(self, compiler):
+        """h2ds has data → gap starts the day after h2ds var end."""
+        _setup_compiler(
             compiler,
             source_coverage={"sst": DateRange("2000-01-01", "2026-05-29")},
-            index_data={"sst": "2026-05-20"},
-            tmp_path=tmp_path,
+            h2ds_var_ends={"sst": pd.Timestamp("2026-05-20")},
         )
         result = compiler._resolve_compile_range(None, None)
         assert pd.Timestamp(result.start) == pd.Timestamp("2026-05-21")
         assert pd.Timestamp(result.end) == pd.Timestamp("2026-05-29")
 
-    def test_lagging_var_does_not_block_fast_var(self, compiler, tmp_path):
+    def test_lagging_var_does_not_block_fast_var(self, compiler):
         """A slow variable compiles its own gap independently of a fast one."""
-        self._setup(
+        _setup_compiler(
             compiler,
             source_coverage={
                 "sst": DateRange("2000-01-01", "2026-05-29"),
                 "thetao": DateRange("2010-01-01", "2024-12-31"),
             },
-            index_data={
-                "sst": "2026-05-20",
-                "thetao": "2024-06-30",
+            h2ds_var_ends={
+                "sst": pd.Timestamp("2026-05-20"),
+                "thetao": pd.Timestamp("2024-06-30"),
             },
-            tmp_path=tmp_path,
         )
         result = compiler._resolve_compile_range(None, None)
         # Union: sst gap 2026-05-21→2026-05-29, thetao gap 2024-07-01→2024-12-31
         assert pd.Timestamp(result.start) == pd.Timestamp("2024-07-01")
         assert pd.Timestamp(result.end) == pd.Timestamp("2026-05-29")
 
-    def test_up_to_date_var_is_skipped(self, compiler, tmp_path):
-        """Variable whose index end matches source end contributes no gap."""
-        self._setup(
+    def test_up_to_date_var_is_skipped(self, compiler):
+        """Variable whose h2ds end matches source end contributes no gap."""
+        _setup_compiler(
             compiler,
             source_coverage={
                 "sst": DateRange("2000-01-01", "2026-05-29"),
                 "ssh": DateRange("2000-01-01", "2026-05-28"),
             },
-            index_data={
-                "sst": "2026-05-20",
-                "ssh": "2026-05-28",  # already at source end
+            h2ds_var_ends={
+                "sst": pd.Timestamp("2026-05-20"),
+                "ssh": pd.Timestamp("2026-05-28"),
             },
-            tmp_path=tmp_path,
         )
         result = compiler._resolve_compile_range(None, None)
-        # Only sst has a gap
         assert pd.Timestamp(result.start) == pd.Timestamp("2026-05-21")
         assert pd.Timestamp(result.end) == pd.Timestamp("2026-05-29")
 
-    def test_raises_when_all_vars_up_to_date(self, compiler, tmp_path):
-        self._setup(
+    def test_raises_when_all_vars_up_to_date(self, compiler):
+        _setup_compiler(
             compiler,
             source_coverage={"sst": DateRange("2000-01-01", "2026-05-29")},
-            index_data={"sst": "2026-05-29"},
-            tmp_path=tmp_path,
+            h2ds_var_ends={"sst": pd.Timestamp("2026-05-29")},
         )
         with pytest.raises(ValueError, match="up to date"):
             compiler._resolve_compile_range(None, None)
-
-
-# ---------------------------------------------------------------------------
-# Coverage index write policy
-# ---------------------------------------------------------------------------
-
-
-class TestCoverageIndexWritePolicy:
-    """Index must only be written during incremental (no explicit dates) runs."""
-
-    def _make_compiler_with_index(self, compiler, tmp_path):
-        compiler.var_keys = ["sst", compiler.var_key]
-        compiler._source_coverage = {"sst": DateRange("2000-01-01", "2026-05-29")}
-        compiler._coverage_index = _make_coverage_index(tmp_path, {})
-        return compiler
-
-    def test_explicit_dates_do_not_write_index(self, compiler, tmp_path):
-        self._make_compiler_with_index(compiler, tmp_path)
-        index_path = tmp_path / "h2ds_var_coverage.json"
-
-        # Simulate what run() does after a chunk write with explicit dates
-        explicit_dates = True
-        contributions = {"sst": pd.Timestamp("2025-12-31")}
-        if not explicit_dates:
-            for vkey, actual_end in contributions.items():
-                compiler._coverage_index.update(vkey, actual_end)
-            compiler._coverage_index.save()
-
-        assert not index_path.exists()
-        assert compiler._coverage_index.get_end("sst") is None
-
-    def test_incremental_run_writes_index(self, compiler, tmp_path):
-        self._make_compiler_with_index(compiler, tmp_path)
-        index_path = tmp_path / "h2ds_var_coverage.json"
-
-        # Simulate what run() does after a chunk write without explicit dates
-        explicit_dates = False
-        contributions = {"sst": pd.Timestamp("2026-05-29")}
-        if not explicit_dates:
-            for vkey, actual_end in contributions.items():
-                compiler._coverage_index.update(vkey, actual_end)
-            compiler._coverage_index.save()
-
-        assert index_path.exists()
-        assert compiler._coverage_index.get_end("sst") == pd.Timestamp("2026-05-29")
-
-    def test_explicit_backfill_does_not_overwrite_existing_index(
-        self, compiler, tmp_path
-    ):
-        """Backfilling 2025 when index already has 2026-05-29 must not corrupt it."""
-        compiler._coverage_index = _make_coverage_index(
-            tmp_path, {"sst": "2026-05-29"}
-        )
-
-        explicit_dates = True
-        contributions = {"sst": pd.Timestamp("2025-12-31")}
-        if not explicit_dates:
-            for vkey, actual_end in contributions.items():
-                compiler._coverage_index.update(vkey, actual_end)
-            compiler._coverage_index.save()
-
-        assert compiler._coverage_index.get_end("sst") == pd.Timestamp("2026-05-29")
 
 
 # ---------------------------------------------------------------------------

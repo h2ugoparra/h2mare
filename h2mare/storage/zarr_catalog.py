@@ -690,6 +690,23 @@ class ZarrCatalog:
             return ds
 
     # ==================== Metadata Queries ====================
+    def get_var_time_coverage(self, var_name: str) -> DateRange | None:
+        """
+        Time coverage for zarr files that contain *var_name* as a data variable.
+
+        Returns ``None`` if no file in the catalog contains that variable.
+        """
+        df = self.df
+        if df.empty or "variables" not in df.columns:
+            return None
+        mask = df["variables"].apply(
+            lambda vs: isinstance(vs, list) and var_name in vs
+        )
+        sub = df[mask]
+        if sub.empty:
+            return None
+        return DateRange(sub["start_date"].min(), sub["end_date"].max())
+
     def get_variables(self) -> set[str]:
         """
         Get all unique variables across all zarr files.

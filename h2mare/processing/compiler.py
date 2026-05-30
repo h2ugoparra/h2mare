@@ -18,7 +18,6 @@ from h2mare.config import AppConfig, get_settings
 from h2mare.models import SYSTEM_VAR_KEYS
 from h2mare.storage.coverage import get_store_coverage, split_time_range
 from h2mare.storage.storage import write_append_zarr
-from h2mare.storage.var_coverage_index import VarCoverageIndex
 from h2mare.storage.xarray_helpers import chunk_dataset
 from h2mare.storage.zarr_catalog import ZarrCatalog
 from h2mare.types import BBox, DateLike, DateRange, TimeResolution
@@ -152,7 +151,6 @@ class Compiler:
 
         start = normalize_date(start_date) if start_date else None
         end = normalize_date(end_date) if end_date else None
-        explicit_dates = start is not None or end is not None
 
         self.var_keys = (
             [var_keys]
@@ -160,13 +158,7 @@ class Compiler:
             else var_keys or sorted(self.app_config.variables.keys())
         )
 
-        # Per-variable coverage index — load once; persisted after each chunk
-        self._coverage_index = VarCoverageIndex(
-            get_settings().METADATA_DIR / "h2ds_var_coverage.json"
-        )
-
-        # Source coverage for each variable — computed once and reused in both
-        # range resolution and contribution tracking
+        # Source coverage for each variable — computed once
         self._source_coverage = self._compute_source_coverage()
 
         requested_range = self._resolve_compile_range(start, end)
@@ -193,7 +185,6 @@ class Compiler:
             )
 
             datasets = []
-            contributions: dict[str, pd.Timestamp] = {}
 
             for vkey in self.var_keys:
                 if vkey == self.var_key:
@@ -202,9 +193,6 @@ class Compiler:
                 ds = self._process_variable(vkey, chunk)
                 if ds is not None:
                     datasets.append(ds)
-                    src_cov = self._source_coverage.get(vkey)
-                    if src_cov is not None:
-                        contributions[vkey] = min(chunk.end, src_cov.end)
 
             if not datasets:
                 logger.warning(
@@ -223,11 +211,6 @@ class Compiler:
             )
             write_append_zarr(self.var_key, ds_final, path)
             written_paths.append(path)
-
-            if not explicit_dates:
-                for vkey, actual_end in contributions.items():
-                    self._coverage_index.update(vkey, actual_end)
-                self._coverage_index.save()
 
             logger.success(
                 f"Finished period {chunk.start.date()} -> {chunk.end.date()}"
@@ -255,6 +238,43 @@ class Compiler:
                 logger.warning(f"No source coverage found for '{vkey}' — skipping.")
         return result
 
+    def _get_h2ds_var_end(self, vkey: str) -> Optional[pd.Timestamp]:
+        """
+        Query h2ds for the last compiled date of *vkey*.
+
+        Tries three strategies in order:
+        1. Configured source variable names (``app_config.variables[vkey].variables``)
+           — covers variables processed by ``compile_default``.
+        2. ``{vkey}_*`` prefix match — covers depth-sliced variables whose h2ds
+           names are ``thetao_100``, ``thetao_200``, etc.
+        3. Global h2ds end date — conservative fallback so an unrecognised naming
+           convention never causes a 1998 recompile.
+
+        Returns ``None`` when h2ds is empty (fresh install).
+        """
+        var_names: list[str] = list(
+            getattr(self.app_config.variables.get(vkey), "variables", None) or []
+        )
+        for vn in var_names:
+            cov = self.catalog.get_var_time_coverage(vn)
+            if cov is not None:
+                return cov.end
+
+        # Depth-sliced: try "{vkey}_" prefix
+        df = self.catalog.df
+        if not df.empty and "variables" in df.columns:
+            prefix = f"{vkey}_"
+            mask = df["variables"].apply(
+                lambda vs: isinstance(vs, list) and any(v.startswith(prefix) for v in vs)
+            )
+            sub = df[mask]
+            if not sub.empty:
+                return pd.Timestamp(sub["end_date"].max())
+
+        # Fallback: global h2ds end (avoids recompiling from source start)
+        global_cov = self.catalog.get_time_coverage()
+        return global_cov.end if global_cov is not None else None
+
     def _resolve_compile_range(
         self,
         start: Optional[pd.Timestamp],
@@ -267,15 +287,11 @@ class Compiler:
         :func:`resolve_date_range`.
 
         **Per-variable incremental mode** (no explicit dates): for every source
-        variable, the gap between its last compiled end date in h2ds (from
-        :class:`VarCoverageIndex`) and its current source catalog end is
-        computed.  The union of all those gaps becomes the compilation window,
-        so a lagging variable does not hold back faster ones and catches up
-        automatically when new source data arrives.
-
-        If a variable has no entry in the index (never compiled), the gap
-        starts at the source catalog start, triggering a full compile for
-        that variable.
+        variable, the gap between its last compiled end date in h2ds (queried
+        directly via :meth:`_get_h2ds_var_end`) and its current source catalog
+        end is computed.  The union of all per-variable gaps becomes the
+        compilation window, so a lagging variable does not hold back faster
+        ones and catches up automatically when new source data arrives.
 
         Args:
             start: Normalised start timestamp, or ``None`` to infer.
@@ -297,9 +313,11 @@ class Compiler:
 
         ranges: list[DateRange] = []
         for vkey, src_cov in self._source_coverage.items():
-            var_end = self._coverage_index.get_end(vkey)
+            h2ds_var_end = self._get_h2ds_var_end(vkey)
             var_start = (
-                var_end + pd.Timedelta(days=1) if var_end is not None else src_cov.start
+                h2ds_var_end + pd.Timedelta(days=1)
+                if h2ds_var_end is not None
+                else src_cov.start
             )
             if var_start <= src_cov.end:
                 ranges.append(DateRange(start=var_start, end=src_cov.end))
