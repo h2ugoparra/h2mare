@@ -195,7 +195,7 @@ class Compiler:
             datasets = []
 
             for vkey in self.var_keys:
-                if vkey == "h2ds":
+                if vkey == self.var_key:
                     continue
 
                 ds = self._process_variable(vkey, chunk)
