@@ -59,6 +59,10 @@ class KeyVarConfigEntry(msgspec.Struct):
     # Each level becomes a separate output variable (e.g. [0, 100, 500, 1000]
     # → o2_0, o2_100, o2_500, o2_1000). None = no depth slicing in compiler.
     compile_depth_slices: Optional[list[int]] = None
+    # Exact variable names as they appear in the compiled h2ds Zarr for this
+    # var_key. Used to select only these columns when adding a variable to an
+    # existing Parquet store (--add-var). None means not yet declared.
+    variables_to_compile: Optional[list[str]] = None
 
     def __post_init__(self):
         if self.bbox is not None:
