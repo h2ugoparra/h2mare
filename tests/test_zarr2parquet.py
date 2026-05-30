@@ -345,4 +345,4 @@ class TestSyncData:
 
         z.sync_data(remote_root=remote_root)
 
-        assert (remote_root / "data.parquet").exists()
+        assert (remote_root / "h2ds" / "data.parquet").exists()

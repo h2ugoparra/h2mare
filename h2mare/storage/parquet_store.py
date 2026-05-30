@@ -280,9 +280,11 @@ class ParquetStore:
 
         return df.with_columns(expr.alias(self.time_col))
 
-    def _max_rows_per_file(self, df: pl.DataFrame) -> int:
+    def _max_rows_per_file(self, df: pl.DataFrame) -> tuple[int, int]:
         bytes_per_row = df.estimated_size("b") / len(df)
-        return max(1, int((self._target_file_mb * 1024**2) / bytes_per_row))
+        max_file = max(1, int((self._target_file_mb * 1024**2) / bytes_per_row))
+        max_group = max(1, int(((self._target_file_mb // 4) * 1024**2) / bytes_per_row))
+        return max_file, max_group
 
     def _prepare_df(self, df: pl.DataFrame) -> pl.DataFrame:
         """Add partition columns for Hive partitioning and downcast float64→float32."""
@@ -346,7 +348,7 @@ class ParquetStore:
         else:
             logger.info("Creating new parquet dataset.")
 
-        max_rows = self._max_rows_per_file(df)
+        max_file, max_group = self._max_rows_per_file(df)
         ds.write_dataset(
             df.to_arrow(),
             base_dir=str(self.parquet_root),
@@ -355,8 +357,8 @@ class ParquetStore:
                 self._build_partition_schema(df), flavor="hive"
             ),
             existing_data_behavior="overwrite_or_ignore",
-            max_rows_per_file=max_rows,
-            max_rows_per_group=max_rows,
+            max_rows_per_file=max_file,
+            max_rows_per_group=max_group,
         )
 
         if first_write:
@@ -528,13 +530,13 @@ class ParquetStore:
 
         tmp_path.mkdir(parents=True, exist_ok=True)
 
-        max_rows = self._max_rows_per_file(df)
+        max_file, max_group = self._max_rows_per_file(df)
         ds.write_dataset(
             df.to_arrow(),
             base_dir=str(tmp_path),
             format="parquet",
-            max_rows_per_file=max_rows,
-            max_rows_per_group=max_rows,
+            max_rows_per_file=max_file,
+            max_rows_per_group=max_group,
         )
         if final_path.exists():
             shutil.rmtree(final_path, ignore_errors=True)
