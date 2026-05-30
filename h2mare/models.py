@@ -55,6 +55,10 @@ class KeyVarConfigEntry(msgspec.Struct):
     # Extractor runs. Each level becomes a separate output column
     # (e.g. [0, 100, 500] → o2_0, o2_100, o2_500). None = no depth slicing.
     extract_depth_slices: Optional[list[int]] = None
+    # Depth levels (metres) to select when compiling a 3-D variable into h2ds.
+    # Each level becomes a separate output variable (e.g. [0, 100, 500, 1000]
+    # → o2_0, o2_100, o2_500, o2_1000). None = no depth slicing in compiler.
+    compile_depth_slices: Optional[list[int]] = None
 
     def __post_init__(self):
         if self.bbox is not None:

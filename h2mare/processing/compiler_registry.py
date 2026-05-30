@@ -109,46 +109,27 @@ def _compile_moon(
     return clip_land_data(da.to_dataset())
 
 
-def _compile_o2(
+def _compile_depth_var(
     compiler: Compiler,
     catalog: ZarrCatalog | None,
     date_range: DateRange,
 ) -> xr.Dataset | None:
-    _depths = [0, 100, 500, 1000]
-    ds = _open_or_warn(catalog, "o2", date_range, compiler.bbox)
+    """Generic processor for 3-D variables: selects depth levels from compile_depth_slices."""
+    assert catalog is not None
+    var_key = catalog.var_key
+    depths = compiler.app_config.variables[var_key].compile_depth_slices
+    assert depths is not None, f"{var_key} has no compile_depth_slices configured"
+
+    ds = _open_or_warn(catalog, var_key, date_range, compiler.bbox, chunks={"depth": 1})
     if ds is None:
         return None
-    ds_depths = ds.sel(depth=_depths, method="nearest")
-    ds_interp = ds_depths.interp_like(
+    ds_interp = ds.sel(depth=depths, method="nearest").interp_like(
         compiler.base_grid, method="linear", assume_sorted=True
     )
     return xr.Dataset(
         {
-            f"o2_{target}": ds_interp.o2.isel(depth=i).drop_vars("depth")
-            for i, target in enumerate(_depths)
-        }
-    )
-
-
-def _compile_thetao(
-    compiler: Compiler,
-    catalog: ZarrCatalog | None,
-    date_range: DateRange,
-) -> xr.Dataset | None:
-    _depths = [100, 200, 500, 1000]
-    ds = _open_or_warn(
-        catalog, "thetao", date_range, compiler.bbox, chunks={"depth": 1}
-    )
-    if ds is None:
-        return None
-    ds_depths = ds.sel(depth=_depths, method="nearest")
-    ds_interp = ds_depths.interp_like(
-        compiler.base_grid, method="linear", assume_sorted=True
-    )
-    return xr.Dataset(
-        {
-            f"thetao_{target}": ds_interp.thetao.isel(depth=i).drop_vars("depth")
-            for i, target in enumerate(_depths)
+            f"{var_key}_{target}": ds_interp[var_key].isel(depth=i).drop_vars("depth")
+            for i, target in enumerate(depths)
         }
     )
 
@@ -214,8 +195,8 @@ def compile_default(
 COMPILE_PROCESSORS: dict[str, CompileProcessor] = {
     "bathy": _compile_bathy,
     "moon": _compile_moon,
-    "o2": _compile_o2,
-    "thetao": _compile_thetao,
+    "o2": _compile_depth_var,
+    "thetao": _compile_depth_var,
     "atm-accum-avg": _compile_atm_accum_avg,
     "sst": _compile_sst,
 }

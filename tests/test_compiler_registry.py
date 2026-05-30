@@ -14,10 +14,9 @@ from h2mare.processing.compiler_registry import (
     COMPILE_PROCESSORS,
     _compile_atm_accum_avg,
     _compile_bathy,
+    _compile_depth_var,
     _compile_moon,
-    _compile_o2,
     _compile_sst,
-    _compile_thetao,
     compile_default,
 )
 from h2mare.types import BBox, DateRange
@@ -166,33 +165,42 @@ class TestCompileMoon:
 
 
 # ---------------------------------------------------------------------------
-# _compile_o2
+# _compile_depth_var (o2)
 # ---------------------------------------------------------------------------
 
 
 class TestCompileO2:
+    _depths = [0, 100, 500, 1000]
+
     def _make_o2_ds(self) -> xr.Dataset:
-        depths = [0, 100, 500, 1000]
-        data = np.ones((3, len(depths), 2, 2), dtype="float32")
+        data = np.ones((3, len(self._depths), 2, 2), dtype="float32")
         return xr.Dataset(
             {"o2": xr.DataArray(
                 data,
                 dims=["time", "depth", "lat", "lon"],
-                coords={"time": _DATES, "depth": depths,
+                coords={"time": _DATES, "depth": self._depths,
                         "lat": [30.0, 30.25], "lon": [-10.0, -9.75]},
             )}
         )
 
-    def test_returns_none_when_data_missing(self, tmp_path):
+    def _make_o2_compiler(self, tmp_path):
         compiler = _make_compiler(tmp_path)
-        catalog = _make_catalog(None)
-        result = _compile_o2(compiler, catalog, _DR)
+        compiler.app_config.variables["o2"] = MagicMock(
+            compile_depth_slices=self._depths
+        )
+        return compiler
+
+    def _make_o2_catalog(self, ds=None):
+        catalog = _make_catalog(ds)
+        catalog.var_key = "o2"
+        return catalog
+
+    def test_returns_none_when_data_missing(self, tmp_path):
+        result = _compile_depth_var(self._make_o2_compiler(tmp_path), self._make_o2_catalog(None), _DR)
         assert result is None
 
     def test_returns_one_variable_per_depth(self, tmp_path):
-        compiler = _make_compiler(tmp_path)
-        catalog = _make_catalog(self._make_o2_ds())
-        result = _compile_o2(compiler, catalog, _DR)
+        result = _compile_depth_var(self._make_o2_compiler(tmp_path), self._make_o2_catalog(self._make_o2_ds()), _DR)
         assert result is not None
         assert "o2_0" in result.data_vars
         assert "o2_100" in result.data_vars
@@ -200,42 +208,49 @@ class TestCompileO2:
         assert "o2_1000" in result.data_vars
 
     def test_depth_dim_dropped_in_output(self, tmp_path):
-        compiler = _make_compiler(tmp_path)
-        catalog = _make_catalog(self._make_o2_ds())
-        result = _compile_o2(compiler, catalog, _DR)
+        result = _compile_depth_var(self._make_o2_compiler(tmp_path), self._make_o2_catalog(self._make_o2_ds()), _DR)
         assert result is not None
         for var in result.data_vars:
             assert "depth" not in result[var].dims
 
 
 # ---------------------------------------------------------------------------
-# _compile_thetao
+# _compile_depth_var (thetao)
 # ---------------------------------------------------------------------------
 
 
 class TestCompileThetao:
+    _depths = [100, 200, 500, 1000]
+
     def _make_thetao_ds(self) -> xr.Dataset:
-        depths = [100, 200, 500, 1000]
-        data = np.ones((3, len(depths), 2, 2), dtype="float32")
+        data = np.ones((3, len(self._depths), 2, 2), dtype="float32")
         return xr.Dataset(
             {"thetao": xr.DataArray(
                 data,
                 dims=["time", "depth", "lat", "lon"],
-                coords={"time": _DATES, "depth": depths,
+                coords={"time": _DATES, "depth": self._depths,
                         "lat": [30.0, 30.25], "lon": [-10.0, -9.75]},
             )}
         )
 
-    def test_returns_none_when_data_missing(self, tmp_path):
+    def _make_thetao_compiler(self, tmp_path):
         compiler = _make_compiler(tmp_path)
-        catalog = _make_catalog(None)
-        result = _compile_thetao(compiler, catalog, _DR)
+        compiler.app_config.variables["thetao"] = MagicMock(
+            compile_depth_slices=self._depths
+        )
+        return compiler
+
+    def _make_thetao_catalog(self, ds=None):
+        catalog = _make_catalog(ds)
+        catalog.var_key = "thetao"
+        return catalog
+
+    def test_returns_none_when_data_missing(self, tmp_path):
+        result = _compile_depth_var(self._make_thetao_compiler(tmp_path), self._make_thetao_catalog(None), _DR)
         assert result is None
 
     def test_returns_one_variable_per_depth(self, tmp_path):
-        compiler = _make_compiler(tmp_path)
-        catalog = _make_catalog(self._make_thetao_ds())
-        result = _compile_thetao(compiler, catalog, _DR)
+        result = _compile_depth_var(self._make_thetao_compiler(tmp_path), self._make_thetao_catalog(self._make_thetao_ds()), _DR)
         assert result is not None
         assert "thetao_100" in result.data_vars
         assert "thetao_200" in result.data_vars
@@ -243,9 +258,7 @@ class TestCompileThetao:
         assert "thetao_1000" in result.data_vars
 
     def test_depth_dim_dropped_in_output(self, tmp_path):
-        compiler = _make_compiler(tmp_path)
-        catalog = _make_catalog(self._make_thetao_ds())
-        result = _compile_thetao(compiler, catalog, _DR)
+        result = _compile_depth_var(self._make_thetao_compiler(tmp_path), self._make_thetao_catalog(self._make_thetao_ds()), _DR)
         assert result is not None
         for var in result.data_vars:
             assert "depth" not in result[var].dims

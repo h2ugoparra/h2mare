@@ -42,6 +42,7 @@ variables:
 | `trajectory_format` | no | Set to `true` for trajectory-format datasets (e.g. `eddies`) that require spatial binning before they can be stored as a gridded Zarr. The standard `open_mfdataset` pipeline is bypassed entirely. Default `false`. |
 | `rename_lonlat` | no | Set to `true` for variables whose Zarr store uses `lon`/`lat` coordinate names that must be renamed to `x`/`y` before `rioxarray` clip during extraction (e.g. AVISO `fsle`, `eddies`). Default `false`. |
 | `extract_depth_slices` | no | Depth levels (metres) to extract when slicing a 3-D variable during `Extractor` runs. Each level becomes a separate output column (e.g. `[0, 100, 500]` → `o2_0`, `o2_100`, `o2_500`). Omit for 2-D variables. |
+| `compile_depth_slices` | no | Depth levels (metres) to select when compiling a 3-D variable into h2ds. Each level becomes a separate output variable (e.g. `[0, 100, 500, 1000]` → `o2_0`, `o2_100`, `o2_500`, `o2_1000`). Omit for 2-D variables. Can differ from `extract_depth_slices`. |
 
 ### Validation
 
