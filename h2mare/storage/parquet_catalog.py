@@ -68,6 +68,11 @@ class ParquetCatalog:
     def get_time_coverage(self) -> DateRange | None:
         return self._store.get_time_coverage()
 
+    def get_var_coverage(
+        self, columns: list[str] | None = None
+    ) -> dict[str, DateRange]:
+        return self._store.get_var_coverage(columns)
+
     def get_geoextent(self) -> BBox | None:
         return self._store.get_geoextent()
 

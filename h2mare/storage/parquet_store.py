@@ -168,7 +168,9 @@ class ParquetStore:
 
     def _init_dataset_metadata(self) -> None:
         """Initialize dataset-level metadata from parquet_root."""
-        if not self.parquet_root.exists() or not any(self.parquet_root.rglob("*.parquet")):
+        if not self.parquet_root.exists() or not any(
+            self.parquet_root.rglob("*.parquet")
+        ):
             self._time_range = None
             self._geoextent = None
             self._dataset_meta_initialized = False
@@ -557,6 +559,62 @@ class ParquetStore:
         if not self._dataset_meta_initialized:
             raise RuntimeError("Dataset metadata not initialized yet")
         return self._geoextent
+
+    def get_var_coverage(
+        self, columns: list[str] | None = None
+    ) -> dict[str, DateRange]:
+        """
+        Per-column time coverage based on non-null values.
+
+        For each data column, returns the ``DateRange`` spanning the first and
+        last dates at which that column has at least one non-null value. This is
+        the Parquet analogue of :meth:`ZarrCatalog.get_var_time_coverage` and lets
+        callers detect a lagging variable whose trailing dates are still null
+        (e.g. written as a placeholder while a faster variable advanced).
+
+        Columns that are entirely null, or absent from the store, are omitted
+        from the result. The whole computation is a single lazy scan over the
+        store regardless of how many columns are queried.
+
+        Args:
+            columns: Restrict the result to these data columns. ``None`` covers
+                every non-coordinate, non-partition column.
+
+        Returns:
+            Mapping of column name to its non-null ``DateRange``. Empty when the
+            store has no data.
+        """
+        if not self._dataset_meta_initialized:
+            return {}
+
+        coord_cols = {self.time_col, self.lon_col, self.lat_col}
+        candidate = [
+            c
+            for c in self.get_schema()
+            if c not in coord_cols and c not in self.partition_cols
+        ]
+        if columns is not None:
+            wanted = set(columns)
+            candidate = [c for c in candidate if c in wanted]
+        if not candidate:
+            return {}
+
+        all_files = list(self.parquet_root.rglob("*.parquet"))
+        exprs: list[pl.Expr] = []
+        for c in candidate:
+            non_null_time = pl.col(self.time_col).filter(pl.col(c).is_not_null())
+            exprs.append(non_null_time.min().alias(f"{c}__min"))
+            exprs.append(non_null_time.max().alias(f"{c}__max"))
+
+        row = pl.scan_parquet(all_files).select(exprs).collect()
+
+        result: dict[str, DateRange] = {}
+        for c in candidate:
+            mn, mx = row[f"{c}__min"][0], row[f"{c}__max"][0]
+            if mn is None or mx is None:
+                continue
+            result[c] = DateRange(mn, mx)
+        return result
 
     def get_schema(self) -> dict[str, pl.DataType]:
         """Return the union schema across all partitions."""

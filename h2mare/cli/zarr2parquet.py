@@ -2,9 +2,12 @@
 h2mare parquet — convert compiled Zarr stores to Hive-partitioned Parquet.
 
 Reads one or more variable Zarr stores (default: h2ds) and writes them as
-month-partitioned Parquet files.  When no dates are given the command infers
-the gap between the existing Parquet store and the Zarr end date, so repeated
-runs only process new data.
+month-partitioned Parquet files.  When no dates are given the command runs in
+incremental mode: it appends genuinely new trailing dates and, mirroring the
+compile step, backfills any var_key whose column lags behind its source
+coverage (e.g. written as NaN while a faster variable advanced), merging the
+caught-up data into the affected partitions.  Repeated runs only process what
+is new.
 
 Examples
 --------
