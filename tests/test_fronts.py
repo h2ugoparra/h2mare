@@ -8,7 +8,7 @@ import pytest
 import xarray as xr
 
 from h2mare.processing.core.fronts import (
-    BOA_aplication,
+    BOA_application,
     FrontProcessor,
     boa,
     create_base_grid,
@@ -104,7 +104,7 @@ class TestBOA:
 
 
 # ---------------------------------------------------------------------------
-# BOA_aplication
+# BOA_application
 # ---------------------------------------------------------------------------
 
 
@@ -119,7 +119,7 @@ class TestBOAApplication:
             dims=["lat", "lon"],
             coords={"lat": lat, "lon": lon},
         )
-        result_xr = BOA_aplication(da, threshold=0.1)
+        result_xr = BOA_application(da, threshold=0.1)
         result_np = boa(lon, lat, ingrid, threshold=0.1)
         np.testing.assert_array_equal(result_xr, result_np)
 
@@ -220,7 +220,7 @@ class TestProcessDaily:
                 return_value=(latlon_arr, sea_mask),
             ),
             patch(
-                "h2mare.processing.core.fronts.BOA_aplication", return_value=fake_fronts
+                "h2mare.processing.core.fronts.BOA_application", return_value=fake_fronts
             ),
         ):
             result = fp._process_daily(da, date)
@@ -258,7 +258,7 @@ class TestProcessDaily:
                 return_value=(latlon_arr, sea_mask),
             ),
             patch(
-                "h2mare.processing.core.fronts.BOA_aplication", return_value=fake_fronts
+                "h2mare.processing.core.fronts.BOA_application", return_value=fake_fronts
             ),
         ):
             result = fp._process_daily(da, date)

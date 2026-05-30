@@ -143,7 +143,7 @@ def boa(
     return np.column_stack((lat[iy], lon[ix]))
 
 
-def BOA_aplication(data_xarray: xr.DataArray, threshold: float):
+def BOA_application(data_xarray: xr.DataArray, threshold: float):
     """
     Apply Belkin O'Reilly front-detection algorithm to an xarray DataArray.
 
@@ -174,8 +174,8 @@ class FrontProcessor:
     def __init__(self, var_key: str):
 
         self.var_key = var_key
-        if self.var_key not in ["sst", "chl"]:
-            raise ValueError("var_key must be either'sst' or 'chl'.")
+        if self.var_key not in threshold_dict:
+            raise ValueError(f"var_key must be one of {list(threshold_dict)}")
 
     def from_dataset(
         self, ds: xr.Dataset, n_workers: int = 10
@@ -200,50 +200,47 @@ class FrontProcessor:
                                         successfully processed, an empty DataArray is returned.
         """
 
-        # this will avoid memory issues when dealing with large datasets
         da = (
             ds[self.var_key]
             .astype("float32")
             .chunk({"time": 1, "lat": 500, "lon": 500})
         )
 
-        # Save to temporary Zarr (auto-cleanup when program exits) Avoid memory issues also
         zarr_path = get_settings().INTERIM_DIR / f"{self.var_key}_tmp.zarr"
         da.to_dataset(name=self.var_key).to_zarr(zarr_path, mode="w")
 
-        # Reopen lazily from Zarr
-        da = xr.open_zarr(zarr_path)[self.var_key]
+        _zarr_ds = xr.open_zarr(zarr_path)
+        da = _zarr_ds[self.var_key]
 
-        # ---- Prepare daily tasks ----
         start_date = pd.Timestamp(ds.time.min().values)
         end_date = pd.Timestamp(ds.time.max().values)
         dates = pd.date_range(start_date, end_date, freq="D")
 
         tasks = [(da, date) for date in dates]
-
         out: list[xr.DataArray] = []
 
         logger.info(
             f"Front detection process for {self.var_key.upper()}: {len(dates)} days using {n_workers} workers"
         )
-        with mp.Pool(processes=n_workers) as pool:
-            results = pool.starmap(self._process_daily, tasks)
-            out.extend([r for r in results if r is not None])
+        try:
+            with mp.Pool(processes=n_workers) as pool:
+                results = pool.starmap(self._process_daily, tasks)
+                out.extend([r for r in results if r is not None])
+        finally:
+            _zarr_ds.close()
+            shutil.rmtree(zarr_path, ignore_errors=True)
 
         logger.success("Completed")
-        result = xr.combine_by_coords(out)
 
-        if result is not None:
-            shutil.rmtree(get_settings().INTERIM_DIR)
-            return result
-        else:
-            # Return an empty DataArray with appropriate dims if nothing was processed
+        if not out:
             return xr.DataArray(
                 np.empty((0, 0)),
                 coords={"lat": [], "lon": []},
                 dims=["lat", "lon"],
                 name=f"{self.var_key}_fdist",
             )
+
+        return xr.combine_by_coords(out)
 
     def _process_daily(self, da: xr.DataArray, date: pd.Timestamp):
 
@@ -252,7 +249,7 @@ class FrontProcessor:
         lon = da_tmp.lon.values
 
         latlon1_arr, sea_mask = create_base_grid(lat, lon)
-        latlon2_arr = BOA_aplication(da_tmp, threshold_dict[self.var_key])
+        latlon2_arr = BOA_application(da_tmp, threshold_dict[self.var_key])
 
         min_distance = haversine_min_distance_kdtree(latlon1_arr, latlon2_arr)
         reshaped_min_distance = np.full((len(lat), len(lon)), np.nan)
