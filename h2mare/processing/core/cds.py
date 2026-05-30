@@ -574,7 +574,7 @@ def process_atm_accum_avg(
                 for ds_tmp in datasets
                 if "ekman_pumping" in ds_tmp.data_vars
             ],
-            var_key=var_key or "atm-accum-avg",
+            var_key=var_key,
         )
     )
     datasets.append(daily_total_rain(ds))
