@@ -129,7 +129,8 @@ uv run h2mare parquet [OPTIONS]
 
 | Option | Type | Default | Description |
 |---|---|---|---|
-| `-v, --vars` | text (repeatable) | `h2ds` | Variable key(s) to convert |
+| `-v, --vars` | text (repeatable) | `h2ds` | Variable key(s) to convert. Cannot be combined with `--add-var` |
+| `--add-var` | text (repeatable) | — | Merge new columns into the existing h2ds Parquet store (see below) |
 | `--start-date` | YYYY-MM-DD | inferred | Start of date range |
 | `--end-date` | YYYY-MM-DD | inferred | End of date range |
 | `--out-dir` | path | `PARQUET_DIR` | Root directory for Parquet output |
@@ -152,7 +153,22 @@ uv run h2mare parquet --no-parquet-backup
 
 # Write to a custom output directory
 uv run h2mare parquet --out-dir D:/parquet_store
+
+# Add new variable columns to an existing h2ds Parquet store
+uv run h2mare parquet --add-var thetao
+uv run h2mare parquet --add-var thetao --add-var o2
 ```
+
+**Adding variables to an existing Parquet store (`--add-var`)**
+
+When the h2ds Parquet store already exists and a new variable has been compiled into h2ds, `--add-var` merges that variable's columns into every existing monthly partition without reprocessing all other variables.
+
+```bash
+# thetao was compiled into h2ds; add thetao_100…thetao_1000 to the Parquet store
+uv run h2mare parquet --add-var thetao
+```
+
+Each var_key passed to `--add-var` is resolved to its `variables_to_compile` list in `config.yaml` (e.g. `thetao` → `[thetao_100, thetao_200, thetao_500, thetao_1000]`). Only those columns are read from the h2ds Zarr, and a `FULL OUTER JOIN` on `(time, lat, lon)` adds them to each partition. Cannot be combined with `-v`.
 
 ---
 

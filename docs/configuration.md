@@ -43,6 +43,7 @@ variables:
 | `rename_lonlat` | no | Set to `true` for variables whose Zarr store uses `lon`/`lat` coordinate names that must be renamed to `x`/`y` before `rioxarray` clip during extraction (e.g. AVISO `fsle`, `eddies`). Default `false`. |
 | `extract_depth_slices` | no | Depth levels (metres) to extract when slicing a 3-D variable during `Extractor` runs. Each level becomes a separate output column (e.g. `[0, 100, 500]` → `o2_0`, `o2_100`, `o2_500`). Omit for 2-D variables. |
 | `compile_depth_slices` | no | Depth levels (metres) to select when compiling a 3-D variable into h2ds. Each level becomes a separate output variable (e.g. `[0, 100, 500, 1000]` → `o2_0`, `o2_100`, `o2_500`, `o2_1000`). Omit for 2-D variables. Can differ from `extract_depth_slices`. |
+| `variables_to_compile` | no | Exact variable names as they appear in the compiled h2ds Zarr for this var_key, accounting for any renames or derived variables produced during the Convert step (e.g. `sst` → `[sst, analysis_error, sst_std, sst_fdist]`). Used by `h2mare parquet --add-var` to select only the relevant columns from the h2ds Zarr without the caller needing to know internal variable names. |
 
 ### Validation
 
