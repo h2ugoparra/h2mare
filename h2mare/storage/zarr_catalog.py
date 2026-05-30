@@ -139,7 +139,10 @@ class ZarrCatalog:
             df = pd.read_parquet(self.catalog_path)
             if "dataset" not in df.columns:
                 df["dataset"] = self.var_config.dataset_id_rep
-            self._log("debug", f"Loaded {self.var_key} catalog with {len(df)} entries from {self.catalog_path}")
+            self._log(
+                "debug",
+                f"Loaded {self.var_key} catalog with {len(df)} entries from {self.catalog_path}",
+            )
             return df
         except Exception as e:
             logger.error(f"Failed to load catalog: {e}")
@@ -170,7 +173,9 @@ class ZarrCatalog:
 
         # Save to parquet
         df.to_parquet(self.catalog_path, index=False)
-        self._log("info", f"Saved catalog with {len(df)} entries to {self.catalog_path}")
+        self._log(
+            "info", f"Saved catalog with {len(df)} entries to {self.catalog_path}"
+        )
 
     def has_changes(self) -> bool:
         """Check if the store directory has changed since the last scan."""
@@ -699,9 +704,7 @@ class ZarrCatalog:
         df = self.df
         if df.empty or "variables" not in df.columns:
             return None
-        mask = df["variables"].apply(
-            lambda vs: isinstance(vs, list) and var_name in vs
-        )
+        mask = df["variables"].apply(lambda vs: isinstance(vs, list) and var_name in vs)
         sub = df[mask]
         if sub.empty:
             return None
@@ -850,7 +853,10 @@ class ZarrCatalog:
                 continue
 
             if already_set:
-                self._log("debug", f"Provenance already in zarr attrs, skipping: {zarr_path.name}")
+                self._log(
+                    "debug",
+                    f"Provenance already in zarr attrs, skipping: {zarr_path.name}",
+                )
                 continue
 
             records = []

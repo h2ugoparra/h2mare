@@ -953,7 +953,8 @@ class Extractor:
             # Exclude compiled-output variables (source: h2mare) from default extraction
             # runs — they are derived from source variables, not standalone stores.
             all_var_keys = [
-                k for k in self.app_config.variables
+                k
+                for k in self.app_config.variables
                 if self.app_config.variables[k].source != "h2mare"
             ]
             logger.info(

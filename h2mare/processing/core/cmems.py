@@ -67,9 +67,7 @@ def process_sst(
     _var = "sst"
     ds = ds.rename_vars({"analysed_sst": _var})
     ds[_var] = (
-        (ds[_var] - 273.15)
-        .astype("float32")
-        .chunk({"time": 1, "lat": 500, "lon": 500})
+        (ds[_var] - 273.15).astype("float32").chunk({"time": 1, "lat": 500, "lon": 500})
     )
 
     # Run front detection process (lazy)

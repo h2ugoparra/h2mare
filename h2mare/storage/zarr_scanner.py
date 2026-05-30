@@ -195,7 +195,9 @@ class ZarrDirectoryScanner:
                 all_vars.update(ds.data_vars.keys())
                 ds.close()
             except Exception as e:
-                self._log("warning", f"Could not read variables from {zarr_path.name}: {e}")
+                self._log(
+                    "warning", f"Could not read variables from {zarr_path.name}: {e}"
+                )
         return all_vars
 
     # ------------------------------------------------------------------

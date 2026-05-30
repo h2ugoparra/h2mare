@@ -265,7 +265,9 @@ class Compiler:
         if not df.empty and "variables" in df.columns:
             prefix = f"{vkey}_"
             mask = df["variables"].apply(
-                lambda vs: isinstance(vs, list) and any(v.startswith(prefix) for v in vs)
+                lambda vs: (
+                    isinstance(vs, list) and any(v.startswith(prefix) for v in vs)
+                )
             )
             sub = df[mask]
             if not sub.empty:
@@ -306,9 +308,7 @@ class Compiler:
         if start is not None or end is not None:
             result = resolve_date_range(self.var_key, start, end)
             if result is None:
-                raise ValueError(
-                    f"Invalid date range: start ({start}) > end ({end})"
-                )
+                raise ValueError(f"Invalid date range: start ({start}) > end ({end})")
             return result
 
         ranges: list[DateRange] = []
