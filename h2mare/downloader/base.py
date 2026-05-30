@@ -134,7 +134,6 @@ class BaseDownloader(ABC):
         """Remove the per-variable download subdirectory if it is empty after a run."""
         if self.download_dir.exists() and not any(self.download_dir.iterdir()):
             self.download_dir.rmdir()
-            logger.debug(f"Removed empty download directory: {self.download_dir}")
 
     @abstractmethod
     def run(self, *args, **kwargs) -> bool:

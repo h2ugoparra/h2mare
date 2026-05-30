@@ -75,8 +75,6 @@ class AVISODownloader(BaseDownloader):
         # FTP Connection - for AVISO data, dataset_id represents the ftp path.
         # server is the root of the path
         ftp_server = self.app_config.secrets.aviso_ftp_server
-        # logger.debug(f"Connecting to {ftp_server}")
-
         if not ftp_server:
             raise EnvironmentError(
                 "AVISO server not found in .env or environment variables."
@@ -92,7 +90,6 @@ class AVISODownloader(BaseDownloader):
 
         ftp = FTP(host=ftp_server, user=str(username), passwd=str(password))
         ftp.set_pasv(True)
-        # logger.debug("Connected!")
         return ftp
 
     def adjust_ftp_path_to_dataset(self, dataset_id: str) -> FTP:
@@ -241,11 +238,6 @@ class AVISODownloader(BaseDownloader):
                 tasks.extend(
                     FTPDownloadTask(filepath=fp, source="nrt") for fp in nrt_files
                 )
-
-        # if not tasks:
-        #    logger.warning(
-        #        f"Requested range {requested_range} does not overlap with available datasets"
-        #    )
 
         return tasks
 
@@ -397,10 +389,7 @@ class AVISODownloader(BaseDownloader):
             logger.info(f"'{self.var_key}' is already up to date — skipping.")
             return False
 
-        # Log tasks
-        logger.info(f"Created {len(tasks)} download task(s):")
-        for i, task in enumerate(tasks, 1):
-            logger.info(f"  {i}. {task}")
+        logger.debug(f"Created {len(tasks)} download task(s)")
 
         self._warn_if_rep_updated(pd.Timestamp(self.get_rep_availability().end))
 

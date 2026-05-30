@@ -266,7 +266,6 @@ class CMEMSDownloader(BaseDownloader):
             self._rep_availability = self._get_dataset_availability(
                 self.var_config.dataset_id_rep
             )
-            # logger.debug(f"REP availability: {self._rep_availability}")
         return self._rep_availability
 
     def get_nrt_availability(self) -> Optional[DateRange]:
@@ -282,7 +281,6 @@ class CMEMSDownloader(BaseDownloader):
             self._nrt_availability = self._get_dataset_availability(
                 self.var_config.dataset_id_nrt
             )
-            # logger.debug(f"NRT availability: {self._nrt_availability}")
 
         return self._nrt_availability
 
@@ -341,11 +339,6 @@ class CMEMSDownloader(BaseDownloader):
                         )
                     )
 
-        # if not tasks:
-        #    logger.warning(
-        #        f"Requested range {requested_range} does not overlap with available datasets"
-        #    )
-
         return tasks
 
     # ==================== Download Execution ====================
@@ -395,10 +388,7 @@ class CMEMSDownloader(BaseDownloader):
             logger.info(f"'{self.var_key}' is already up to date — skipping.")
             return False
 
-        # Log tasks
-        logger.info(f"Created {len(tasks)} download task(s):")
-        for i, task in enumerate(tasks, 1):
-            logger.info(f"  {i}. {task}")
+        logger.debug(f"Created {len(tasks)} download task(s)")
 
         self._warn_if_rep_updated(pd.Timestamp(self.get_rep_availability().end))
 

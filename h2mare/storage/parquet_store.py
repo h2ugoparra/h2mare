@@ -60,7 +60,19 @@ class ParquetStore:
         if not self.parquet_root.exists() or not any(
             self.parquet_root.rglob("*.parquet")
         ):
-            logger.warning(f"No data in {self.parquet_root}. Creating directory.")
+            if not self.parquet_root.exists():
+                answer = (
+                    input(
+                        f"Directory '{self.parquet_root}' does not exist. Create it? [y/N] "
+                    )
+                    .strip()
+                    .lower()
+                )
+                if answer != "y":
+                    raise FileNotFoundError(
+                        f"Aborted: '{self.parquet_root}' was not created."
+                    )
+            logger.debug(f"No data in {self.parquet_root}. Creating directory.")
             self.parquet_root.mkdir(parents=True, exist_ok=True)
         else:
             all_present = {self.time_col, self.lon_col, self.lat_col}.issubset(

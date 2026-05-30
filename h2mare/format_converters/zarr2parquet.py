@@ -107,14 +107,14 @@ class Zarr2Parquet(BaseConverter):
         periods = split_time_range(DateRange(start, end), time_resolution)
 
         logger.info(
-            f"Starting Zarr → Parquet for '{self.var_key}': "
+            f"Initializing Zarr → Parquet conversion for variable key:'{self.var_key.upper()}': "
             f"{start.date()} → {end.date()} ({len(periods)} chunk(s))"
         )
 
         _failed = False
         for period in periods:
             dt_ini, dt_end = period.start, period.end
-            logger.info(f"  chunk {dt_ini.date()} → {dt_end.date()}")
+            logger.debug(f"  chunk {dt_ini.date()} → {dt_end.date()}")
             ddf_new: pl.DataFrame | None = None
             try:
                 ds = self.zarr_repo.open_dataset(start_date=dt_ini, end_date=dt_end)
