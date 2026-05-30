@@ -242,10 +242,10 @@ class AVISODownloader(BaseDownloader):
                     FTPDownloadTask(filepath=fp, source="nrt") for fp in nrt_files
                 )
 
-        if not tasks:
-            logger.warning(
-                f"Requested range {requested_range} does not overlap with available datasets"
-            )
+        #if not tasks:
+        #    logger.warning(
+        #        f"Requested range {requested_range} does not overlap with available datasets"
+        #    )
 
         return tasks
 
@@ -387,6 +387,8 @@ class AVISODownloader(BaseDownloader):
         requested_range = resolve_date_range(
             self.var_key, start=start_date, end=end_date
         )
+        if requested_range is None:
+            return False
 
         tasks = self._create_download_tasks(requested_range)
 

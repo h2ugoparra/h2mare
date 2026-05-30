@@ -41,6 +41,7 @@ class ZarrCatalog:
         store_root: Optional[Path] = None,
         metadata_root: Optional[Path] = None,
         auto_refresh: bool = True,
+        verbose: bool = False,
     ) -> None:
         """
         Manages a Parquet catalog of processed zarr datasets.
@@ -74,8 +75,9 @@ class ZarrCatalog:
         self.metadata_root = metadata_root or get_settings().METADATA_DIR
 
         self.auto_refresh = auto_refresh
+        self.verbose = verbose
         self._scanner = ZarrDirectoryScanner(
-            self.store_root, self.time_resolution, self.var_config
+            self.store_root, self.time_resolution, self.var_config, verbose=verbose
         )
         self._df_cache: Optional[pd.DataFrame] = None
 
@@ -105,6 +107,11 @@ class ZarrCatalog:
             f")"
         )
 
+    def _log(self, level: str, msg: str) -> None:
+        """Log at *level* when verbose, silent otherwise."""
+        if self.verbose:
+            getattr(logger, level)(msg)
+
     # ===============   IO Internal helpers  ================================
 
     @property
@@ -125,16 +132,14 @@ class ZarrCatalog:
             Catalog DataFrame, empty if file doesn't exist
         """
         if not self.catalog_path.exists():
-            logger.debug(f"Catalog file not found: {self.catalog_path}")
+            self._log("debug", f"Catalog file not found: {self.catalog_path}")
             return pd.DataFrame()
 
         try:
             df = pd.read_parquet(self.catalog_path)
             if "dataset" not in df.columns:
                 df["dataset"] = self.var_config.dataset_id_rep
-            logger.debug(
-                f"Loaded {self.var_key} catalog with {len(df)} entries from {self.catalog_path}"
-            )
+            self._log("debug", f"Loaded {self.var_key} catalog with {len(df)} entries from {self.catalog_path}")
             return df
         except Exception as e:
             logger.error(f"Failed to load catalog: {e}")
@@ -142,7 +147,7 @@ class ZarrCatalog:
 
     def _scan_and_build(self) -> pd.DataFrame:
         """Scan zarr files via the scanner and build a fresh catalog DataFrame."""
-        logger.info(f"Scanning {self.store_root}")
+        self._log("info", f"Scanning {self.store_root}")
         records = self._scanner.scan()
 
         if not records:
@@ -165,7 +170,7 @@ class ZarrCatalog:
 
         # Save to parquet
         df.to_parquet(self.catalog_path, index=False)
-        logger.info(f"Saved catalog with {len(df)} entries to {self.catalog_path}")
+        self._log("info", f"Saved catalog with {len(df)} entries to {self.catalog_path}")
 
     def has_changes(self) -> bool:
         """Check if the store directory has changed since the last scan."""
@@ -196,7 +201,7 @@ class ZarrCatalog:
             self._df_cache = self._load_from_disk()
             if self.store_root.exists():
                 if self._df_cache.empty:
-                    logger.debug("No catalog file found, performing initial scan")
+                    self._log("debug", "No catalog file found, performing initial scan")
                     self._df_cache = self._scan_and_build()
                 else:
                     # Detect files added to disk since the catalog was last written
@@ -205,9 +210,10 @@ class ZarrCatalog:
                         Path(p).name for p in self._df_cache["path"].unique()
                     }
                     if disk_files != catalog_files:
-                        logger.debug(
+                        self._log(
+                            "debug",
                             f"[{self.var_key}] Catalog is stale "
-                            f"(disk={len(disk_files)}, catalog={len(catalog_files)}) — rescanning"
+                            f"(disk={len(disk_files)}, catalog={len(catalog_files)}) — rescanning",
                         )
                         self._df_cache = self._scan_and_build()
         # else: use existing cache
@@ -251,7 +257,7 @@ class ZarrCatalog:
         """Return catalog rows whose date range overlaps [start, end], sorted by start_date."""
         df = self.df
         if df.empty:
-            logger.warning("Catalog is empty, no paths available")
+            self._log("warning", "Catalog is empty, no paths available")
             return pd.DataFrame()
 
         return df[(df["start_date"] <= end) & (df["end_date"] >= start)].sort_values(
@@ -290,7 +296,7 @@ class ZarrCatalog:
         for ts in date_list:
             matches = self._find_overlapping_files(ts, ts)
             if matches.empty:
-                logger.debug(f"No zarr file contains date: {ts}")
+                self._log("debug", f"No zarr file contains date: {ts}")
                 continue
             result[str(matches.iloc[0]["path"])].append(ts)
 
@@ -321,8 +327,9 @@ class ZarrCatalog:
         # Find overlapping files
         matches = self._find_overlapping_files(start, end)
         if matches.empty:
-            logger.warning(
-                f"[{self.var_key}] No zarr files overlap range {start.date()} to {end.date()}"
+            self._log(
+                "warning",
+                f"[{self.var_key}] No zarr files overlap range {start.date()} to {end.date()}",
             )
             return []
 
@@ -474,7 +481,7 @@ class ZarrCatalog:
 
         if len(valid_dates) < len(requested_dates):
             missing = requested_dates.difference(available_dates)
-            logger.warning(f"Missing dates: {missing.tolist()}")
+            self._log("warning", f"Missing dates: {missing.tolist()}")
 
         return ds.sel(time=valid_dates.tolist())
 
@@ -516,16 +523,18 @@ class ZarrCatalog:
         available_end = pd.Timestamp(df["end_date"].max()).normalize()
 
         if start_date is not None and start < available_start:
-            logger.warning(
+            self._log(
+                "warning",
                 f"[{self.var_key}] Requested start {start.date()} not available — "
-                f"opening from {available_start.date()}"
+                f"opening from {available_start.date()}",
             )
             start = available_start
 
         if end_date is not None and end > available_end:
-            logger.warning(
+            self._log(
+                "warning",
                 f"[{self.var_key}] Requested end {end.date()} not available — "
-                f"opening until {available_end.date()}"
+                f"opening until {available_end.date()}",
             )
             end = available_end
 
@@ -621,9 +630,10 @@ class ZarrCatalog:
             to_select = [v for v in var_list if v in available]
 
             if not to_select:
-                logger.warning(
+                self._log(
+                    "warning",
                     f"None of requested variables found. "
-                    f"Requested: {var_list}, Available: {list(available)}"
+                    f"Requested: {var_list}, Available: {list(available)}",
                 )
             else:
                 ds = ds[to_select]
@@ -661,9 +671,10 @@ class ZarrCatalog:
         lon_coord = "lon" if "lon" in ds.coords else "x"
 
         if lat_coord not in ds.coords or lon_coord not in ds.coords:
-            logger.warning(
+            self._log(
+                "warning",
                 f"Cannot apply bbox: missing coordinates. "
-                f"Available: {list(ds.coords.keys())}"
+                f"Available: {list(ds.coords.keys())}",
             )
             return ds
 
@@ -804,7 +815,7 @@ class ZarrCatalog:
         has_nrt = self.var_config.dataset_id_nrt is not None
 
         if not self.store_root.exists():
-            logger.warning(f"Store root not found: {self.store_root}")
+            self._log("warning", f"Store root not found: {self.store_root}")
             return 0
 
         import zarr
@@ -818,13 +829,11 @@ class ZarrCatalog:
                 z_end = pd.to_datetime(ds.time.max().compute().item()).normalize()
                 ds.close()
             except Exception as e:
-                logger.warning(f"Could not read {zarr_path.name}: {e}")
+                self._log("warning", f"Could not read {zarr_path.name}: {e}")
                 continue
 
             if already_set:
-                logger.debug(
-                    f"Provenance already in zarr attrs, skipping: {zarr_path.name}"
-                )
+                self._log("debug", f"Provenance already in zarr attrs, skipping: {zarr_path.name}")
                 continue
 
             records = []
@@ -873,18 +882,20 @@ class ZarrCatalog:
             if prov_file.exists():
                 prov_file.unlink()
 
-            logger.info(
-                f"Wrote backfilled provenance for {zarr_path.name} ({len(records)} source(s))"
+            self._log(
+                "info",
+                f"Wrote backfilled provenance for {zarr_path.name} ({len(records)} source(s))",
             )
             written += 1
 
         if written:
             self.reload()
-            logger.info(
-                f"Backfill complete: {written} zarr file(s) updated, catalog reloaded"
+            self._log(
+                "info",
+                f"Backfill complete: {written} zarr file(s) updated, catalog reloaded",
             )
         else:
-            logger.info("Backfill complete: no files needed provenance")
+            self._log("info", "Backfill complete: no files needed provenance")
 
         return written
 

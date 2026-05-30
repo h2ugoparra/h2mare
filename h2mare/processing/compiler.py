@@ -18,6 +18,7 @@ from h2mare.config import AppConfig, get_settings
 from h2mare.models import SYSTEM_VAR_KEYS
 from h2mare.storage.coverage import get_store_coverage, split_time_range
 from h2mare.storage.storage import write_append_zarr
+from h2mare.storage.var_coverage_index import VarCoverageIndex
 from h2mare.storage.xarray_helpers import chunk_dataset
 from h2mare.storage.zarr_catalog import ZarrCatalog
 from h2mare.types import BBox, DateLike, DateRange, TimeResolution
@@ -128,21 +129,10 @@ class Compiler:
         """
         Main entry point for the h2ds compilation process.
 
-        Date range inference (when start_date / end_date are not provided):
-
-        - **Incremental mode** — triggered when *var_keys* is ``None`` (all
-          variables).  The h2ds catalog end date is read and the range is set to
-          ``[h2ds_end + 1 day → today]``.  This is the normal pipeline-update
-          path: extend h2ds with the latest available data.
-
-        - **Backfill mode** — triggered when specific *var_keys* are supplied
-          (e.g. ``["thetao"]``).  The union of those source variables' catalog
-          ranges is used instead of the h2ds gap.  This handles adding a new
-          variable to an already-compiled historical h2ds dataset without
-          requiring explicit dates.
-
-        Explicit *start_date* / *end_date* always take priority and bypass both
-        inference modes.
+        Without explicit dates, uses incremental mode: reads the h2ds catalog
+        end date and compiles ``[h2ds_end + 1 day → today]``.  To backfill a
+        historical range (e.g. when adding a new variable), pass explicit
+        *start_date* / *end_date*.
 
         Args:
             start_date: Start of the compilation window. If omitted, inferred
@@ -162,6 +152,7 @@ class Compiler:
 
         start = normalize_date(start_date) if start_date else None
         end = normalize_date(end_date) if end_date else None
+        explicit_dates = start is not None or end is not None
 
         self.var_keys = (
             [var_keys]
@@ -169,7 +160,16 @@ class Compiler:
             else var_keys or sorted(self.app_config.variables.keys())
         )
 
-        requested_range = self._resolve_compile_range(start, end, var_keys)
+        # Per-variable coverage index — load once; persisted after each chunk
+        self._coverage_index = VarCoverageIndex(
+            get_settings().METADATA_DIR / "h2ds_var_coverage.json"
+        )
+
+        # Source coverage for each variable — computed once and reused in both
+        # range resolution and contribution tracking
+        self._source_coverage = self._compute_source_coverage()
+
+        requested_range = self._resolve_compile_range(start, end)
 
         self.base_grid = GridBuilder(self.bbox, dx, dy).generate_grid()
 
@@ -193,6 +193,7 @@ class Compiler:
             )
 
             datasets = []
+            contributions: dict[str, pd.Timestamp] = {}
 
             for vkey in self.var_keys:
                 if vkey == self.var_key:
@@ -201,6 +202,9 @@ class Compiler:
                 ds = self._process_variable(vkey, chunk)
                 if ds is not None:
                     datasets.append(ds)
+                    src_cov = self._source_coverage.get(vkey)
+                    if src_cov is not None:
+                        contributions[vkey] = min(chunk.end, src_cov.end)
 
             if not datasets:
                 logger.warning(
@@ -220,6 +224,11 @@ class Compiler:
             write_append_zarr(self.var_key, ds_final, path)
             written_paths.append(path)
 
+            if not explicit_dates:
+                for vkey, actual_end in contributions.items():
+                    self._coverage_index.update(vkey, actual_end)
+                self._coverage_index.save()
+
             logger.success(
                 f"Finished period {chunk.start.date()} -> {chunk.end.date()}"
             )
@@ -233,102 +242,88 @@ class Compiler:
                 self.sync_data(path, backup_dir=zarr_backup_dir)
 
     # =========== DATE RANGE RESOLUTION ===========
+    def _compute_source_coverage(self) -> dict[str, DateRange]:
+        """Return source catalog coverage for every non-system source variable."""
+        result: dict[str, DateRange] = {}
+        for vkey in self.var_keys:
+            if vkey == self.var_key or vkey in SYSTEM_VAR_KEYS:
+                continue
+            cov = get_store_coverage(vkey)
+            if cov is not None:
+                result[vkey] = cov
+            else:
+                logger.warning(f"No source coverage found for '{vkey}' — skipping.")
+        return result
+
     def _resolve_compile_range(
         self,
         start: Optional[pd.Timestamp],
         end: Optional[pd.Timestamp],
-        var_keys: Optional[list[str]],
     ) -> DateRange:
         """
-        Resolve the compilation date range using one of two modes.
+        Resolve the compilation date range.
 
-        **Incremental mode** (``var_keys`` is ``None``):
-            Delegates to :func:`resolve_date_range` with ``var_key="h2ds"``, which
-            reads the h2ds catalog and returns ``[h2ds_end + 1 day → today]``.
-            Used for routine pipeline updates where all variables are compiled
-            together and only the latest missing period needs to be filled.
+        **Explicit dates** always win and are passed straight through to
+        :func:`resolve_date_range`.
 
-        **Backfill mode** (specific ``var_keys`` supplied):
-            Collects the time coverage of each source variable's catalog and
-            returns ``[min(starts) → max(ends)]`` across all of them.  Used when
-            adding a new variable to an already-compiled historical h2ds dataset;
-            the inferred range covers exactly what those source variables have
-            available regardless of what h2ds already contains.
+        **Per-variable incremental mode** (no explicit dates): for every source
+        variable, the gap between its last compiled end date in h2ds (from
+        :class:`VarCoverageIndex`) and its current source catalog end is
+        computed.  The union of all those gaps becomes the compilation window,
+        so a lagging variable does not hold back faster ones and catches up
+        automatically when new source data arrives.
 
-        Explicit ``start`` / ``end`` timestamps short-circuit both modes and are
-        passed directly to :func:`resolve_date_range`.
+        If a variable has no entry in the index (never compiled), the gap
+        starts at the source catalog start, triggering a full compile for
+        that variable.
 
         Args:
             start: Normalised start timestamp, or ``None`` to infer.
             end: Normalised end timestamp, or ``None`` to infer.
-            var_keys: The raw ``var_keys`` argument received by :meth:`run`
-                before expansion.  ``None`` selects incremental mode; a list
-                (even a single-element one) selects backfill mode.
 
         Returns:
             Resolved :class:`DateRange`.
 
         Raises:
-            ValueError: If backfill mode is selected but none of the requested
-                variables have data in the store.
+            ValueError: If no source variable has any data to compile.
         """
-        # Explicit dates always win — standard resolver fills in missing halves
         if start is not None or end is not None:
-            return resolve_date_range(self.var_key, start, end)
+            result = resolve_date_range(self.var_key, start, end)
+            if result is None:
+                raise ValueError(
+                    f"Invalid date range: start ({start}) > end ({end})"
+                )
+            return result
 
-        # Variables that have no independent zarr store and cannot contribute
-        # a date range (handled specially elsewhere in the compiler)
-        _no_store = SYSTEM_VAR_KEYS
-
-        # Normalise var_keys to a flat list, mirroring run()'s own normalisation
-        if var_keys is None:
-            explicit_keys: list[str] = []
-        elif isinstance(var_keys, str):
-            explicit_keys = [var_keys]
-        else:
-            explicit_keys = list(var_keys)
-
-        source_keys = [v for v in explicit_keys if v not in _no_store]
-
-        if not source_keys:
-            # No specific source variables requested → incremental mode
-            logger.debug(
-                "No specific var_keys supplied: using incremental h2ds date range "
-                "(h2ds end + 1 day → today)."
-            )
-            return resolve_date_range(self.var_key, start, end)
-
-        # Backfill mode: derive range from the source variables' own catalogs
         ranges: list[DateRange] = []
-        missing: list[str] = []
-        for vkey in source_keys:
-            coverage = get_store_coverage(vkey)
-            if coverage is not None:
-                ranges.append(coverage)
-            else:
-                missing.append(vkey)
-
-        if missing:
-            logger.warning(
-                f"No catalog data found for {missing} — "
-                "excluded from date range inference."
+        for vkey, src_cov in self._source_coverage.items():
+            var_end = self._coverage_index.get_end(vkey)
+            var_start = (
+                var_end + pd.Timedelta(days=1) if var_end is not None else src_cov.start
             )
+            if var_start <= src_cov.end:
+                ranges.append(DateRange(start=var_start, end=src_cov.end))
+                logger.debug(
+                    f"{vkey}: compiling {var_start.date()} → {src_cov.end.date()}"
+                )
+            else:
+                logger.debug(f"{vkey}: up to date ({src_cov.end.date()}), skipping.")
 
         if not ranges:
             raise ValueError(
-                f"None of the requested variables {source_keys} have data in the "
-                "store. Provide explicit --start-date and --end-date."
+                "All configured variables are up to date — nothing to compile. "
+                "Pass explicit --start-date / --end-date to force a range."
             )
 
-        inferred_start = min(r.start for r in ranges)
-        inferred_end = max(r.end for r in ranges)
-        inferred_range = DateRange(start=inferred_start, end=inferred_end)
-
-        logger.info(
-            f"Backfill mode: inferred date range from source variables {source_keys}: "
-            f"{inferred_start.date()} → {inferred_end.date()}"
+        inferred = DateRange(
+            start=min(r.start for r in ranges),
+            end=max(r.end for r in ranges),
         )
-        return inferred_range
+        logger.info(
+            f"Per-variable incremental range: "
+            f"{inferred.start.date()} → {inferred.end.date()}"
+        )
+        return inferred
 
     # =========== DATASET ATTRIBUTES ===========
     def _set_attrs(self, ds: xr.Dataset) -> xr.Dataset:

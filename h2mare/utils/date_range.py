@@ -16,30 +16,36 @@ def resolve_date_range(
     var_key: str,
     start: Optional[DateLike] = None,
     end: Optional[DateLike] = None,
-) -> DateRange:
+) -> Optional[DateRange]:
     """
-    Resolve storage date range for download.
+    Resolve a date range for download or processing.
 
-    Priority:
-        1. Explicit arguments
-        2. Default dates from __init__
-        3. Latest date from store + 1 day to today
+    When *start* or *end* are omitted they are inferred from the store:
+    start = store_end + 1 day, end = today.  If the store is already
+    up to date (inferred start > end) ``None`` is returned so callers
+    can skip gracefully without treating it as an error.
+
+    When both dates are supplied explicitly and start > end a
+    ``ValueError`` is raised (caller error).
 
     Args:
-        start_date: Explicit start date
-        end_date: Explicit end date
+        var_key: Variable key used to look up the store.
+        start: Explicit start date, or ``None`` to infer.
+        end: Explicit end date, or ``None`` to infer.
 
     Returns:
-        Resolved DateRange
+        Resolved :class:`DateRange`, or ``None`` if the store is already
+        up to date.
 
     Raises:
-        ValueError: If dates cannot be resolved
+        ValueError: If no store exists and dates cannot be inferred, or
+            if explicitly supplied dates produce start > end.
     """
     start = normalize_date(start) if start else None
     end = normalize_date(end) if end else None
+    inferred = start is None or end is None
 
-    # If still None, try to infer from store
-    if start is None or end is None:
+    if inferred:
         store_coverage = get_store_coverage(var_key)
 
         if store_coverage is None:
@@ -48,19 +54,19 @@ def resolve_date_range(
                 f"Please provide start and end dates explicitly."
             )
 
-        # Default: download from day after latest stored data to today
         if start is None:
             start = store_coverage.end + pd.Timedelta(days=1)
-
         if end is None:
             end = pd.Timestamp.now().normalize()
 
         logger.info(
-            f"Date range in store: {store_coverage.start.date()} -> {store_coverage.end.date()}\n"
+            f"Date range in store: {store_coverage.start.date()} -> {store_coverage.end.date()}"
         )
 
-    # Validate
     if start > end:
+        if inferred:
+            logger.info(f"'{var_key}' is already up to date ({end.date()}) — skipping.")
+            return None
         raise ValueError(
             f"Invalid date range: start ({start.date()}) > end ({end.date()})"
         )

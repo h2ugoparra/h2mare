@@ -358,6 +358,8 @@ class EDDIESProcessor:
         end = normalize_date(end_date) if end_date else None
 
         requested_range = resolve_date_range(self.var_key, start, end)
+        if requested_range is None:
+            return None
         overlap = requested_range.intersection(download_range)
 
         if overlap:

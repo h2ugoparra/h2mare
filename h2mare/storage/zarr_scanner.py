@@ -56,11 +56,18 @@ class ZarrDirectoryScanner:
         store_root: Path,
         time_resolution: TimeResolution,
         var_config: "KeyVarConfigEntry",
+        verbose: bool = False,
     ) -> None:
         self.store_root = store_root
         self.time_resolution = time_resolution
         self.var_config = var_config
+        self.verbose = verbose
         self._cached_state: Optional[DirectoryState] = None
+
+    def _log(self, level: str, msg: str) -> None:
+        """Log at *level* when verbose, silent otherwise."""
+        if self.verbose:
+            getattr(logger, level)(msg)
 
     # ------------------------------------------------------------------
     # Directory state
@@ -77,7 +84,7 @@ class ZarrDirectoryScanner:
                 if entry.is_dir() and entry.name.endswith(".zarr"):
                     files[entry.name] = entry.stat().st_mtime
         except PermissionError as e:
-            logger.warning(f"Permission denied scanning {self.store_root}: {e}")
+            self._log("warning", f"Permission denied scanning {self.store_root}: {e}")
             return DirectoryState(files={}, count=0, last_modified=0.0)
 
         if not files:
@@ -94,7 +101,7 @@ class ZarrDirectoryScanner:
         try:
             current = self._get_state()
         except FileNotFoundError:
-            logger.debug(f"Store directory not found: {self.store_root}")
+            self._log("debug", f"Store directory not found: {self.store_root}")
             return False
 
         if self._cached_state is None:
@@ -103,9 +110,10 @@ class ZarrDirectoryScanner:
 
         changed = current != self._cached_state
         if changed:
-            logger.info(
+            self._log(
+                "info",
                 f"Changes detected in {self.store_root}: "
-                f"{self._cached_state.count} → {current.count} files"
+                f"{self._cached_state.count} → {current.count} files",
             )
             self._cached_state = current
         return changed
@@ -153,7 +161,7 @@ class ZarrDirectoryScanner:
         provenance sidecar distinguishes rep from nrt data).
         """
         if not self.store_root.exists():
-            logger.warning(f"Store directory not found: {self.store_root}")
+            self._log("warning", f"Store directory not found: {self.store_root}")
             return []
 
         zarr_files = sorted(self.store_root.glob("*.zarr"))
@@ -165,15 +173,15 @@ class ZarrDirectoryScanner:
                 if record_list:
                     records.extend(record_list)
             except (OSError, RuntimeError) as e:
-                logger.warning(f"Failed to read {zarr_path.name}: {e}")
+                self._log("warning", f"Failed to read {zarr_path.name}: {e}")
 
-        logger.info(f"Scan complete: {len(zarr_files)} zarr files read")
+        self._log("debug", f"Scan complete: {len(zarr_files)} zarr files read")
         return records
 
     def scan_variables(self) -> set[str]:
         """Return all variable names found across every *.zarr in store_root."""
         if not self.store_root.exists():
-            logger.warning(f"Store directory not found: {self.store_root}")
+            self._log("warning", f"Store directory not found: {self.store_root}")
             return set()
 
         zarr_files = sorted(self.store_root.glob("*.zarr"))
@@ -187,7 +195,7 @@ class ZarrDirectoryScanner:
                 all_vars.update(ds.data_vars.keys())
                 ds.close()
             except Exception as e:
-                logger.warning(f"Could not read variables from {zarr_path.name}: {e}")
+                self._log("warning", f"Could not read variables from {zarr_path.name}: {e}")
         return all_vars
 
     # ------------------------------------------------------------------
