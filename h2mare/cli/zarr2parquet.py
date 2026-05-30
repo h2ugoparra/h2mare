@@ -20,6 +20,11 @@ Convert a non-default variable:
 
     uv run h2mare parquet -v sst -v ssh
 
+Add new variable columns to an existing h2ds Parquet store:
+
+    uv run h2mare parquet --add-var thetao
+    uv run h2mare parquet --add-var thetao --add-var o2
+
 Write to a custom output directory:
 
     uv run h2mare parquet --out-dir D:/parquet_store
@@ -84,6 +89,16 @@ def parquet(
             "Required for depth-aware variables; ignored for surface-only ones."
         ),
     ),
+    add_var_keys: Optional[List[str]] = typer.Option(
+        None,
+        "--add-var",
+        help=(
+            "Variable key(s) whose compiled columns should be merged into the existing "
+            "h2ds Parquet store (repeat for multiple: --add-var thetao --add-var o2). "
+            "Reads variables_to_compile from config.yaml and JOINs them into every "
+            "existing partition. Cannot be combined with -v."
+        ),
+    ),
     no_parquet_backup: bool = typer.Option(
         False,
         "--no-parquet-backup",
@@ -120,10 +135,59 @@ def parquet(
             )
             raise typer.Exit(code=1)
 
-    # ---- Resolve variable keys ----
-    keys = list(var_keys) if var_keys else ["h2ds"]
+    if add_var_keys and var_keys:
+        typer.echo("Error: --add-var and -v cannot be used together.", err=True)
+        raise typer.Exit(code=1)
 
     available = set(get_settings().app_config.variables.keys())
+
+    # ---- Resolve output root ----
+    parquet_base = out_dir or get_settings().PARQUET_DIR
+
+    from h2mare.format_converters.zarr2parquet import Zarr2Parquet
+
+    # ---- add-var mode: merge new columns into existing h2ds Parquet ----
+    if add_var_keys:
+        unknown = set(add_var_keys) - available
+        if unknown:
+            typer.echo(
+                f"Error: unknown variable key(s): {', '.join(sorted(unknown))}. "
+                f"Available: {', '.join(sorted(available))}.",
+                err=True,
+            )
+            raise typer.Exit(code=1)
+
+        variables: list[str] = []
+        for key in add_var_keys:
+            v2c = get_settings().app_config.variables[key].variables_to_compile
+            if not v2c:
+                typer.echo(
+                    f"Error: '{key}' has no variables_to_compile defined in config.yaml.",
+                    err=True,
+                )
+                raise typer.Exit(code=1)
+            variables.extend(v2c)
+
+        logger.info(f"add-var: merging {variables} into h2ds Parquet under {parquet_base}")
+        try:
+            converter = Zarr2Parquet(
+                var_key="h2ds",
+                parquet_root=parquet_base,
+                store_root=store_path,
+            )
+            converter.run(
+                start_date=start_date,
+                end_date=end_date,
+                variables=variables,
+            )
+            if not no_parquet_backup:
+                converter.sync_data(remote_root=parquet_backup_dir)
+        except ValueError as e:
+            logger.error(f"add-var failed: {e}")
+        return
+
+    # ---- Standard mode: convert one or more var_keys ----
+    keys = list(var_keys) if var_keys else ["h2ds"]
     unknown = set(keys) - available
     if unknown:
         typer.echo(
@@ -132,12 +196,6 @@ def parquet(
             err=True,
         )
         raise typer.Exit(code=1)
-
-    # ---- Resolve output root ----
-    parquet_base = out_dir or get_settings().PARQUET_DIR
-
-    # ---- Run conversion for each variable ----
-    from h2mare.format_converters.zarr2parquet import Zarr2Parquet
 
     for key in keys:
         logger.info(f"Processing '{key}' under {parquet_base}")

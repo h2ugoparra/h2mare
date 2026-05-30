@@ -84,6 +84,7 @@ class Zarr2Parquet(BaseConverter):
         end_date: str | pd.Timestamp | None = None,
         time_resolution: TimeResolution = TimeResolution.MONTH,
         depth: float | None = None,
+        variables: list[str] | None = None,
     ) -> bool:
         """
         Convert Zarr data to Parquet for the resolved date range.
@@ -102,7 +103,20 @@ class Zarr2Parquet(BaseConverter):
             depth: Depth level to select (in metres) for variables that have a
                 depth dimension. The nearest available level is chosen. Required
                 for depth-aware variables (e.g. thetao, o2); ignored otherwise.
+            variables: Subset of variable names to read from the Zarr and merge
+                into the existing Parquet store. When set, the full Zarr range
+                is used regardless of the current Parquet coverage so that the
+                new columns are joined into every existing partition.
         """
+        # In add-var mode with no explicit dates, reprocess the full Zarr range
+        # so the overlap resolver can JOIN the new columns into every partition.
+        if variables is not None and start_date is None and end_date is None:
+            start_date, end_date = self.repo_start, self.repo_end
+            logger.info(
+                f"add-var mode: merging {variables} into all existing partitions "
+                f"({pd.Timestamp(start_date).date()} → {pd.Timestamp(end_date).date()})"
+            )
+
         start, end = self._resolve_date_range(start_date, end_date)
         periods = split_time_range(DateRange(start, end), time_resolution)
 
@@ -117,7 +131,9 @@ class Zarr2Parquet(BaseConverter):
             logger.debug(f"  chunk {dt_ini.date()} → {dt_end.date()}")
             ddf_new: pl.DataFrame | None = None
             try:
-                ds = self.zarr_repo.open_dataset(start_date=dt_ini, end_date=dt_end)
+                ds = self.zarr_repo.open_dataset(
+                    start_date=dt_ini, end_date=dt_end, variables=variables
+                )
                 if depth is not None and "depth" in ds.dims:
                     ds = ds.sel(depth=depth, method="nearest")
                 elif "depth" in ds.dims:
