@@ -40,6 +40,8 @@ variables:
 | `data_file` | no | Filename of the static source file at the configured output resolution (e.g. 0.25°). Used by compile-only variables such as `bathy` |
 | `data_file_hires` | no | Filename of the high-resolution static source file. Used by `bathy` when extracting at full native resolution (e.g. from SHP geometries) |
 | `trajectory_format` | no | Set to `true` for trajectory-format datasets (e.g. `eddies`) that require spatial binning before they can be stored as a gridded Zarr. The standard `open_mfdataset` pipeline is bypassed entirely. Default `false`. |
+| `rename_lonlat` | no | Set to `true` for variables whose Zarr store uses `lon`/`lat` coordinate names that must be renamed to `x`/`y` before `rioxarray` clip during extraction (e.g. AVISO `fsle`, `eddies`). Default `false`. |
+| `extract_depth_slices` | no | Depth levels (metres) to extract when slicing a 3-D variable during `Extractor` runs. Each level becomes a separate output column (e.g. `[0, 100, 500]` → `o2_0`, `o2_100`, `o2_500`). Omit for 2-D variables. |
 
 ### Validation
 

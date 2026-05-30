@@ -502,9 +502,11 @@ class Extractor:
 
         ds = ds.sortby("time")
 
-        # Variable-specific preprocessing
-        if var_key == "o2":
-            ds = self._preprocess_o2(ds)
+        var_cfg = self.app_config.variables[var_key]
+
+        depth_slices = var_cfg.extract_depth_slices
+        if depth_slices is not None:
+            ds = self._preprocess_depth_slices(ds, var_key, depth_slices)
 
         if self.input_type == "shp":
             if not isinstance(data_resolved, gpd.GeoDataFrame):
@@ -512,8 +514,7 @@ class Extractor:
 
             ds = self.ensure_crs(data_resolved, ds)
 
-            # Rename coordinates to avoid error in rioxarray clip
-            if var_key in ["fsle", "eddies"]:
+            if var_cfg.rename_lonlat:
                 ds = ds.rename({"lon": "x", "lat": "y"})
 
             return self.extract_from_shp(
@@ -596,9 +597,6 @@ class Extractor:
         all_succeeded = True
 
         for var_key, vars_ in var_dict.items():
-            if var_key == "h2ds":
-                continue
-
             if var_key in completed_keys:
                 logger.info(f"Skipping {var_key}: already extracted.")
                 continue
@@ -885,24 +883,24 @@ class Extractor:
             return pd.DataFrame(out).set_index(self.index_col)
         return out
 
-    def _preprocess_o2(
-        self, ds: xr.Dataset | xr.DataArray, depth_intervals: list[int] = [0, 100, 500]
+    def _preprocess_depth_slices(
+        self, ds: xr.Dataset | xr.DataArray, var_key: str, depth_intervals: list[int]
     ) -> xr.Dataset:
-        """Preprocess and return a dataset with o2 variables divided by depth_intervals values."""
-        o2_sel = ds["o2"].sel(depth=depth_intervals, method="nearest")
-        ds_o2 = xr.Dataset(
+        """Slice a 3-D variable at configured depth levels, returning one column per depth."""
+        da = ds[var_key].sel(depth=depth_intervals, method="nearest")
+        ds_out = xr.Dataset(
             {
-                f"o2_{int(d.values)}": o2_sel.sel(depth=d)
+                f"{var_key}_{int(d.values)}": da.sel(depth=d)
                 .squeeze(drop=True)
                 .drop_vars("depth")
-                for d in o2_sel.depth
+                for d in da.depth
             }
         )
         rename_map = {
-            f"o2_{int(d.values)}": f"o2_{target}"
-            for d, target in zip(o2_sel.depth, depth_intervals)
+            f"{var_key}_{int(d.values)}": f"{var_key}_{target}"
+            for d, target in zip(da.depth, depth_intervals)
         }
-        return ds_o2.rename(rename_map)
+        return ds_out.rename(rename_map)
 
     def _extract_moon_phase(
         self, data: pd.DataFrame | gpd.GeoDataFrame
@@ -952,10 +950,15 @@ class Extractor:
             dict[str, str | list[str] | None]: _description_
         """
         if var_dict is None:
-            all_var_keys = self.app_config.variables.keys()
+            # Exclude compiled-output variables (source: h2mare) from default extraction
+            # runs — they are derived from source variables, not standalone stores.
+            all_var_keys = [
+                k for k in self.app_config.variables
+                if self.app_config.variables[k].source != "h2mare"
+            ]
             logger.info(
                 f"No variables provided. Using all key variables from config: "
-                f"{list(all_var_keys)}"
+                f"{all_var_keys}"
             )
             return {k: None for k in all_var_keys}
 

@@ -48,6 +48,13 @@ class KeyVarConfigEntry(msgspec.Struct):
     # spatial binning before they can be stored as a gridded Zarr.
     # The standard open_mfdataset pipeline is bypassed entirely.
     trajectory_format: bool = False
+    # Set True for variables whose Zarr store uses lon/lat coordinate names that
+    # must be renamed to x/y before rioxarray clip (e.g. AVISO fsle, eddies).
+    rename_lonlat: bool = False
+    # Depth levels (metres) to extract when slicing a 3-D variable during
+    # Extractor runs. Each level becomes a separate output column
+    # (e.g. [0, 100, 500] → o2_0, o2_100, o2_500). None = no depth slicing.
+    extract_depth_slices: Optional[list[int]] = None
 
     def __post_init__(self):
         if self.bbox is not None:

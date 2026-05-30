@@ -74,6 +74,7 @@ variables:
     filename_date_range: true
     bbox: [-80, 0, 10, 70]
     depth_range: [0, 1000]
+    extract_depth_slices: [0, 100, 500]
     
   fsle:
     local_folder: AVISO_FSLE
@@ -84,6 +85,7 @@ variables:
     pattern: _(\d{8})_*
     subset: true
     bbox: [-80, 0, 10, 70]
+    rename_lonlat: true
 
   eddies:
     local_folder: AVISO_Eddy_Trajectory
@@ -104,6 +106,7 @@ variables:
     pattern: (\d{8})_(\d{8})
     bbox: [-80, 0, 10, 70]
     trajectory_format: true
+    rename_lonlat: true
   
   atm-instante:
     local_folder: CDS_Atm_instante
