@@ -131,7 +131,6 @@ class PipelineManager:
             from h2mare.config import get_settings
             from h2mare.format_converters.zarr2parquet import Zarr2Parquet
 
-            logger.info("Starting Parquet conversion step (h2ds)")
             try:
                 h2ds_local_folder = self.app_config.variables["h2ds"].local_folder
                 converter = Zarr2Parquet(
