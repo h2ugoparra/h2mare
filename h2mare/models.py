@@ -44,6 +44,10 @@ class KeyVarConfigEntry(msgspec.Struct):
     # High-resolution static source file. Used by bathy when extracting at
     # full native resolution (e.g. from SHP geometries).
     data_file_hires: Optional[str] = None
+    # Set True for trajectory-format datasets (e.g. eddies) that require
+    # spatial binning before they can be stored as a gridded Zarr.
+    # The standard open_mfdataset pipeline is bypassed entirely.
+    trajectory_format: bool = False
 
     def __post_init__(self):
         if self.bbox is not None:

@@ -39,6 +39,7 @@ variables:
 | `depth_range` | no | Depth range for 3D variables (e.g. `o2`) |
 | `data_file` | no | Filename of the static source file at the configured output resolution (e.g. 0.25°). Used by compile-only variables such as `bathy` |
 | `data_file_hires` | no | Filename of the high-resolution static source file. Used by `bathy` when extracting at full native resolution (e.g. from SHP geometries) |
+| `trajectory_format` | no | Set to `true` for trajectory-format datasets (e.g. `eddies`) that require spatial binning before they can be stored as a gridded Zarr. The standard `open_mfdataset` pipeline is bypassed entirely. Default `false`. |
 
 ### Validation
 
@@ -81,4 +82,5 @@ CDS / ERA5 credentials are handled by the `cdsapi` package and stored in `~/.cds
 2. Add `variable_attrs` entries for each output variable name (used to set metadata in compiled Zarr files).
 3. If the variable is a CDS/ERA5 accumulated or averaged product (GRIB files with a `time × step` structure), set `merge_time_step: true` in its config entry.
 4. If each downloaded file covers a date range encoded in its filename as two groups (e.g. `2021-01-01-2021-01-31.nc`), set `filename_date_range: true`. Leave it unset for variables whose filenames encode a single date (e.g. AVISO FSLE).
-5. If the source is new, implement a downloader class inheriting from `BaseDownloader` and register it in `h2mare/cli/main.py`.
+5. If the variable is a trajectory dataset that requires spatial binning (observations indexed by `obs`, not a lat/lon/time grid), set `trajectory_format: true`.
+6. If the source is new, implement a downloader class inheriting from `BaseDownloader` and register it in `h2mare/cli/main.py`.

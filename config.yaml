@@ -88,14 +88,14 @@ variables:
   eddies:
     local_folder: AVISO_Eddy_Trajectory
     variables: [
-      time, 
-      latitude , 
-      longitude , 
-      track , 
-      observation_number , 
-      effective_radius, 
-      speed_radius, 
-      amplitude , 
+      time,
+      latitude,
+      longitude,
+      track,
+      observation_number,
+      effective_radius,
+      speed_radius,
+      amplitude,
       speed_average
       ]
     dataset_id_rep: /value-added/eddy-trajectory/delayed-time/META3.2_DT_allsat
@@ -103,6 +103,7 @@ variables:
     source: aviso
     pattern: (\d{8})_(\d{8})
     bbox: [-80, 0, 10, 70]
+    trajectory_format: true
   
   atm-instante:
     local_folder: CDS_Atm_instante

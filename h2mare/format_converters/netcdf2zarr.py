@@ -69,8 +69,9 @@ class Netcdf2Zarr(BaseConverter):
             f"Initializing Netcdf -> Zarr conversion for variable key: {self.var_key.upper()}"
         )
 
-        # Process Eddies separately because of unique file format
-        if self.var_key == "eddies":
+        # Trajectory-format variables (e.g. eddies) require spatial binning
+        # before zarr storage — bypass the standard open_mfdataset pipeline.
+        if self.var_config.trajectory_format:
             self._process_eddies()
             self.catalog.refresh(force=True)
             return True
