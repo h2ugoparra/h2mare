@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import shutil
+import sys
 from pathlib import Path
 from typing import Literal
 
@@ -60,7 +61,7 @@ class ParquetStore:
         if not self.parquet_root.exists() or not any(
             self.parquet_root.rglob("*.parquet")
         ):
-            if not self.parquet_root.exists():
+            if not self.parquet_root.exists() and sys.stdin.isatty():
                 answer = (
                     input(
                         f"Directory '{self.parquet_root}' does not exist. Create it? [y/N] "
@@ -167,7 +168,7 @@ class ParquetStore:
 
     def _init_dataset_metadata(self) -> None:
         """Initialize dataset-level metadata from parquet_root."""
-        if not any(self.parquet_root.rglob("*.parquet")):
+        if not self.parquet_root.exists() or not any(self.parquet_root.rglob("*.parquet")):
             self._time_range = None
             self._geoextent = None
             self._dataset_meta_initialized = False
