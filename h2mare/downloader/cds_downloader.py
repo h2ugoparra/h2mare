@@ -75,7 +75,7 @@ class CDSDownloader(BaseDownloader):
         requested_range = self._resolve_date_range(start_date, end_date)
 
         if not requested_range:
-            logger.warning("No download tasks created.")
+            logger.info(f"'{self.var_key}' is already up to date — skipping.")
             return False
 
         logger.info(
@@ -85,7 +85,7 @@ class CDSDownloader(BaseDownloader):
         splits = split_time_range(requested_range, time_split)
 
         if not splits:
-            logger.warning("No download tasks created - no data available")
+            logger.info(f"'{self.var_key}' is already up to date — skipping.")
             return False
 
         logger.info(f"Created {len(splits)} download task(s):")

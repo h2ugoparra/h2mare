@@ -36,6 +36,7 @@ def write_append_zarr(
 
     else:
         logger.info(f"Saving new dataset at {path}")
+        t0 = time.perf_counter()
         ds.to_zarr(path)
         try:
             xr.open_zarr(path, consolidated=False).close()
@@ -43,7 +44,7 @@ def write_append_zarr(
             shutil.rmtree(path, ignore_errors=True)
             raise RuntimeError(f"Zarr write verification failed for {path}") from e
         ds.close()
-        logger.success("Saved")
+        logger.success(f"Saved in {time.perf_counter() - t0:.1f}s")
 
 
 def _append_data(var_key: str, ds_new: xr.Dataset, path: Path) -> None:
@@ -115,6 +116,7 @@ def _append_data(var_key: str, ds_new: xr.Dataset, path: Path) -> None:
 
     logger.debug(f"Saving concatenated dataset to {tmp_path}")
 
+    t0 = time.perf_counter()
     for attempt in range(1, 4):
         shutil.rmtree(tmp_path, ignore_errors=True)
         try:
@@ -151,7 +153,7 @@ def _append_data(var_key: str, ds_new: xr.Dataset, path: Path) -> None:
         raise RuntimeError(
             f"Failed to swap {tmp_path} → {path}; original restored from backup"
         ) from e
-    logger.success("Completed")
+    logger.success(f"Saved in {time.perf_counter() - t0:.1f}s")
     return None
 
 

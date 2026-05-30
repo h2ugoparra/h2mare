@@ -388,12 +388,13 @@ class AVISODownloader(BaseDownloader):
             self.var_key, start=start_date, end=end_date
         )
         if requested_range is None:
+            logger.info(f"'{self.var_key}' is already up to date — skipping.")
             return False
 
         tasks = self._create_download_tasks(requested_range)
 
         if not tasks:
-            logger.warning("No download tasks created - no data available")
+            logger.info(f"'{self.var_key}' is already up to date — skipping.")
             return False
 
         # Log tasks

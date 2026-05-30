@@ -88,7 +88,8 @@ class BaseDownloader(ABC):
         catalog_rep_end = pd.to_datetime(rep_rows["end_date"].max()).normalize()
         api_rep_end = pd.to_datetime(api_rep_end).normalize()
 
-        if api_rep_end > catalog_rep_end:
+        has_nrt = getattr(self.var_config, "dataset_id_nrt", None) is not None
+        if api_rep_end > catalog_rep_end and has_nrt:
             logger.warning(
                 f"{self.var_key.upper()}: REP dataset end date advanced "
                 f"from {catalog_rep_end.date()} (catalog) "

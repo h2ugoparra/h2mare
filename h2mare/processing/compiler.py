@@ -173,7 +173,7 @@ class Compiler:
         # time chunks
         chunks = split_time_range(requested_range, self.time_resolution)
 
-        logger.info(
+        logger.debug(
             f"Split into {len(chunks)} chunk(s) ({self.time_resolution} intervals)"
         )
 

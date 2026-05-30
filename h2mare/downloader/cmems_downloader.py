@@ -80,7 +80,7 @@ def download_subset(
         maximum_depth=depth_range[1] if depth_range else None,
         output_directory=output_dir,
     )
-    logger.success(f"Downloaded to {output_dir}")
+    logger.debug(f"Downloaded to {output_dir}")
 
 
 def _generate_date_patterns(
@@ -214,7 +214,7 @@ def download_original(
             output_directory=output_dir,
             no_directories=True,
         )
-    logger.success(f"Downloaded to {output_dir}")
+    logger.debug(f"Downloaded to {output_dir}")
 
 
 class CMEMSDownloader(BaseDownloader):
@@ -385,13 +385,14 @@ class CMEMSDownloader(BaseDownloader):
             self.var_key, start=start_date, end=end_date
         )
         if requested_range is None:
+            logger.info(f"'{self.var_key}' is already up to date — skipping.")
             return False
 
         # Create download tasks
         tasks = self._create_download_tasks(requested_range)
 
         if not tasks:
-            logger.warning("No download tasks created - no data available")
+            logger.info(f"'{self.var_key}' is already up to date — skipping.")
             return False
 
         # Log tasks
@@ -454,7 +455,7 @@ class CMEMSDownloader(BaseDownloader):
         if self.var_config.subset:
             chunks = split_time_range(task.date_range, time_split)
 
-            logger.info(f"Split into {len(chunks)} chunk(s) ({time_split} intervals)")
+            logger.debug(f"Split into {len(chunks)} chunk(s) ({time_split} intervals)")
 
             for i, chunk in enumerate(chunks, 1):
                 logger.debug(

@@ -112,7 +112,6 @@ class PipelineManager:
         if not self.no_compile and not self.no_convert and not self.dry_run:
             from h2mare.processing.compiler import Compiler
 
-            logger.info("Starting compile step (h2ds)")
             try:
                 Compiler(remote_store_root=self.store_root).run(
                     start_date=self.start_date,

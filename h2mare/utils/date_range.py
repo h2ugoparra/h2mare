@@ -65,7 +65,6 @@ def resolve_date_range(
 
     if start > end:
         if inferred:
-            logger.info(f"'{var_key}' is already up to date ({end.date()}) — skipping.")
             return None
         raise ValueError(
             f"Invalid date range: start ({start.date()}) > end ({end.date()})"
