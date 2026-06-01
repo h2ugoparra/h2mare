@@ -152,6 +152,9 @@ class ParquetStore:
             dt_min, dt_max = (r.item() for r in pl.collect_all([lf_min, lf_max]))
         else:
             all_files = list(self.parquet_root.rglob("*.parquet"))
+            # Stream the scan: without a year partition shortcut this reads every
+            # file in the store, and the default engine would buffer the whole
+            # time column in memory.
             row = (
                 pl.scan_parquet(all_files)
                 .select(
@@ -160,7 +163,7 @@ class ParquetStore:
                         pl.col(self.time_col).max().alias("mx"),
                     ]
                 )
-                .collect()
+                .collect(engine="streaming")
             )
             dt_min, dt_max = row["mn"][0], row["mx"][0]
 
@@ -606,7 +609,12 @@ class ParquetStore:
             exprs.append(non_null_time.min().alias(f"{c}__min"))
             exprs.append(non_null_time.max().alias(f"{c}__max"))
 
-        row = pl.scan_parquet(all_files).select(exprs).collect()
+        # Stream the aggregation: this scans the whole store (every partition,
+        # every file) and the default in-memory engine would materialize all
+        # projected columns at once — tens of GB on a multi-year store, enough
+        # to exhaust RAM and freeze the machine. The streaming engine keeps the
+        # per-column non-null min/max bounded in memory.
+        row = pl.scan_parquet(all_files).select(exprs).collect(engine="streaming")
 
         result: dict[str, DateRange] = {}
         for c in candidate:
