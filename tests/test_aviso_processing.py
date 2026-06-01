@@ -18,7 +18,6 @@ from h2mare.processing.core.aviso import (
 )
 from h2mare.types import DateRange, TimeResolution
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

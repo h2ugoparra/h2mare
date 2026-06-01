@@ -1,12 +1,12 @@
 """Tests for PipelineManager run() isolation and dry-run behaviour."""
 
-import pytest
+from unittest.mock import MagicMock, patch
+
 import msgspec
-from unittest.mock import MagicMock, patch, call
+import pytest
 
 from h2mare.models import AppConfig
 from h2mare.pipeline_manager import PipelineManager
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -275,8 +275,9 @@ class TestCleanup:
 
     def test_cleanup_empty_download_dir_removes_on_dry_run(self, tmp_path):
         """_cleanup_empty_download_dir removes an empty folder even during dry-run."""
-        from h2mare.downloader.base import BaseDownloader
         import msgspec
+
+        from h2mare.downloader.base import BaseDownloader
         from h2mare.models import AppConfig
 
         cfg = msgspec.convert(

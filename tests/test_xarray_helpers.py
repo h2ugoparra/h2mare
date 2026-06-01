@@ -12,7 +12,6 @@ from h2mare.storage.xarray_helpers import (
     have_vars_unique_values,
     rename_dims,
     unified_time_chunk,
-    xr_float64_to_float32,
 )
 
 

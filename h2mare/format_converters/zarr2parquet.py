@@ -7,6 +7,7 @@ from __future__ import annotations
 import gc
 import re
 import shutil
+from collections import defaultdict
 from pathlib import Path
 from typing import Optional
 
@@ -16,8 +17,9 @@ from loguru import logger
 
 from h2mare.config import get_settings
 from h2mare.format_converters.base import BaseConverter
+from h2mare.models import SYSTEM_VAR_KEYS
 from h2mare.storage import ZarrCatalog
-from h2mare.storage.coverage import split_time_range
+from h2mare.storage.coverage import get_store_coverage, split_time_range
 from h2mare.storage.parquet_indexer import ParquetIndexer
 from h2mare.types import DateRange, TimeResolution
 
@@ -58,6 +60,7 @@ class Zarr2Parquet(BaseConverter):
         store_root: Optional[Path] = None,
     ) -> None:
         self.var_key = var_key
+        self.app_config = get_settings().app_config
 
         self.zarr_repo = ZarrCatalog(self.var_key, store_root=store_root)
         repo_dates = self.zarr_repo.get_time_coverage()
@@ -87,42 +90,108 @@ class Zarr2Parquet(BaseConverter):
         variables: list[str] | None = None,
     ) -> bool:
         """
-        Convert Zarr data to Parquet for the resolved date range.
+        Convert Zarr data to Parquet, mirroring the compiler's incremental mode.
 
-        The range is always split by *time_resolution* (default: monthly) so
-        that each chunk fits comfortably in memory regardless of how wide the
-        requested window is.
+        Every conversion window is split by *time_resolution* (default: monthly)
+        so each chunk fits comfortably in memory.
+
+        Three modes, in priority order:
+
+        1. **add-var** (*variables* given, no explicit dates) — merge those
+           columns into every existing partition over the full Zarr range.
+        2. **explicit dates** — convert exactly ``[start_date, end_date]`` with
+           all variables (or *variables* if given).
+        3. **incremental** (no dates, no *variables*, the default) — two regimes:
+
+           * *append*: convert genuinely new trailing dates
+             (``parquet_end + 1 day → zarr_end``) with **all** variables.
+           * *backfill*: for each source var_key whose representative column lags
+             behind its source coverage inside the already-written date range,
+             re-read just that var_key's columns and JOIN them into the affected
+             partitions. This lets a lagging variable (written as NaN while a
+             faster one advanced) catch up on its own — exactly as the compiler
+             resolves per-variable gaps into the h2ds Zarr.
 
         Args:
-            start_date: Start of the conversion window. Inferred from the
-                parquet gap when omitted.
-            end_date: End of the conversion window. Defaults to the zarr
-                end date when omitted.
+            start_date: Start of the conversion window. Inferred when omitted.
+            end_date: End of the conversion window. Inferred when omitted.
             time_resolution: Granularity of each write batch. Defaults to
                 ``TimeResolution.MONTH``.
             depth: Depth level to select (in metres) for variables that have a
                 depth dimension. The nearest available level is chosen. Required
                 for depth-aware variables (e.g. thetao, o2); ignored otherwise.
             variables: Subset of variable names to read from the Zarr and merge
-                into the existing Parquet store. When set, the full Zarr range
-                is used regardless of the current Parquet coverage so that the
-                new columns are joined into every existing partition.
+                into the existing Parquet store (add-var mode).
         """
-        # In add-var mode with no explicit dates, reprocess the full Zarr range
-        # so the overlap resolver can JOIN the new columns into every partition.
+        logger.info(
+            f"Initializing Zarr->Parquet conversion for variable key: {self.var_key.upper()}"
+        )
+        # Mode 1 — add-var: reprocess the full Zarr range so the overlap resolver
+        # can JOIN the new columns into every partition.
         if variables is not None and start_date is None and end_date is None:
-            start_date, end_date = self.repo_start, self.repo_end
             logger.info(
                 f"add-var mode: merging {variables} into all existing partitions "
-                f"({pd.Timestamp(start_date).date()} → {pd.Timestamp(end_date).date()})"
+                f"({self.repo_start.date()} → {self.repo_end.date()})"
+            )
+            return self._convert_window(
+                DateRange(self.repo_start, self.repo_end),
+                time_resolution,
+                depth,
+                variables,
             )
 
-        start, end = self._resolve_date_range(start_date, end_date)
-        periods = split_time_range(DateRange(start, end), time_resolution)
+        # Mode 2 — explicit dates (or partial override).
+        if start_date is not None or end_date is not None:
+            start, end = self._resolve_date_range(start_date, end_date)
+            return self._convert_window(
+                DateRange(start, end), time_resolution, depth, variables
+            )
 
+        # Mode 3 — incremental: append new dates, then backfill lagging columns.
+        # Backfill groups are resolved up-front from the pre-append store metadata;
+        # the append and backfill windows are disjoint, so execution order is free.
+        ok = True
+        backfill_groups = self._resolve_backfill_groups()
+
+        try:
+            start, end = self._resolve_date_range(None, None)
+            # The per-window header in _convert_window already announces the
+            # range and chunk count, so don't repeat it here.
+            ok &= self._convert_window(
+                DateRange(start, end), time_resolution, depth, None
+            )
+        except ValueError as e:
+            logger.info(f"No new dates to append: {e}")
+
+        for window, cols in backfill_groups:
+            logger.info(
+                f"Backfilling {sorted(cols)} into existing partitions: "
+                f"{window.start.date()} → {window.end.date()}"
+            )
+            ok &= self._convert_window(window, time_resolution, depth, sorted(cols))
+
+        return ok
+
+    def _convert_window(
+        self,
+        window: DateRange,
+        time_resolution: TimeResolution,
+        depth: float | None,
+        variables: list[str] | None,
+    ) -> bool:
+        """
+        Convert a single date window to Parquet, one monthly chunk at a time.
+
+        Reads *variables* (or all data variables when ``None``) from the Zarr for
+        each chunk and writes them via ``ParquetIndexer.add_data``, which appends
+        non-overlapping partitions or JOINs overlapping ones automatically.
+
+        Returns ``True`` when every chunk converted without error.
+        """
+        periods = split_time_range(window, time_resolution)
         logger.info(
-            f"Initializing Zarr → Parquet conversion for variable key:'{self.var_key.upper()}': "
-            f"{start.date()} → {end.date()} ({len(periods)} chunk(s))"
+            f"Zarr → Parquet conversion for '{self.var_key.upper()}': "
+            f"{window.start.date()} → {window.end.date()} ({len(periods)} chunk(s))"
         )
 
         _failed = False
@@ -155,6 +224,81 @@ class Zarr2Parquet(BaseConverter):
                 gc.collect()
 
         return not _failed
+
+    def _resolve_backfill_groups(self) -> list[tuple[DateRange, set[str]]]:
+        """
+        Find lagging variable columns and group them by the window to backfill.
+
+        For every non-system source var_key whose columns appear in this Zarr
+        store, the gap between its representative column's last non-null date in
+        Parquet and its source coverage end is computed. Because all columns of a
+        var_key share the same dates (``variables_to_compile`` in config), one
+        representative column is enough to date the whole group — no need to scan
+        every column.
+
+        Only the portion of the gap *inside* the already-written date range is
+        returned here; genuinely new trailing dates are handled by the append
+        regime in :meth:`run`. var_keys sharing an identical window are merged
+        so each window is read once.
+
+        Returns:
+            List of ``(DateRange, columns)`` pairs to re-read and merge.
+            Empty when the Parquet store has no data or nothing lags.
+        """
+        if not self.indexer._dataset_meta_initialized:
+            return []
+        parquet_cov = self.indexer.get_time_coverage()
+        if parquet_cov is None:
+            return []
+        parquet_end = pd.Timestamp(parquet_cov.end)
+
+        # Representative column per source var_key that is actually present in
+        # this Zarr store (skip system keys; they track the global range).
+        zarr_vars = self.zarr_repo.get_variables()
+        reps: dict[str, str] = {}
+        for vkey, vc in self.app_config.variables.items():
+            if vkey in SYSTEM_VAR_KEYS or not vc.variables_to_compile:
+                continue
+            rep = vc.variables_to_compile[0]
+            if rep in zarr_vars:
+                reps[vkey] = rep
+
+        if not reps:
+            return []
+
+        # Only the last non-null date of each representative column is needed to
+        # date its group, so use the newest-first scan: it short-circuits after
+        # the latest partition when nothing lags, instead of reading the whole
+        # store on every incremental run.
+        parquet_var_end = self.indexer.get_var_coverage_end(list(reps.values()))
+
+        groups: dict[tuple[pd.Timestamp, pd.Timestamp], set[str]] = defaultdict(set)
+        for vkey, rep in reps.items():
+            source_cov = get_store_coverage(vkey)
+            if source_cov is None:
+                continue
+            # Backfill only within already-written dates; beyond parquet_end is
+            # the append regime's responsibility.
+            window_end = min(pd.Timestamp(source_cov.end), parquet_end)
+
+            rep_end = parquet_var_end.get(rep)
+            window_start = (
+                pd.Timestamp(rep_end) + pd.Timedelta(days=1)
+                if rep_end is not None
+                else pd.Timestamp(source_cov.start)
+            )
+
+            if window_start > window_end:
+                logger.debug(f"{vkey}: parquet up to date, no backfill.")
+                continue
+
+            cols = self.app_config.variables[vkey].variables_to_compile or []
+            groups[(window_start, window_end)].update(cols)
+            logger.debug(
+                f"{vkey}: backfill {window_start.date()} → {window_end.date()} ({cols})"
+            )
+
+        return [(DateRange(s, e), cols) for (s, e), cols in groups.items()]
 
     def sync_data(self, remote_root: Optional[Path] = None) -> None:
         """
@@ -259,7 +403,7 @@ class Zarr2Parquet(BaseConverter):
                 f"(inferred start {start.date()} > zarr end {end.date()})."
             )
 
-        logger.info(
+        logger.debug(
             f"Inferred Parquet range for '{self.var_key}': "
             f"{start.date()} → {end.date()}"
         )

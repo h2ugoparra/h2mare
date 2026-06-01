@@ -1,6 +1,5 @@
 """Tests for downloader/cds_downloader.py — CDSDownloader date logic and download_file."""
 
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import msgspec
@@ -10,7 +9,6 @@ import pytest
 from h2mare.downloader.cds_downloader import CDSDownloader
 from h2mare.models import AppConfig
 from h2mare.types import DateRange
-
 
 # ---------------------------------------------------------------------------
 # Helpers

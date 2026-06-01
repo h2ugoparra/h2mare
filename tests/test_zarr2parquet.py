@@ -9,14 +9,15 @@ Covers:
 - sync_data(): skips when STORE_ROOT is None; copies when remote_root is given
 """
 
-import pandas as pd
-import pytest
+from datetime import date
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pandas as pd
+import pytest
+
 from h2mare.format_converters.zarr2parquet import Zarr2Parquet
 from h2mare.types import DateRange
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -346,3 +347,188 @@ class TestSyncData:
         z.sync_data(remote_root=remote_root)
 
         assert (remote_root / "h2ds" / "data.parquet").exists()
+
+
+# ---------------------------------------------------------------------------
+# _resolve_backfill_groups
+# ---------------------------------------------------------------------------
+
+
+class TestResolveBackfillGroups:
+    def _prime(
+        self,
+        z: Zarr2Parquet,
+        *,
+        parquet_end: pd.Timestamp,
+        zarr_vars: set[str],
+        var_end: dict,
+    ) -> None:
+        """Wire up the mocked indexer/zarr_repo state the resolver reads.
+
+        ``var_end`` maps a representative column to its last non-null date in the
+        parquet store, mirroring ``get_var_coverage_end``.
+        """
+        z.indexer._dataset_meta_initialized = True
+        z.indexer.get_time_coverage.return_value = DateRange(
+            pd.Timestamp("1998-01-01"), parquet_end
+        )
+        z.indexer.get_var_coverage_end.return_value = var_end
+        z.zarr_repo.get_variables.return_value = zarr_vars
+
+    def test_empty_when_store_uninitialized(self, tmp_path):
+        z = _make_converter(tmp_path, parquet_initialized=False)
+        z.indexer._dataset_meta_initialized = False
+        assert z._resolve_backfill_groups() == []
+
+    def test_detects_lagging_var_key(self, tmp_path):
+        """sst parquet ends earlier than its source coverage → backfill window."""
+        z = _make_converter(tmp_path)
+        self._prime(
+            z,
+            parquet_end=pd.Timestamp("2021-06-30"),
+            zarr_vars={"sst"},
+            var_end={"sst": pd.Timestamp("2021-03-31")},
+        )
+        with patch(
+            "h2mare.format_converters.zarr2parquet.get_store_coverage"
+        ) as mock_src:
+            mock_src.return_value = DateRange(
+                pd.Timestamp("1998-01-01"), pd.Timestamp("2021-06-30")
+            )
+            groups = z._resolve_backfill_groups()
+
+        assert len(groups) == 1
+        window, cols = groups[0]
+        assert window.start.date() == date(2021, 4, 1)  # parquet end + 1 day
+        assert window.end.date() == date(2021, 6, 30)  # capped at parquet end
+        # All of sst's variables_to_compile are read, not just the representative
+        assert "sst" in cols
+        assert "sst_fdist" in cols
+
+    def test_up_to_date_var_key_excluded(self, tmp_path):
+        """parquet column already at source end → no backfill."""
+        z = _make_converter(tmp_path)
+        self._prime(
+            z,
+            parquet_end=pd.Timestamp("2021-06-30"),
+            zarr_vars={"sst"},
+            var_end={"sst": pd.Timestamp("2021-06-30")},
+        )
+        with patch(
+            "h2mare.format_converters.zarr2parquet.get_store_coverage"
+        ) as mock_src:
+            mock_src.return_value = DateRange(
+                pd.Timestamp("1998-01-01"), pd.Timestamp("2021-06-30")
+            )
+            assert z._resolve_backfill_groups() == []
+
+    def test_window_capped_at_parquet_end(self, tmp_path):
+        """Even when the source extends past parquet, backfill stops at parquet end."""
+        z = _make_converter(tmp_path)
+        self._prime(
+            z,
+            parquet_end=pd.Timestamp("2021-06-30"),
+            zarr_vars={"sst"},
+            var_end={"sst": pd.Timestamp("2021-03-31")},
+        )
+        with patch(
+            "h2mare.format_converters.zarr2parquet.get_store_coverage"
+        ) as mock_src:
+            mock_src.return_value = DateRange(
+                pd.Timestamp("1998-01-01"), pd.Timestamp("2025-12-31")
+            )
+            groups = z._resolve_backfill_groups()
+
+        _, _ = groups[0]
+        assert groups[0][0].end.date() == date(2021, 6, 30)
+
+    def test_new_column_backfilled_from_source_start(self, tmp_path):
+        """A var_key absent from the parquet store backfills from its source start."""
+        z = _make_converter(tmp_path)
+        self._prime(
+            z,
+            parquet_end=pd.Timestamp("2021-06-30"),
+            zarr_vars={"sst"},
+            var_end={},  # sst never written to parquet
+        )
+        with patch(
+            "h2mare.format_converters.zarr2parquet.get_store_coverage"
+        ) as mock_src:
+            mock_src.return_value = DateRange(
+                pd.Timestamp("2000-01-01"), pd.Timestamp("2021-06-30")
+            )
+            groups = z._resolve_backfill_groups()
+
+        assert groups[0][0].start.date() == date(2000, 1, 1)
+
+    def test_var_key_not_in_zarr_skipped(self, tmp_path):
+        """A var_key whose columns are not in this Zarr store is ignored."""
+        z = _make_converter(tmp_path)
+        self._prime(
+            z,
+            parquet_end=pd.Timestamp("2021-06-30"),
+            zarr_vars=set(),  # nothing present
+            var_end={},
+        )
+        assert z._resolve_backfill_groups() == []
+
+
+# ---------------------------------------------------------------------------
+# run() — incremental mode orchestration
+# ---------------------------------------------------------------------------
+
+
+class TestRunIncremental:
+    def test_appends_then_backfills(self, tmp_path):
+        """Mode 3 runs the append window, then each backfill group."""
+        z = _make_converter(tmp_path)
+
+        backfill_window = DateRange(
+            pd.Timestamp("2021-04-01"), pd.Timestamp("2021-06-30")
+        )
+        with (
+            patch.object(z, "_convert_window", return_value=True) as mock_conv,
+            patch.object(
+                z,
+                "_resolve_date_range",
+                return_value=(pd.Timestamp("2021-07-01"), pd.Timestamp("2021-12-31")),
+            ),
+            patch.object(
+                z,
+                "_resolve_backfill_groups",
+                return_value=[(backfill_window, {"sst", "sst_fdist"})],
+            ),
+        ):
+            result = z.run()
+
+        assert result is True
+        assert mock_conv.call_count == 2
+        # First call = append (all variables → None)
+        first = mock_conv.call_args_list[0]
+        assert first.args[3] is None
+        # Second call = backfill (explicit column subset)
+        second = mock_conv.call_args_list[1]
+        assert second.args[3] == ["sst", "sst_fdist"]
+
+    def test_backfill_runs_even_when_nothing_to_append(self, tmp_path):
+        """An 'up to date' append still lets backfill proceed."""
+        z = _make_converter(tmp_path)
+
+        backfill_window = DateRange(
+            pd.Timestamp("2021-04-01"), pd.Timestamp("2021-06-30")
+        )
+        with (
+            patch.object(z, "_convert_window", return_value=True) as mock_conv,
+            patch.object(
+                z, "_resolve_date_range", side_effect=ValueError("up to date")
+            ),
+            patch.object(
+                z,
+                "_resolve_backfill_groups",
+                return_value=[(backfill_window, {"sst"})],
+            ),
+        ):
+            result = z.run()
+
+        assert result is True
+        assert mock_conv.call_count == 1  # only the backfill

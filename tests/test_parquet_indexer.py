@@ -1,12 +1,12 @@
 """Integration tests for ParquetIndexer."""
 
-import pytest
-import polars as pl
 from datetime import date
 
-from h2mare.storage.parquet_indexer import ParquetIndexer
+import polars as pl
+import pytest
 from conftest import make_grid_df
 
+from h2mare.storage.parquet_indexer import ParquetIndexer
 
 # ---------------------------------------------------------------------------
 # Initialisation

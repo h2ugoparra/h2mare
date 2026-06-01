@@ -4,10 +4,9 @@ from datetime import date
 
 import polars as pl
 import pytest
-
-from h2mare.storage.parquet_store import ParquetStore
 from conftest import make_grid_df
 
+from h2mare.storage.parquet_store import ParquetStore
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -131,9 +130,9 @@ class TestAtomicPartitionWrite:
 
         # Direct call to atomic_partition_write should remove the stale tmp
         df_physical = store._align_to_schema(
-            store._prepare_df(store._resolve_time_col(
-                make_grid_df([date(2021, 6, 1)])
-            )),
+            store._prepare_df(
+                store._resolve_time_col(make_grid_df([date(2021, 6, 1)]))
+            ),
             include_partitions=False,
         )
         store.atomic_partition_write(df_physical, (2021, 6))
@@ -217,8 +216,7 @@ class TestResolveDimsOverlap:
         assert result is True
 
     def test_raises_on_no_spatial_overlap(self, tmp_path):
-        store = self._setup(tmp_path, [date(2021, 1, 1)],
-                            variables={"sst": 5.0})
+        store = self._setup(tmp_path, [date(2021, 1, 1)], variables={"sst": 5.0})
         # New data at completely different coordinates
         df_far = make_grid_df(
             [date(2021, 1, 1)],
@@ -256,6 +254,58 @@ class TestGetTimeCoverage:
         cov = store.get_time_coverage()
         assert cov.start.date() == date(2021, 3, 1)
         assert cov.end.date() == date(2022, 9, 1)
+
+
+class TestGetVarCoverage:
+    def test_empty_store_returns_empty(self, tmp_path):
+        store = _store(tmp_path)
+        assert store.get_var_coverage() == {}
+
+    def test_returns_per_column_range(self, tmp_path):
+        store = _store(tmp_path)
+        _write_one(store, [date(2021, 1, 1), date(2021, 1, 5)], variables={"sst": 20.0})
+        cov = store.get_var_coverage()
+        assert "sst" in cov
+        assert cov["sst"].start.date() == date(2021, 1, 1)
+        assert cov["sst"].end.date() == date(2021, 1, 5)
+
+    def test_excludes_coordinate_columns(self, tmp_path):
+        store = _store(tmp_path)
+        _write_one(store, [date(2021, 1, 1)])
+        cov = store.get_var_coverage()
+        assert "time" not in cov
+        assert "lon" not in cov
+        assert "lat" not in cov
+
+    def test_lagging_column_reports_its_own_end(self, tmp_path):
+        """A column present only on earlier dates ends earlier than a fuller one."""
+        store = _store(tmp_path)
+        # sst on Jan 1-3
+        _write_one(store, [date(2021, 1, 1), date(2021, 1, 3)], variables={"sst": 20.0})
+        # chl only on Jan 1 (lags behind sst)
+        store.add_data(make_grid_df([date(2021, 1, 1)], variables={"chl": 0.5}))
+
+        cov = store.get_var_coverage()
+        assert cov["sst"].end.date() == date(2021, 1, 3)
+        assert cov["chl"].end.date() == date(2021, 1, 1)
+
+    def test_column_filter_restricts_result(self, tmp_path):
+        store = _store(tmp_path)
+        _write_one(store, [date(2021, 1, 1)], variables={"sst": 20.0, "chl": 0.5})
+        cov = store.get_var_coverage(columns=["sst"])
+        assert set(cov.keys()) == {"sst"}
+
+    def test_all_null_column_omitted(self, tmp_path):
+        store = _store(tmp_path)
+        _write_one(store, [date(2021, 1, 1)], variables={"sst": 20.0})
+        # Add a fully-null column by merging a frame whose chl is null
+        df = make_grid_df([date(2021, 1, 1)], variables={"chl": 0.5}).with_columns(
+            pl.lit(None, dtype=pl.Float64).alias("chl")
+        )
+        store.add_data(df)
+        cov = store.get_var_coverage()
+        assert "sst" in cov
+        assert "chl" not in cov
 
 
 class TestGetGeoextent:

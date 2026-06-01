@@ -4,7 +4,6 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import msgspec
-import pytest
 from typer.testing import CliRunner
 
 from h2mare.cli.catalog import app as catalog_app

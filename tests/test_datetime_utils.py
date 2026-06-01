@@ -1,14 +1,15 @@
 """Tests for utils/datetime_utils.py."""
 
-import pytest
-import pandas as pd
 from datetime import date, datetime
 
+import pandas as pd
+import pytest
+
 from h2mare.utils.datetime_utils import (
-    to_datetime,
-    normalize_date,
-    more_than_one_year,
     date_to_standard_string,
+    more_than_one_year,
+    normalize_date,
+    to_datetime,
 )
 
 

@@ -14,7 +14,6 @@ from h2mare.format_converters.netcdf2zarr import Netcdf2Zarr
 from h2mare.models import AppConfig
 from h2mare.types import TimeResolution
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

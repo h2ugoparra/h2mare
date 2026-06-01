@@ -2,9 +2,12 @@
 h2mare parquet — convert compiled Zarr stores to Hive-partitioned Parquet.
 
 Reads one or more variable Zarr stores (default: h2ds) and writes them as
-month-partitioned Parquet files.  When no dates are given the command infers
-the gap between the existing Parquet store and the Zarr end date, so repeated
-runs only process new data.
+month-partitioned Parquet files.  When no dates are given the command runs in
+incremental mode: it appends genuinely new trailing dates and, mirroring the
+compile step, backfills any var_key whose column lags behind its source
+coverage (e.g. written as NaN while a faster variable advanced), merging the
+caught-up data into the affected partitions.  Repeated runs only process what
+is new.
 
 Examples
 --------
@@ -168,7 +171,9 @@ def parquet(
                 raise typer.Exit(code=1)
             variables.extend(v2c)
 
-        logger.info(f"add-var: merging {variables} into h2ds Parquet under {parquet_base}")
+        logger.info(
+            f"add-var: merging {variables} into h2ds Parquet under {parquet_base}"
+        )
         try:
             converter = Zarr2Parquet(
                 var_key="h2ds",
@@ -198,7 +203,6 @@ def parquet(
         raise typer.Exit(code=1)
 
     for key in keys:
-        logger.info(f"Processing '{key}' under {parquet_base}")
         try:
             converter = Zarr2Parquet(
                 var_key=key,

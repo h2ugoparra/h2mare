@@ -4,7 +4,6 @@ from unittest.mock import patch
 
 import numpy as np
 import pandas as pd
-import pytest
 import xarray as xr
 
 from h2mare.processing.core.cmems import (
@@ -13,7 +12,6 @@ from h2mare.processing.core.cmems import (
     process_ssh,
     process_sst,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers

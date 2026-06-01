@@ -4,7 +4,6 @@ import zipfile
 
 import numpy as np
 import pandas as pd
-import pytest
 import xarray as xr
 
 from h2mare.utils.files_io import (
@@ -14,7 +13,6 @@ from h2mare.utils.files_io import (
     safe_rmtree,
     unizp_files,
 )
-
 
 # ---------------------------------------------------------------------------
 # safe_rmtree

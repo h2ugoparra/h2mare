@@ -1,15 +1,12 @@
 """Tests for Extractor — focused on logic that doesn't need external data."""
 
 import json
-import pytest
+
 import numpy as np
 import pandas as pd
 import xarray as xr
-from datetime import datetime
-from pathlib import Path
 
-from h2mare.processing.extractor import Extractor, _save_completed_keys, _keys_path
-
+from h2mare.processing.extractor import Extractor, _keys_path, _save_completed_keys
 
 # ---------------------------------------------------------------------------
 # Helpers

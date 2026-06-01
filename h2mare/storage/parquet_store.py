@@ -4,15 +4,16 @@ from __future__ import annotations
 
 import shutil
 import sys
+from datetime import datetime
 from pathlib import Path
-from typing import Literal
+from typing import Iterator, Literal
 
 import polars as pl
 import pyarrow as pa
 import pyarrow.dataset as ds
 from loguru import logger
 
-from h2mare.types import BBox, DateRange
+from h2mare.types import BBox, DateRange, to_datetime
 
 from .parquet_helpers import polars_float64_to_float32
 
@@ -55,6 +56,9 @@ class ParquetStore:
         self.partition_cols = set(partition_by)
         self.physical_schema = None
         self.physical_cols: set[str] = set()
+        # Last "missing variables" set warned about, to avoid re-logging the same
+        # gap on every chunk of a multi-chunk write (e.g. lagging biology vars).
+        self._missing_warned: set[str] = set()
 
         self._init_dataset_metadata()
 
@@ -152,6 +156,9 @@ class ParquetStore:
             dt_min, dt_max = (r.item() for r in pl.collect_all([lf_min, lf_max]))
         else:
             all_files = list(self.parquet_root.rglob("*.parquet"))
+            # Stream the scan: without a year partition shortcut this reads every
+            # file in the store, and the default engine would buffer the whole
+            # time column in memory.
             row = (
                 pl.scan_parquet(all_files)
                 .select(
@@ -160,7 +167,7 @@ class ParquetStore:
                         pl.col(self.time_col).max().alias("mx"),
                     ]
                 )
-                .collect()
+                .collect(engine="streaming")
             )
             dt_min, dt_max = row["mn"][0], row["mx"][0]
 
@@ -168,7 +175,9 @@ class ParquetStore:
 
     def _init_dataset_metadata(self) -> None:
         """Initialize dataset-level metadata from parquet_root."""
-        if not self.parquet_root.exists() or not any(self.parquet_root.rglob("*.parquet")):
+        if not self.parquet_root.exists() or not any(
+            self.parquet_root.rglob("*.parquet")
+        ):
             self._time_range = None
             self._geoextent = None
             self._dataset_meta_initialized = False
@@ -193,6 +202,38 @@ class ParquetStore:
         self._geoextent = BBox.from_dataframe(
             scan, lon_col=self.lon_col, lat_col=self.lat_col
         )
+        self._dataset_meta_initialized = True
+
+    def _extend_dataset_metadata(self, df: pl.DataFrame) -> None:
+        """
+        Union the cached time/geo coverage with a just-written DataFrame.
+
+        Called after every successful write (create, append, or overlap merge)
+        so ``get_time_coverage`` / ``get_geoextent`` stay current within a run
+        without a full store re-scan. ``df`` always carries the time/lon/lat
+        columns regardless of which write path produced it.
+        """
+        df_range = DateRange.from_dataframe(df, time_col=self.time_col)
+        df_bbox = BBox.from_dataframe(df, lon_col=self.lon_col, lat_col=self.lat_col)
+
+        if self._time_range is None:
+            self._time_range = df_range
+        else:
+            self._time_range = DateRange(
+                start=min(self._time_range.start, df_range.start),
+                end=max(self._time_range.end, df_range.end),
+            )
+
+        if self._geoextent is None:
+            self._geoextent = df_bbox
+        else:
+            self._geoextent = BBox(
+                xmin=min(self._geoextent.xmin, df_bbox.xmin),
+                ymin=min(self._geoextent.ymin, df_bbox.ymin),
+                xmax=max(self._geoextent.xmax, df_bbox.xmax),
+                ymax=max(self._geoextent.ymax, df_bbox.ymax),
+            )
+
         self._dataset_meta_initialized = True
 
     def _update_physical_schema(self, df: pl.DataFrame) -> None:
@@ -229,7 +270,9 @@ class ParquetStore:
 
         missing = (physical_cols - self.partition_cols) - set(df_physical.columns)
         if missing:
-            logger.warning(f"Missing variables in new data: {missing}")
+            if missing != self._missing_warned:
+                logger.warning(f"Missing variables in new data: {missing}")
+                self._missing_warned = set(missing)
             df_physical = df_physical.with_columns(
                 [
                     pl.lit(None).cast(self.physical_schema[col]).alias(col)  # type: ignore
@@ -318,7 +361,7 @@ class ParquetStore:
         3. **Overlapping dates** — a coordinate-aligned horizontal merge is performed
            via a DuckDB ``FULL OUTER JOIN`` on ``(time, lon, lat)``.
         """
-        logger.info(f"Saving partitioned parquet to {self.parquet_root}")
+        logger.debug(f"Saving partitioned parquet to {self.parquet_root}")
 
         df = self._resolve_time_col(df, time_mode=time_mode, fmt=fmt)
 
@@ -330,8 +373,6 @@ class ParquetStore:
                 "Non-temporal partition columns must be present in the data."
             )
 
-        first_write = not self._dataset_meta_initialized
-
         if self.physical_schema is None:
             self._init_physical_schema(df)
 
@@ -340,13 +381,16 @@ class ParquetStore:
         if any(self.parquet_root.rglob("*.parquet")):
             is_resolved = self.resolve_dims_overlap(df)
             if is_resolved:
-                logger.success("Overlap resolved. Data added.")
+                logger.debug("Overlap resolved. Data added.")
+                # An overlap merge can still extend coverage (e.g. df spans new
+                # trailing dates that also overlap existing partitions), so refresh
+                # the cached range here too — not only on the append path below.
+                self._extend_dataset_metadata(df)
                 return
-            else:
-                logger.info("Appending non-overlapping data.")
-                df = self._align_to_schema(df)
+            logger.debug("Appending non-overlapping data.")
+            df = self._align_to_schema(df)
         else:
-            logger.info("Creating new parquet dataset.")
+            logger.debug("Creating new parquet dataset.")
 
         max_file, max_group = self._max_rows_per_file(df)
         ds.write_dataset(
@@ -361,8 +405,7 @@ class ParquetStore:
             max_rows_per_group=max_group,
         )
 
-        if first_write:
-            self._init_dataset_metadata()
+        self._extend_dataset_metadata(df)
 
     def resolve_dims_overlap(self, df: pl.DataFrame) -> bool | None:
         """
@@ -557,6 +600,141 @@ class ParquetStore:
         if not self._dataset_meta_initialized:
             raise RuntimeError("Dataset metadata not initialized yet")
         return self._geoextent
+
+    def get_var_coverage(
+        self, columns: list[str] | None = None
+    ) -> dict[str, DateRange]:
+        """
+        Per-column time coverage based on non-null values.
+
+        For each data column, returns the ``DateRange`` spanning the first and
+        last dates at which that column has at least one non-null value. This is
+        the Parquet analogue of :meth:`ZarrCatalog.get_var_time_coverage` and lets
+        callers detect a lagging variable whose trailing dates are still null
+        (e.g. written as a placeholder while a faster variable advanced).
+
+        Columns that are entirely null, or absent from the store, are omitted
+        from the result. The whole computation is a single lazy scan over the
+        store regardless of how many columns are queried.
+
+        Args:
+            columns: Restrict the result to these data columns. ``None`` covers
+                every non-coordinate, non-partition column.
+
+        Returns:
+            Mapping of column name to its non-null ``DateRange``. Empty when the
+            store has no data.
+        """
+        if not self._dataset_meta_initialized:
+            return {}
+
+        coord_cols = {self.time_col, self.lon_col, self.lat_col}
+        candidate = [
+            c
+            for c in self.get_schema()
+            if c not in coord_cols and c not in self.partition_cols
+        ]
+        if columns is not None:
+            wanted = set(columns)
+            candidate = [c for c in candidate if c in wanted]
+        if not candidate:
+            return {}
+
+        all_files = list(self.parquet_root.rglob("*.parquet"))
+        exprs: list[pl.Expr] = []
+        for c in candidate:
+            non_null_time = pl.col(self.time_col).filter(pl.col(c).is_not_null())
+            exprs.append(non_null_time.min().alias(f"{c}__min"))
+            exprs.append(non_null_time.max().alias(f"{c}__max"))
+
+        # Stream the aggregation: this scans the whole store (every partition,
+        # every file) and the default in-memory engine would materialize all
+        # projected columns at once — tens of GB on a multi-year store, enough
+        # to exhaust RAM and freeze the machine. The streaming engine keeps the
+        # per-column non-null min/max bounded in memory.
+        row = pl.scan_parquet(all_files).select(exprs).collect(engine="streaming")
+
+        result: dict[str, DateRange] = {}
+        for c in candidate:
+            mn, mx = row[f"{c}__min"][0], row[f"{c}__max"][0]
+            if mn is None or mx is None:
+                continue
+            result[c] = DateRange(mn, mx)
+        return result
+
+    def _leaf_partition_dirs_newest_first(self) -> Iterator[Path]:
+        """
+        Yield leaf partition directories in date-descending order.
+
+        Only meaningful when the partition layout is purely temporal and
+        date-ordered by directory traversal (``["year"]`` or ``["year", "month"]``);
+        :meth:`get_var_coverage_end` guards against other layouts.
+        """
+        years = self._get_partition_level_values("year", self.parquet_root)
+        for y in reversed(years):
+            ypath = self.parquet_root / f"year={y}"
+            if "month" in self._partition_by:
+                for m in reversed(self._get_partition_level_values("month", ypath)):
+                    yield ypath / f"month={m}"
+            else:
+                yield ypath
+
+    def get_var_coverage_end(self, columns: list[str]) -> dict[str, datetime]:
+        """
+        Last non-null date per column, scanning newest partitions first.
+
+        Returns the same end dates as ``get_var_coverage`` but, for year- or
+        year/month-partitioned stores, reads partitions newest→oldest and stops
+        once every requested column has been found non-null. When all columns are
+        populated through the latest partition only that partition is read,
+        turning a full-store scan into a single partition read — the common case
+        for incremental backfill checks. Columns never found non-null are omitted.
+
+        Falls back to a full streaming :meth:`get_var_coverage` scan for any
+        non-temporal partition layout, where directory order does not track date.
+        """
+        if not self._dataset_meta_initialized:
+            return {}
+
+        if self._partition_by not in (["year"], ["year", "month"]):
+            return {c: r.end for c, r in self.get_var_coverage(columns).items()}
+
+        coord_cols = {self.time_col, self.lon_col, self.lat_col}
+        schema_cols = set(self.get_schema())
+        remaining = [
+            c
+            for c in columns
+            if c in schema_cols and c not in coord_cols and c not in self.partition_cols
+        ]
+
+        result: dict[str, datetime] = {}
+        for part_dir in self._leaf_partition_dirs_newest_first():
+            if not remaining:
+                break
+            files = list(part_dir.rglob("*.parquet"))
+            if not files:
+                continue
+            # A column may be absent from this partition's files (schema evolved
+            # via --add-var); project only those present here, leave the rest to
+            # be found in the partitions where they exist.
+            present = set(pl.read_parquet_schema(files[0]))
+            cols_here = [c for c in remaining if c in present]
+            if not cols_here:
+                continue
+            exprs = [
+                pl.col(self.time_col).filter(pl.col(c).is_not_null()).max().alias(c)
+                for c in cols_here
+            ]
+            row = pl.scan_parquet(files).select(exprs).collect(engine="streaming")
+            still: list[str] = []
+            for c in remaining:
+                v = row[c][0] if c in cols_here else None
+                if v is None:
+                    still.append(c)
+                else:
+                    result[c] = to_datetime(v)
+            remaining = still
+        return result
 
     def get_schema(self) -> dict[str, pl.DataType]:
         """Return the union schema across all partitions."""

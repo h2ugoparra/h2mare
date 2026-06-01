@@ -114,6 +114,10 @@ class ParquetIndexer:
     def _partition_by(self) -> list[str]:
         return self._store._partition_by
 
+    @property
+    def _dataset_meta_initialized(self) -> bool:
+        return self._store._dataset_meta_initialized
+
     # --- Write API ---
 
     def add_data(
@@ -149,6 +153,14 @@ class ParquetIndexer:
 
     def get_time_coverage(self) -> DateRange | None:
         return self._store.get_time_coverage()
+
+    def get_var_coverage(
+        self, columns: list[str] | None = None
+    ) -> dict[str, DateRange]:
+        return self._store.get_var_coverage(columns)
+
+    def get_var_coverage_end(self, columns: list[str]) -> dict:
+        return self._store.get_var_coverage_end(columns)
 
     def get_geoextent(self) -> BBox | None:
         return self._store.get_geoextent()
