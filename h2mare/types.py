@@ -136,7 +136,7 @@ class DateRange:
         """Create DateRange from min/max of a Polars LazyFrame time column."""
         result = df.select(
             [pl.col(time_col).min().alias("start"), pl.col(time_col).max().alias("end")]
-        ).collect()
+        ).collect(engine="streaming")
         return cls(
             start=to_datetime(result["start"][0]), end=to_datetime(result["end"][0])
         )
@@ -278,7 +278,7 @@ class BBox:
                 pl.col(lon_col).max().alias("max_lon"),
                 pl.col(lat_col).max().alias("max_lat"),
             ]
-        ).collect()
+        ).collect(engine="streaming")
 
         return cls(
             xmin=float(result["min_lon"][0]),
