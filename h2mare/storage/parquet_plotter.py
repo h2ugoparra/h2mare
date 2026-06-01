@@ -8,6 +8,7 @@ import numpy as np
 import plotly.graph_objects as go
 import polars as pl
 from loguru import logger
+from plotly.colors import DEFAULT_PLOTLY_COLORS
 
 from h2mare import get_settings
 from h2mare.storage.parquet_helpers import (
@@ -33,10 +34,40 @@ class ParquetPlotter:
         >>> indexer.plot.monthly_map("sst")
     """
 
+    # Render config for the interactive (Plotly) figures. ``displayModeBar``
+    # defaults to "hover" in Plotly, so the toolbar only shows while the cursor
+    # is over the plot and fades as you move toward it; pinning it True keeps it
+    # always visible. ``displaylogo`` drops the Plotly logo. Applied via ``show``
+    # (and available to callers for ``fig.show``/``write_html``).
+    PLOT_CONFIG = {"displayModeBar": True, "displaylogo": False}
+
     def __init__(self, indexer: "ParquetCatalog | ParquetIndexer") -> None:
         self._idx = indexer
         self._cache: dict = {}
         self._grid_coords: pl.DataFrame | None = None
+
+    def show(
+        self, fig: go.Figure, renderer: Optional[str] = None, **config_overrides
+    ) -> None:
+        """Display an interactive figure with the toolbar always visible.
+
+        Convenience wrapper around ``fig.show`` that applies :attr:`PLOT_CONFIG`
+        (modebar pinned, no Plotly logo). The plot functions return a
+        ``go.Figure`` so they stay composable (e.g. ``write_html``); use this to
+        display one without the toolbar fading on hover::
+
+            idx.plot.show(idx.plot.time_series(["sst", "chl"], agg_by="month"))
+
+        Args:
+            fig: The figure to display.
+            renderer: Plotly renderer override (e.g. ``"browser"``,
+                ``"vscode"``, ``"notebook"``). Defaults to the active Plotly
+                default. Use ``"browser"`` if the inline toolbar buttons are
+                unresponsive in your IDE/notebook.
+            **config_overrides: Plotly config keys to override, e.g.
+                ``displaylogo=True``.
+        """
+        fig.show(renderer=renderer, config={**self.PLOT_CONFIG, **config_overrides})
 
     def _snap_to_grid(
         self, point: tuple[float, float]
@@ -61,6 +92,27 @@ class ParquetPlotter:
             f"Point ({lon}, {lat}) snapped to grid cell ({nearest_lon}, {nearest_lat})"
         )
         return (nearest_lon, nearest_lat, nearest_lon, nearest_lat)
+
+    @staticmethod
+    def _add_season_plot_date(result: pl.LazyFrame) -> pl.LazyFrame:
+        """Add a plottable ``time_plot`` date from the ``YYYYS`` season encoding.
+
+        Seasons are anchored to the first month of each meteorological season
+        (spring → March, summer → June, autumn → September, winter → December).
+        """
+        return result.with_columns(
+            time_plot=pl.datetime(
+                pl.col("time_agg") // 10,
+                pl.when(pl.col("time_agg") % 10 == 1)
+                .then(3)
+                .when(pl.col("time_agg") % 10 == 2)
+                .then(6)
+                .when(pl.col("time_agg") % 10 == 3)
+                .then(9)
+                .otherwise(12),
+                1,
+            )
+        )
 
     def _agg_key(self, var_name, agg_by, dates, bbox) -> tuple:
         dates_key = tuple(dates) if isinstance(dates, list) else dates
@@ -96,17 +148,25 @@ class ParquetPlotter:
 
     def time_series(
         self,
-        var_name: str,
+        var_name: Union[str, list[str]],
         agg_by: Literal["day", "week", "month", "season", "year"],
         *,
         dates: Optional[Union[list, tuple]] = None,
         bbox: Optional[tuple[float, float] | tuple[float, float, float, float]] = None,
+        title: Optional[str] = None,
     ) -> go.Figure:
         """
         Interactive time series line plot aggregated over space and time.
 
+        Compares one or more variables as mean lines over time. With multiple
+        variables each gets its own y-axis (left/right, then floated outward),
+        so fields with different units/scales remain comparable. For a single
+        variable's full distribution (±1σ, min/max, trends) use
+        :meth:`stats_summary` instead.
+
         Args:
-            var_name: Variable name to plot.
+            var_name: Variable name, or a list of up to 4 variable names. Each
+                variable is drawn as its own line on its own y-axis.
             agg_by: Temporal aggregation granularity.
             dates: Temporal filter. Pass a ``(start, end)`` tuple for a contiguous
                 range (e.g. ``("2010-01-01", "2020-12-31")``) or a ``list`` of
@@ -115,60 +175,106 @@ class ParquetPlotter:
                 Defaults to the full dataset.
             bbox: Spatial filter. Either a 4-tuple (xmin, ymin, xmax, ymax) for an extent
                 or a 2-tuple (lon, lat) to select the nearest grid cell. Defaults to full extent.
+            title: Figure title. Defaults to the variable's long name for a
+                single variable, or ``"Time series"`` for multiple.
 
         Note:
             Seasonal values are assigned to the first month of the respective season
             (e.g. spring → March 1st).
 
+        Raises:
+            ValueError: If no variables are given, more than 4 are given, or any
+                variable is absent from the store.
+
         Returns:
-            go.Figure
+            go.Figure. Display it with :meth:`show` to keep the toolbar pinned
+            (Plotly otherwise only reveals it on hover).
         """
-        if var_name not in self._idx.get_schema():
-            raise ValueError(f"'{var_name}' not in parquet column names.")
+        vars_list = [var_name] if isinstance(var_name, str) else list(var_name)
+
+        if not vars_list:
+            raise ValueError("var_name must contain at least one variable.")
+        if len(vars_list) > 4:
+            raise ValueError(
+                f"time_series supports at most 4 variables (got {len(vars_list)}); "
+                "plot fewer variables or split into multiple figures."
+            )
+        missing = [v for v in vars_list if v not in self._idx.get_schema()]
+        if missing:
+            raise ValueError(f"{missing} not in parquet column names.")
 
         if bbox is not None and len(bbox) == 2:
             bbox = self._snap_to_grid(bbox)  # type: ignore[arg-type]
 
         lf = self._idx.scan(
-            dates=dates, bbox=bbox, columns=[self._idx.time_col, var_name]
+            dates=dates, bbox=bbox, columns=[self._idx.time_col, *vars_list]
         )
-        result = aggregate_by_time(lf, var_name, agg_by=agg_by)
+        result = aggregate_by_time(lf, vars_list, agg_by=agg_by)
 
         # Season encoding is YYYYS — convert to plottable dates
         if agg_by == "season":
-            result = result.with_columns(
-                time_plot=pl.datetime(
-                    pl.col("time_agg") // 10,
-                    pl.when(pl.col("time_agg") % 10 == 1)
-                    .then(3)
-                    .when(pl.col("time_agg") % 10 == 2)
-                    .then(6)
-                    .when(pl.col("time_agg") % 10 == 3)
-                    .then(9)
-                    .otherwise(12),
-                    1,
-                )
-            )
+            result = self._add_season_plot_date(result)
 
         result = result.collect(engine="streaming")
 
         time_col = "time_plot" if "time_plot" in result.columns else "time_agg"
-        long_name = get_settings().get_var_info(var_name).get("long_name", var_name)
+        x = result[time_col].to_numpy()
+
+        # Shrink the plot area to make room for any floated (3rd/4th) axes.
+        x_left = 0.08 if len(vars_list) >= 3 else 0.0
+        x_right = 1.0 - (0.08 if len(vars_list) >= 4 else 0.0)
 
         fig = go.Figure()
-        fig.add_trace(
-            go.Scatter(
-                x=result[time_col].to_numpy(),
-                y=result[var_name].to_numpy(),
-                mode="lines",
-                name=var_name,
+        layout_axes: dict = {}
+        for i, var in enumerate(vars_list):
+            color = DEFAULT_PLOTLY_COLORS[i % len(DEFAULT_PLOTLY_COLORS)]
+            info = get_settings().get_var_info(var)
+            axis_title = info.get("units") or info.get("long_name", var)
+
+            fig.add_trace(
+                go.Scatter(
+                    x=x,
+                    y=result[var].to_numpy(),
+                    mode="lines",
+                    name=info.get("short_name", var),
+                    line=dict(color=color),
+                    yaxis="y" if i == 0 else f"y{i + 1}",
+                )
             )
-        )
+
+            axis_cfg: dict = {
+                "title": dict(text=axis_title, font=dict(color=color)),
+                "tickfont": dict(color=color),
+            }
+            if i == 1:
+                axis_cfg.update(overlaying="y", side="right")
+            elif i == 2:
+                axis_cfg.update(
+                    overlaying="y", side="left", anchor="free", position=0.0
+                )
+            elif i == 3:
+                axis_cfg.update(
+                    overlaying="y", side="right", anchor="free", position=1.0
+                )
+            layout_axes["yaxis" if i == 0 else f"yaxis{i + 1}"] = axis_cfg
+
+        if title is None:
+            title = (
+                get_settings().get_var_info(vars_list[0]).get("long_name", vars_list[0])
+                if len(vars_list) == 1
+                else "Time series"
+            )
         fig.update_layout(
-            title=long_name,
-            xaxis_title="Time",
-            yaxis_title="Value",
-            xaxis=dict(rangeslider=dict(visible=True), type="date"),
+            title=title,
+            xaxis=dict(
+                title="Time",
+                domain=[x_left, x_right],
+                rangeslider=dict(visible=True),
+                type="date",
+            ),
+            plot_bgcolor="white",
+            paper_bgcolor="white",
+            **layout_axes,
         )
         return fig
 
@@ -184,6 +290,7 @@ class ParquetPlotter:
         dates: Optional[Union[list, tuple]] = None,
         bbox: Optional[tuple[float, float, float, float]] = None,
         lowess_frac: float = 0.3,
+        title: Optional[str] = None,
     ) -> go.Figure:
         """
         Interactive composite plot of mean, ±1 std, min, and max over time.
@@ -202,6 +309,7 @@ class ParquetPlotter:
             lowess_frac: Fraction of data used for each local LOWESS fit (0 < frac ≤ 1).
                 Lower values follow the data more closely; higher values produce a
                 smoother curve. Defaults to 0.3.
+            title: Figure title. Defaults to ``"{long_name} — Statistics Summary"``.
 
         Note:
             Seasonal values are assigned to the first month of the respective season
@@ -210,7 +318,8 @@ class ParquetPlotter:
 
         Returns:
             go.Figure with mean (solid), ±1 std band (shaded), min/max (dashed),
-            and LOWESS trend lines for mean, min, and max (dotted).
+            and LOWESS trend lines for mean, min, and max (dotted). Display it
+            with :meth:`show` to keep the toolbar pinned.
         """
         if var_name not in self._idx.get_schema():
             raise ValueError(f"'{var_name}' not in parquet column names.")
@@ -221,19 +330,7 @@ class ParquetPlotter:
         result = aggregate_by_time_stats(lf, var_name, agg_by=agg_by)
 
         if agg_by == "season":
-            result = result.with_columns(
-                time_plot=pl.datetime(
-                    pl.col("time_agg") // 10,
-                    pl.when(pl.col("time_agg") % 10 == 1)
-                    .then(3)
-                    .when(pl.col("time_agg") % 10 == 2)
-                    .then(6)
-                    .when(pl.col("time_agg") % 10 == 3)
-                    .then(9)
-                    .otherwise(12),
-                    1,
-                )
-            )
+            result = self._add_season_plot_date(result)
 
         result = result.collect(engine="streaming")
 
@@ -341,7 +438,7 @@ class ParquetPlotter:
             )
         )
         fig.update_layout(
-            title=f"{long_name} — Statistics Summary",
+            title=title or f"{long_name} — Statistics Summary",
             xaxis_title="Time",
             yaxis_title="Value",
             xaxis=dict(rangeslider=dict(visible=True), type="date"),
@@ -365,7 +462,7 @@ class ParquetPlotter:
         grid_shape: Optional[tuple[int, int]] = None,
         vminmax: Optional[tuple[float, float]] = None,
         cmap: str = "turbo",
-        main_title: Optional[str] = None,
+        title: Optional[str] = None,
         legend_title: Optional[str] = None,
         save_path=None,
     ) -> None:
@@ -392,7 +489,7 @@ class ParquetPlotter:
                 from the map extent so there are no blank spaces between rows.
             vminmax: Fixed (vmin, vmax) for the colorbar. Defaults to data range.
             cmap: Matplotlib colormap name. Defaults to 'turbo'.
-            main_title: Figure title. Defaults to None.
+            title: Figure title. Defaults to None.
             legend_title: Colorbar label. Defaults to the variable short name from config.
             save_path: Path to save the figure. If None, the plot is shown interactively.
         """
@@ -415,7 +512,7 @@ class ParquetPlotter:
             data_bbox=data_bbox,
             map_bbox=map_bbox,
             grid_shape=grid_shape,
-            main_title=main_title,
+            main_title=title,
             legend_title=legend_title,
             save_path=save_path,
         )

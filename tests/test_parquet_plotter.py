@@ -134,6 +134,170 @@ class TestTimeSeries:
             fig = plotter.time_series("sst", "month")
         assert len(fig.data) == 1
 
+    def test_single_var_uses_full_domain_and_no_second_axis(self, loaded_indexer):
+        plotter = ParquetPlotter(loaded_indexer)
+        with patch("h2mare.storage.parquet_plotter.get_settings") as mock_get_settings:
+            mock_get_settings.return_value.get_var_info.return_value = {}
+            fig = plotter.time_series("sst", "month")
+        assert tuple(fig.layout.xaxis.domain) == (0.0, 1.0)
+        # No additional axes configured for a single variable
+        assert "yaxis2" not in fig.layout.to_plotly_json()
+
+
+class TestTimeSeriesMultiVar:
+    """Multi-variable / multi-y-axis behavior of time_series."""
+
+    @staticmethod
+    def _plot(plotter, var_name, **kwargs):
+        with patch("h2mare.storage.parquet_plotter.get_settings") as mock_get_settings:
+            mock_get_settings.return_value.get_var_info.return_value = {}
+            return plotter.time_series(var_name, "month", **kwargs)
+
+    def test_one_trace_per_variable(self, multivar_indexer):
+        plotter = ParquetPlotter(multivar_indexer)
+        fig = self._plot(plotter, ["sst", "chl", "mld"])
+        assert len(fig.data) == 3
+
+    def test_traces_bound_to_distinct_axes(self, multivar_indexer):
+        plotter = ParquetPlotter(multivar_indexer)
+        fig = self._plot(plotter, ["sst", "chl", "mld", "adt"])
+        assert [t.yaxis for t in fig.data] == ["y", "y2", "y3", "y4"]
+
+    def test_second_axis_on_right_overlaying_first(self, multivar_indexer):
+        plotter = ParquetPlotter(multivar_indexer)
+        fig = self._plot(plotter, ["sst", "chl"])
+        assert fig.layout.yaxis2.side == "right"
+        assert fig.layout.yaxis2.overlaying == "y"
+
+    def test_third_axis_floated_left(self, multivar_indexer):
+        plotter = ParquetPlotter(multivar_indexer)
+        fig = self._plot(plotter, ["sst", "chl", "mld"])
+        assert fig.layout.yaxis3.side == "left"
+        assert fig.layout.yaxis3.anchor == "free"
+        assert fig.layout.yaxis3.position == 0.0
+        # Plot area shrinks on the left to make room for the floated axis
+        assert tuple(fig.layout.xaxis.domain) == (0.08, 1.0)
+
+    def test_fourth_axis_floated_right_and_domain_shrinks_both_sides(
+        self, multivar_indexer
+    ):
+        plotter = ParquetPlotter(multivar_indexer)
+        fig = self._plot(plotter, ["sst", "chl", "mld", "adt"])
+        assert fig.layout.yaxis4.side == "right"
+        assert fig.layout.yaxis4.anchor == "free"
+        assert fig.layout.yaxis4.position == 1.0
+        assert tuple(fig.layout.xaxis.domain) == (0.08, 0.92)
+
+    def test_more_than_four_variables_raises(self, multivar_indexer):
+        plotter = ParquetPlotter(multivar_indexer)
+        with pytest.raises(ValueError, match="at most 4 variables"):
+            self._plot(plotter, ["sst", "chl", "mld", "adt", "extra"])
+
+    def test_empty_list_raises(self, multivar_indexer):
+        plotter = ParquetPlotter(multivar_indexer)
+        with pytest.raises(ValueError, match="at least one variable"):
+            self._plot(plotter, [])
+
+    def test_unknown_variable_in_list_raises(self, multivar_indexer):
+        plotter = ParquetPlotter(multivar_indexer)
+        with pytest.raises(ValueError, match="not in parquet"):
+            self._plot(plotter, ["sst", "bad_var"])
+
+    def test_custom_title_overrides_default(self, multivar_indexer):
+        plotter = ParquetPlotter(multivar_indexer)
+        with patch("h2mare.storage.parquet_plotter.get_settings") as mock_get_settings:
+            mock_get_settings.return_value.get_var_info.return_value = {}
+            fig = plotter.time_series(["sst", "chl"], "month", title="My Comparison")
+        assert fig.layout.title.text == "My Comparison"
+
+    def test_default_title_for_multiple_vars(self, multivar_indexer):
+        plotter = ParquetPlotter(multivar_indexer)
+        fig = self._plot(plotter, ["sst", "chl"])
+        assert fig.layout.title.text == "Time series"
+
+    def test_background_is_white(self, multivar_indexer):
+        plotter = ParquetPlotter(multivar_indexer)
+        fig = self._plot(plotter, ["sst", "chl"])
+        assert fig.layout.plot_bgcolor == "white"
+        assert fig.layout.paper_bgcolor == "white"
+
+    def test_season_aggregation_builds_figure(self, multivar_indexer):
+        plotter = ParquetPlotter(multivar_indexer)
+        with patch("h2mare.storage.parquet_plotter.get_settings") as mock_get_settings:
+            mock_get_settings.return_value.get_var_info.return_value = {}
+            fig = plotter.time_series(["sst", "chl"], "season")
+        assert isinstance(fig, go.Figure)
+        assert len(fig.data) == 2
+
+
+# ---------------------------------------------------------------------------
+# stats_summary
+# ---------------------------------------------------------------------------
+
+
+class TestStatsSummary:
+    def test_returns_plotly_figure(self, loaded_indexer):
+        plotter = ParquetPlotter(loaded_indexer)
+        with patch("h2mare.storage.parquet_plotter.get_settings") as mock_get_settings:
+            mock_get_settings.return_value.get_var_info.return_value = {
+                "long_name": "SST"
+            }
+            fig = plotter.stats_summary("sst", "day")
+        assert isinstance(fig, go.Figure)
+
+    def test_custom_title_overrides_default(self, loaded_indexer):
+        plotter = ParquetPlotter(loaded_indexer)
+        with patch("h2mare.storage.parquet_plotter.get_settings") as mock_get_settings:
+            mock_get_settings.return_value.get_var_info.return_value = {
+                "long_name": "SST"
+            }
+            fig = plotter.stats_summary("sst", "day", title="Custom Stats")
+        assert fig.layout.title.text == "Custom Stats"
+
+    def test_default_title_mentions_statistics_summary(self, loaded_indexer):
+        plotter = ParquetPlotter(loaded_indexer)
+        with patch("h2mare.storage.parquet_plotter.get_settings") as mock_get_settings:
+            mock_get_settings.return_value.get_var_info.return_value = {
+                "long_name": "SST"
+            }
+            fig = plotter.stats_summary("sst", "day")
+        assert "Statistics Summary" in fig.layout.title.text
+
+
+# ---------------------------------------------------------------------------
+# show / PLOT_CONFIG
+# ---------------------------------------------------------------------------
+
+
+class TestShow:
+    def test_plot_config_pins_modebar(self):
+        assert ParquetPlotter.PLOT_CONFIG["displayModeBar"] is True
+        assert ParquetPlotter.PLOT_CONFIG["displaylogo"] is False
+
+    def test_show_passes_plot_config(self, loaded_indexer):
+        plotter = ParquetPlotter(loaded_indexer)
+        fig = MagicMock()
+        plotter.show(fig)
+        fig.show.assert_called_once_with(
+            renderer=None, config=ParquetPlotter.PLOT_CONFIG
+        )
+
+    def test_show_allows_config_overrides(self, loaded_indexer):
+        plotter = ParquetPlotter(loaded_indexer)
+        fig = MagicMock()
+        plotter.show(fig, displaylogo=True)
+        _, kwargs = fig.show.call_args
+        assert kwargs["config"]["displaylogo"] is True
+        assert kwargs["config"]["displayModeBar"] is True
+
+    def test_show_passes_renderer(self, loaded_indexer):
+        plotter = ParquetPlotter(loaded_indexer)
+        fig = MagicMock()
+        plotter.show(fig, renderer="browser")
+        _, kwargs = fig.show.call_args
+        assert kwargs["renderer"] == "browser"
+        assert kwargs["config"] == ParquetPlotter.PLOT_CONFIG
+
 
 # ---------------------------------------------------------------------------
 # spatial_maps
@@ -161,3 +325,10 @@ class TestSpatialMaps:
         _, kwargs = mock_plot_maps.call_args
         assert kwargs["cmap"] == "viridis"
         assert kwargs["agg_by"] == "season"
+
+    def test_title_forwarded_as_main_title(self, loaded_indexer):
+        plotter = ParquetPlotter(loaded_indexer)
+        with patch("h2mare.storage.parquet_plotter.plot_maps") as mock_plot_maps:
+            plotter.spatial_maps("sst", title="My Maps")
+        _, kwargs = mock_plot_maps.call_args
+        assert kwargs["main_title"] == "My Maps"

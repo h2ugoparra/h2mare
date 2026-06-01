@@ -75,3 +75,22 @@ def loaded_indexer(parquet_dir, jan_df):
     idx = ParquetIndexer(parquet_dir)
     idx.add_data(jan_df)
     return idx
+
+
+@pytest.fixture
+def multivar_df():
+    """27 rows: 3 months × 3×3 grid, four variables (sst, chl, mld, adt)."""
+    return make_grid_df(
+        dates=[date(2020, 1, 1), date(2020, 2, 1), date(2020, 3, 1)],
+        variables={"sst": 20.0, "chl": 0.5, "mld": 30.0, "adt": 0.1},
+    )
+
+
+@pytest.fixture
+def multivar_indexer(parquet_dir, multivar_df):
+    """ParquetIndexer pre-loaded with four variables."""
+    from h2mare.storage.parquet_indexer import ParquetIndexer
+
+    idx = ParquetIndexer(parquet_dir)
+    idx.add_data(multivar_df)
+    return idx
