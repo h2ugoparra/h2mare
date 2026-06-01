@@ -56,6 +56,9 @@ class ParquetStore:
         self.partition_cols = set(partition_by)
         self.physical_schema = None
         self.physical_cols: set[str] = set()
+        # Last "missing variables" set warned about, to avoid re-logging the same
+        # gap on every chunk of a multi-chunk write (e.g. lagging biology vars).
+        self._missing_warned: set[str] = set()
 
         self._init_dataset_metadata()
 
@@ -267,7 +270,9 @@ class ParquetStore:
 
         missing = (physical_cols - self.partition_cols) - set(df_physical.columns)
         if missing:
-            logger.warning(f"Missing variables in new data: {missing}")
+            if missing != self._missing_warned:
+                logger.warning(f"Missing variables in new data: {missing}")
+                self._missing_warned = set(missing)
             df_physical = df_physical.with_columns(
                 [
                     pl.lit(None).cast(self.physical_schema[col]).alias(col)  # type: ignore
@@ -356,7 +361,7 @@ class ParquetStore:
         3. **Overlapping dates** — a coordinate-aligned horizontal merge is performed
            via a DuckDB ``FULL OUTER JOIN`` on ``(time, lon, lat)``.
         """
-        logger.info(f"Saving partitioned parquet to {self.parquet_root}")
+        logger.debug(f"Saving partitioned parquet to {self.parquet_root}")
 
         df = self._resolve_time_col(df, time_mode=time_mode, fmt=fmt)
 
@@ -376,16 +381,16 @@ class ParquetStore:
         if any(self.parquet_root.rglob("*.parquet")):
             is_resolved = self.resolve_dims_overlap(df)
             if is_resolved:
-                logger.success("Overlap resolved. Data added.")
+                logger.debug("Overlap resolved. Data added.")
                 # An overlap merge can still extend coverage (e.g. df spans new
                 # trailing dates that also overlap existing partitions), so refresh
                 # the cached range here too — not only on the append path below.
                 self._extend_dataset_metadata(df)
                 return
-            logger.info("Appending non-overlapping data.")
+            logger.debug("Appending non-overlapping data.")
             df = self._align_to_schema(df)
         else:
-            logger.info("Creating new parquet dataset.")
+            logger.debug("Creating new parquet dataset.")
 
         max_file, max_group = self._max_rows_per_file(df)
         ds.write_dataset(

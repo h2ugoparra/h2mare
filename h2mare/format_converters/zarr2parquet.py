@@ -155,10 +155,8 @@ class Zarr2Parquet(BaseConverter):
 
         try:
             start, end = self._resolve_date_range(None, None)
-            logger.info(
-                f"Appending new dates for '{self.var_key.upper()}': "
-                f"{start.date()} → {end.date()}"
-            )
+            # The per-window header in _convert_window already announces the
+            # range and chunk count, so don't repeat it here.
             ok &= self._convert_window(
                 DateRange(start, end), time_resolution, depth, None
             )
@@ -405,7 +403,7 @@ class Zarr2Parquet(BaseConverter):
                 f"(inferred start {start.date()} > zarr end {end.date()})."
             )
 
-        logger.info(
+        logger.debug(
             f"Inferred Parquet range for '{self.var_key}': "
             f"{start.date()} → {end.date()}"
         )
