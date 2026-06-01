@@ -204,14 +204,14 @@ class TestResolveCompileRange:
         assert pd.Timestamp(result.start) == pd.Timestamp("2026-05-21")
         assert pd.Timestamp(result.end) == pd.Timestamp("2026-05-29")
 
-    def test_raises_when_all_vars_up_to_date(self, compiler):
+    def test_returns_none_when_all_vars_up_to_date(self, compiler):
+        """Up-to-date incremental run is a benign no-op, signalled by None."""
         _setup_compiler(
             compiler,
             source_coverage={"sst": DateRange("2000-01-01", "2026-05-29")},
             h2ds_var_ends={"sst": pd.Timestamp("2026-05-29")},
         )
-        with pytest.raises(ValueError, match="up to date"):
-            compiler._resolve_compile_range(None, None)
+        assert compiler._resolve_compile_range(None, None) is None
 
 
 # ---------------------------------------------------------------------------

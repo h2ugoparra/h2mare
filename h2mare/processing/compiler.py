@@ -162,6 +162,12 @@ class Compiler:
         self._source_coverage = self._compute_source_coverage()
 
         requested_range = self._resolve_compile_range(start, end)
+        if requested_range is None:
+            logger.info(
+                "All configured variables are up to date — nothing to compile. "
+                "Pass explicit --start-date / --end-date to force a range."
+            )
+            return
 
         self.base_grid = GridBuilder(self.bbox, dx, dy).generate_grid()
 
@@ -281,7 +287,7 @@ class Compiler:
         self,
         start: Optional[pd.Timestamp],
         end: Optional[pd.Timestamp],
-    ) -> DateRange:
+    ) -> Optional[DateRange]:
         """
         Resolve the compilation date range.
 
@@ -300,10 +306,12 @@ class Compiler:
             end: Normalised end timestamp, or ``None`` to infer.
 
         Returns:
-            Resolved :class:`DateRange`.
+            Resolved :class:`DateRange`, or ``None`` when every variable is
+            already up to date in incremental mode (a clean no-op — the caller
+            should skip compilation rather than treat it as an error).
 
         Raises:
-            ValueError: If no source variable has any data to compile.
+            ValueError: If explicit dates are given but invalid (start > end).
         """
         if start is not None or end is not None:
             result = resolve_date_range(self.var_key, start, end)
@@ -328,10 +336,10 @@ class Compiler:
                 logger.debug(f"{vkey}: up to date ({src_cov.end.date()}), skipping.")
 
         if not ranges:
-            raise ValueError(
-                "All configured variables are up to date — nothing to compile. "
-                "Pass explicit --start-date / --end-date to force a range."
-            )
+            # Benign no-op: nothing new to compile. Signal with None so the
+            # caller can skip cleanly instead of raising (a scheduled run with
+            # no new source data is success, not failure).
+            return None
 
         inferred = DateRange(
             start=min(r.start for r in ranges),
