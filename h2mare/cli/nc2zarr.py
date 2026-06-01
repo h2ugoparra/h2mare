@@ -38,7 +38,6 @@ from loguru import logger
 
 from h2mare.config import get_settings
 from h2mare.format_converters.netcdf2zarr import Netcdf2Zarr
-from h2mare.utils.logging import add_file_logger
 
 app = typer.Typer(
     help="Convert downloaded NetCDF/GRIB files to Zarr without re-downloading."
@@ -70,9 +69,6 @@ def convert(
     """Convert downloaded raw NetCDF/GRIB files to Zarr for one or more variables."""
 
     base_dir = input_root if input_root is not None else get_settings().DOWNLOADS_DIR
-
-    log_path = get_settings().LOGS_DIR / f"{Path(__file__).stem}.log"
-    add_file_logger(log_path)
 
     for var in var_keys:
         var_config = get_settings().app_config.variables.get(var)

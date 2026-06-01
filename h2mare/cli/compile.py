@@ -24,7 +24,6 @@ import pandas as pd
 import typer
 
 from h2mare.config import get_settings
-from h2mare.utils.logging import add_file_logger
 
 app = typer.Typer()
 
@@ -67,9 +66,6 @@ def compile(
     ),
 ) -> None:
     """Merge per-variable Zarr stores into the unified h2ds compiled dataset."""
-
-    log_path = get_settings().LOGS_DIR / "h2mare.log"
-    add_file_logger(log_path)
 
     if bool(start_date) ^ bool(end_date):
         typer.echo(

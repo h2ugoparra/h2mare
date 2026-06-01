@@ -7,12 +7,20 @@ from h2mare.cli.compile import compile
 from h2mare.cli.main import run
 from h2mare.cli.nc2zarr import convert
 from h2mare.cli.zarr2parquet import parquet
+from h2mare.utils.logging import configure_logging
 
 app = typer.Typer(
     name="h2mare",
     help="Climate and ocean data pipeline — download, convert, and inspect.",
     no_args_is_help=True,
 )
+
+
+@app.callback()
+def _configure() -> None:
+    """Configure logging once for every h2mare command."""
+    configure_logging()
+
 
 app.command("run", help="Download and convert data for one or more variable keys.")(run)
 app.command(

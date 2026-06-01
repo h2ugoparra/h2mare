@@ -29,7 +29,6 @@ Examples
     uv run h2mare run
 """
 
-import logging
 from pathlib import Path
 from typing import List, Optional
 
@@ -39,7 +38,6 @@ import typer
 from h2mare.config import get_settings
 from h2mare.downloader.registry import DOWNLOADER_REGISTRY
 from h2mare.pipeline_manager import PipelineManager
-from h2mare.utils.logging import add_file_logger
 
 app = typer.Typer()
 
@@ -126,10 +124,6 @@ def run(
     ),
 ) -> None:
     """Download and convert climate/ocean data for one or more variable keys."""
-
-    log_path = get_settings().LOGS_DIR / "h2mare.log"
-    add_file_logger(log_path)
-    logging.getLogger("urllib3.connectionpool").setLevel(logging.ERROR)
 
     # Validate date arguments
     if bool(start_date) ^ bool(end_date):
