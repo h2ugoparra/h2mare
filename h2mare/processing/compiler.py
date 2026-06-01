@@ -114,6 +114,9 @@ class Compiler:
         self.date_format: Literal["year", "date", "yearmonth"] = date_format
 
         self.catalog = ZarrCatalog(self.var_key)
+        # Cache of per-variable non-null end dates in h2ds, filled lazily on the
+        # first incremental range resolution (one store scan per run).
+        self._nonnull_ends_cache: Optional[dict[str, pd.Timestamp]] = None
 
     def run(
         self,
@@ -162,6 +165,12 @@ class Compiler:
         self._source_coverage = self._compute_source_coverage()
 
         requested_range = self._resolve_compile_range(start, end)
+        if requested_range is None:
+            logger.info(
+                "All configured variables are up to date — nothing to compile. "
+                "Pass explicit --start-date / --end-date to force a range."
+            )
+            return
 
         self.base_grid = GridBuilder(self.bbox, dx, dy).generate_grid()
 
@@ -238,50 +247,63 @@ class Compiler:
                 logger.warning(f"No source coverage found for '{vkey}' — skipping.")
         return result
 
+    def _h2ds_nonnull_ends(self) -> dict[str, pd.Timestamp]:
+        """
+        Last non-null date in h2ds for each source var_key's representative column.
+
+        Computed once per run and cached. The representative is
+        ``variables_to_compile[0]``; by config convention all of a var_key's
+        compiled columns share the same dates, so one column dates the group.
+        Uses :meth:`ZarrCatalog.get_vars_nonnull_end` (a single newest-first
+        scan) so the whole set costs one pass over the most recent h2ds file.
+        """
+        if self._nonnull_ends_cache is None:
+            reps: list[str] = []
+            for vk in self._source_coverage:
+                cols = self.app_config.variables[vk].variables_to_compile or []
+                if cols:
+                    reps.append(cols[0])
+            self._nonnull_ends_cache = self.catalog.get_vars_nonnull_end(
+                sorted(set(reps))
+            )
+        return self._nonnull_ends_cache
+
     def _get_h2ds_var_end(self, vkey: str) -> Optional[pd.Timestamp]:
         """
-        Query h2ds for the last compiled date of *vkey*.
+        Last compiled date of *vkey* in h2ds, measured by real (non-null) data.
 
-        Tries three strategies in order:
-        1. Configured source variable names (``app_config.variables[vkey].variables``)
-           — covers variables processed by ``compile_default``.
-        2. ``{vkey}_*`` prefix match — covers depth-sliced variables whose h2ds
-           names are ``thetao_100``, ``thetao_200``, etc.
-        3. Global h2ds end date — conservative fallback so an unrecognised naming
-           convention never causes a 1998 recompile.
+        Keyed off the compiled column names (``variables_to_compile``), not the
+        raw source variable names, and uses non-null coverage rather than the
+        h2ds file end. This is what lets a lagging variable (e.g. eddies, whose
+        columns are NaN-padded out to the global h2ds end) be detected as behind
+        and backfilled when its source advances — even within the already-written
+        date range.
 
-        Returns ``None`` when h2ds is empty (fresh install).
+        Returns:
+            The variable's last non-null date in h2ds; the file-level end as a
+            conservative fallback if the column exists but the non-null scan
+            found nothing; or ``None`` when the column is absent from h2ds
+            (never compiled → caller backfills from the source start).
         """
-        var_names: list[str] = list(
-            getattr(self.app_config.variables.get(vkey), "variables", None) or []
-        )
-        for vn in var_names:
-            cov = self.catalog.get_var_time_coverage(vn)
-            if cov is not None:
-                return cov.end
+        cols = self.app_config.variables[vkey].variables_to_compile or []
+        if not cols:
+            return None
+        rep = cols[0]
 
-        # Depth-sliced: try "{vkey}_" prefix
-        df = self.catalog.df
-        if not df.empty and "variables" in df.columns:
-            prefix = f"{vkey}_"
-            mask = df["variables"].apply(
-                lambda vs: (
-                    isinstance(vs, list) and any(v.startswith(prefix) for v in vs)
-                )
-            )
-            sub = df[mask]
-            if not sub.empty:
-                return pd.Timestamp(sub["end_date"].max())
+        end = self._h2ds_nonnull_ends().get(rep)
+        if end is not None:
+            return end
 
-        # Fallback: global h2ds end (avoids recompiling from source start)
-        global_cov = self.catalog.get_time_coverage()
-        return global_cov.end if global_cov is not None else None
+        # Column present in h2ds but no non-null data found: stay conservative
+        # (file end) rather than forcing a full recompile from the source start.
+        cov = self.catalog.get_var_time_coverage(rep)
+        return cov.end if cov is not None else None
 
     def _resolve_compile_range(
         self,
         start: Optional[pd.Timestamp],
         end: Optional[pd.Timestamp],
-    ) -> DateRange:
+    ) -> Optional[DateRange]:
         """
         Resolve the compilation date range.
 
@@ -300,10 +322,12 @@ class Compiler:
             end: Normalised end timestamp, or ``None`` to infer.
 
         Returns:
-            Resolved :class:`DateRange`.
+            Resolved :class:`DateRange`, or ``None`` when every variable is
+            already up to date in incremental mode (a clean no-op — the caller
+            should skip compilation rather than treat it as an error).
 
         Raises:
-            ValueError: If no source variable has any data to compile.
+            ValueError: If explicit dates are given but invalid (start > end).
         """
         if start is not None or end is not None:
             result = resolve_date_range(self.var_key, start, end)
@@ -312,6 +336,8 @@ class Compiler:
             return result
 
         ranges: list[DateRange] = []
+        compiling: list[str] = []
+        up_to_date: list[str] = []
         for vkey, src_cov in self._source_coverage.items():
             h2ds_var_end = self._get_h2ds_var_end(vkey)
             var_start = (
@@ -321,17 +347,21 @@ class Compiler:
             )
             if var_start <= src_cov.end:
                 ranges.append(DateRange(start=var_start, end=src_cov.end))
-                logger.debug(
-                    f"{vkey}: compiling {var_start.date()} → {src_cov.end.date()}"
-                )
+                compiling.append(f"{vkey} ({var_start.date()}→{src_cov.end.date()})")
             else:
-                logger.debug(f"{vkey}: up to date ({src_cov.end.date()}), skipping.")
+                up_to_date.append(vkey)
+
+        # One summary line each instead of a line per variable.
+        if up_to_date:
+            logger.debug(f"Up to date, skipping: {', '.join(sorted(up_to_date))}")
+        if compiling:
+            logger.debug(f"Compiling: {', '.join(compiling)}")
 
         if not ranges:
-            raise ValueError(
-                "All configured variables are up to date — nothing to compile. "
-                "Pass explicit --start-date / --end-date to force a range."
-            )
+            # Benign no-op: nothing new to compile. Signal with None so the
+            # caller can skip cleanly instead of raising (a scheduled run with
+            # no new source data is success, not failure).
+            return None
 
         inferred = DateRange(
             start=min(r.start for r in ranges),
@@ -388,7 +418,9 @@ class Compiler:
             if date_range.overlaps(env_daterange):
                 return True
             else:
-                logger.warning(f"Skipping {var_key}: dates out of range.")
+                # Expected during incremental backfill: vars already up to date
+                # don't overlap the union window. Not a warning.
+                logger.debug(f"Skipping {var_key}: dates out of range.")
                 return False
         return False
 

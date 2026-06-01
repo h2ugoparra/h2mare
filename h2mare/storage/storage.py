@@ -31,7 +31,7 @@ def write_append_zarr(
         path: Destination zarr path, built by the caller via ``ZarrCatalog.build_file_path()``
     """
     if path.exists():
-        logger.warning(f"{path} already exists.")
+        logger.debug(f"{path.name} exists — appending.")
         _append_data(var_key, ds, path)
 
     else:
@@ -179,10 +179,18 @@ def _resolve_overlap(ds_new: xr.Dataset, path: Path) -> Optional[xr.Dataset]:
     if ds_old_vars != ds_new_vars:
         only_in_old = ds_old_vars - ds_new_vars
         only_in_new = ds_new_vars - ds_old_vars
-        logger.warning(
-            f"Variable mismatch between existing zarr and new data. "
-            f"Only in existing: {only_in_old}. Only in new: {only_in_new}."
-        )
+        # A new chunk carrying a subset of the existing variables is the normal
+        # backfill case (only_in_old populated, only_in_new empty) — log it at
+        # debug. Only genuinely new/unexpected variables warrant a warning.
+        if only_in_new:
+            logger.warning(
+                f"New variables not in existing zarr: {sorted(only_in_new)}."
+            )
+        else:
+            logger.debug(
+                f"Backfilling subset; columns held back as existing: "
+                f"{len(only_in_old)} not in new data."
+            )
 
     daterange_old = DateRange.from_dataset(ds_old)
     daterange_new = DateRange.from_dataset(ds_new)
@@ -193,20 +201,18 @@ def _resolve_overlap(ds_new: xr.Dataset, path: Path) -> Optional[xr.Dataset]:
         )
 
     if daterange_old == daterange_new and ds_old_vars == ds_new_vars:
-        logger.warning(
-            f"Full temporal overlap between {path} and new data. Replacing entirely."
-        )
+        logger.info(f"Full overlap with {path.name} — replacing entirely.")
         ds_old.close()
         return None
 
     if daterange_old.overlaps(daterange_new):
-        logger.warning(f"Temporal overlap between {path} and new data.")
+        logger.debug(f"Temporal overlap with {path.name} — merging.")
 
         if (
             daterange_new.start <= daterange_old.start
             and daterange_new.end >= daterange_old.end
         ):
-            logger.warning("New data fully contains existing data. Replacing entirely.")
+            logger.info("New data fully contains existing data — replacing entirely.")
             ds_old.close()
             return None
 
