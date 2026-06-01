@@ -102,16 +102,16 @@ def parquet(
             "existing partition. Cannot be combined with -v."
         ),
     ),
-    no_parquet_backup: bool = typer.Option(
+    parquet_backup: bool = typer.Option(
         False,
-        "--no-parquet-backup",
+        "--parquet-backup",
         is_flag=True,
-        help="Skip copying the Parquet output to the remote store.",
+        help="Copy the Parquet output to the remote store.",
     ),
     parquet_backup_dir: Optional[Path] = typer.Option(
         None,
         "--parquet-backup-dir",
-        help="Override destination for the Parquet backup (defaults to STORE_ROOT/parquet).",
+        help="Override destination for the Parquet backup (only used with --parquet-backup; defaults to STORE_ROOT/parquet).",
     ),
 ) -> None:
     """Convert compiled Zarr stores to Hive-partitioned Parquet for one or more variable keys."""
@@ -182,7 +182,7 @@ def parquet(
                 end_date=end_date,
                 variables=variables,
             )
-            if not no_parquet_backup:
+            if parquet_backup:
                 converter.sync_data(remote_root=parquet_backup_dir)
         except ValueError as e:
             logger.error(f"add-var failed: {e}")
@@ -207,7 +207,7 @@ def parquet(
                 store_root=store_path,
             )
             converter.run(start_date=start_date, end_date=end_date, depth=depth)
-            if not no_parquet_backup:
+            if parquet_backup:
                 converter.sync_data(remote_root=parquet_backup_dir)
         except ValueError as e:
             logger.error(f"Skipping '{key}': {e}")

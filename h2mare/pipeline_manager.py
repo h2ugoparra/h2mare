@@ -24,8 +24,8 @@ class PipelineManager:
         no_convert: bool = False,
         no_compile: bool = False,
         no_parquet: bool = False,
-        no_zarr_backup: bool = False,
-        no_parquet_backup: bool = False,
+        h2ds_zarr_backup: bool = False,
+        h2ds_parquet_backup: bool = False,
         zarr_backup_dir: Optional[Path] = None,
         parquet_backup_dir: Optional[Path] = None,
     ):
@@ -39,8 +39,8 @@ class PipelineManager:
         self.no_convert = no_convert
         self.no_compile = no_compile
         self.no_parquet = no_parquet
-        self.no_zarr_backup = no_zarr_backup
-        self.no_parquet_backup = no_parquet_backup
+        self.h2ds_zarr_backup = h2ds_zarr_backup
+        self.h2ds_parquet_backup = h2ds_parquet_backup
         self.zarr_backup_dir = zarr_backup_dir
         self.parquet_backup_dir = parquet_backup_dir
 
@@ -117,7 +117,7 @@ class PipelineManager:
                     start_date=self.start_date,
                     end_date=self.end_date,
                     var_keys=variables,
-                    no_zarr_backup=self.no_zarr_backup,
+                    zarr_backup=self.h2ds_zarr_backup,
                     zarr_backup_dir=self.zarr_backup_dir,
                 )
             except Exception as e:
@@ -142,7 +142,7 @@ class PipelineManager:
                     start_date=self.start_date,
                     end_date=self.end_date,
                 )
-                if not self.no_parquet_backup:
+                if self.h2ds_parquet_backup:
                     converter.sync_data(remote_root=self.parquet_backup_dir)
             except Exception as e:
                 logger.opt(exception=True).error(f"Parquet conversion step failed: {e}")
