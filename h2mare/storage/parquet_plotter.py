@@ -83,7 +83,7 @@ class ParquetPlotter:
                 time_col=self._idx.time_col,
                 lon_col=lon_col,
                 lat_col=lat_col,
-            ).collect()
+            ).collect(engine="streaming")
         return self._cache[key]
 
     def clear_cache(self) -> None:

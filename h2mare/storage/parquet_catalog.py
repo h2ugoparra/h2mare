@@ -228,7 +228,9 @@ class ParquetCatalog:
         columns: Optional[Union[str, list[str]]] = None,
     ) -> pl.DataFrame:
         """Return a collected DataFrame."""
-        return self.scan(dates=dates, bbox=bbox, columns=columns).collect()
+        return self.scan(dates=dates, bbox=bbox, columns=columns).collect(
+            engine="streaming"
+        )
 
     # --- Visualization ---
 
