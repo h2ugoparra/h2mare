@@ -116,9 +116,6 @@ def parquet(
 ) -> None:
     """Convert compiled Zarr stores to Hive-partitioned Parquet for one or more variable keys."""
 
-    log_path = get_settings().LOGS_DIR / "h2mare.log"
-    logger.add(log_path, level="INFO")
-
     # ---- Validate date arguments ----
     if bool(start_date) ^ bool(end_date):
         typer.echo(

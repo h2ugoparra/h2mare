@@ -442,10 +442,3 @@ class Compiler:
             logger.exception(f"Failed to copy {remote_path} to {local_path}: {e}")
 
         logger.success("File copied!")
-
-
-if __name__ == "__main__":
-    log_path = get_settings().LOGS_DIR / f"{Path(__file__).stem}.log"
-    logger.add(log_path, level="INFO")
-
-    Compiler().run(start_date="2025-01-01", end_date="2025-01-31")

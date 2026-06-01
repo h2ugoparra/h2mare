@@ -513,12 +513,3 @@ def process_fsle(
         xmin, ymin, xmax, ymax = var_config.bbox
         return ds.sel(lon=slice(xmin, xmax), lat=slice(ymin, ymax))
     return ds
-
-
-if __name__ == "__main__":
-    log_path = get_settings().LOGS_DIR / f"{Path(__file__).stem}.log"
-    logger.add(log_path, level="INFO")
-
-    ed_proc = EDDIESProcessor()
-    ds = ed_proc.run()
-    logger.debug(ds)

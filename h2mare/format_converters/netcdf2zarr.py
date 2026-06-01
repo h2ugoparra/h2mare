@@ -427,11 +427,3 @@ class Netcdf2Zarr(BaseConverter):
         elif isinstance(period, tuple) and len(period) == 2:
             return rf"{str(period[0])}\{str(period[1])}"
         raise ValueError("Input must be a int or a 2-tuple of ints")
-
-
-if __name__ == "__main__":
-    log_path = get_settings().LOGS_DIR / f"{Path(__file__).stem}.log"
-    logger.add(log_path, level="INFO")
-
-    var_key = "eddies"
-    Netcdf2Zarr(var_key).run()

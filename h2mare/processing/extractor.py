@@ -23,7 +23,7 @@ from scipy.spatial import KDTree
 from h2mare import AppConfig, get_settings
 from h2mare.storage.zarr_catalog import ZarrCatalog
 from h2mare.types import BBox
-from h2mare.utils.logging_utils import log_time
+from h2mare.utils.logging import log_time
 from h2mare.utils.paths import resolve_store_path
 
 _AUTO_INDEX_SENTINEL = "__row_id__"

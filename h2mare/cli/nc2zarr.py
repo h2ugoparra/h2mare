@@ -70,9 +70,6 @@ def convert(
 
     base_dir = input_root if input_root is not None else get_settings().DOWNLOADS_DIR
 
-    log_path = get_settings().LOGS_DIR / f"{Path(__file__).stem}.log"
-    logger.add(log_path, level="INFO")
-
     for var in var_keys:
         var_config = get_settings().app_config.variables.get(var)
         if var_config is None:

@@ -1,8 +1,8 @@
-"""Tests for utils/logging_utils.py."""
+"""Tests for utils/logging.py."""
 
 from unittest.mock import patch
 
-from h2mare.utils.logging_utils import log_time
+from h2mare.utils.logging import log_time
 
 
 class TestLogTime:
@@ -18,10 +18,8 @@ class TestLogTime:
         def fast():
             return "done"
 
-        with patch(
-            "h2mare.utils.logging_utils.time.perf_counter", side_effect=[0.0, 1.5]
-        ):
-            with patch("h2mare.utils.logging_utils.logger.info") as mock_log:
+        with patch("h2mare.utils.logging.time.perf_counter", side_effect=[0.0, 1.5]):
+            with patch("h2mare.utils.logging.logger.info") as mock_log:
                 fast()
         mock_log.assert_called_once()
         assert "secs" in mock_log.call_args[0][0]
@@ -31,10 +29,8 @@ class TestLogTime:
         def slow():
             return "done"
 
-        with patch(
-            "h2mare.utils.logging_utils.time.perf_counter", side_effect=[0.0, 125.0]
-        ):
-            with patch("h2mare.utils.logging_utils.logger.info") as mock_log:
+        with patch("h2mare.utils.logging.time.perf_counter", side_effect=[0.0, 125.0]):
+            with patch("h2mare.utils.logging.logger.info") as mock_log:
                 slow()
         mock_log.assert_called_once()
         assert "min" in mock_log.call_args[0][0]
