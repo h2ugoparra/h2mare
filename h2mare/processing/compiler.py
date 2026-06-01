@@ -336,6 +336,8 @@ class Compiler:
             return result
 
         ranges: list[DateRange] = []
+        compiling: list[str] = []
+        up_to_date: list[str] = []
         for vkey, src_cov in self._source_coverage.items():
             h2ds_var_end = self._get_h2ds_var_end(vkey)
             var_start = (
@@ -345,11 +347,15 @@ class Compiler:
             )
             if var_start <= src_cov.end:
                 ranges.append(DateRange(start=var_start, end=src_cov.end))
-                logger.debug(
-                    f"{vkey}: compiling {var_start.date()} → {src_cov.end.date()}"
-                )
+                compiling.append(f"{vkey} ({var_start.date()}→{src_cov.end.date()})")
             else:
-                logger.debug(f"{vkey}: up to date ({src_cov.end.date()}), skipping.")
+                up_to_date.append(vkey)
+
+        # One summary line each instead of a line per variable.
+        if up_to_date:
+            logger.debug(f"Up to date, skipping: {', '.join(sorted(up_to_date))}")
+        if compiling:
+            logger.debug(f"Compiling: {', '.join(compiling)}")
 
         if not ranges:
             # Benign no-op: nothing new to compile. Signal with None so the
@@ -412,7 +418,9 @@ class Compiler:
             if date_range.overlaps(env_daterange):
                 return True
             else:
-                logger.warning(f"Skipping {var_key}: dates out of range.")
+                # Expected during incremental backfill: vars already up to date
+                # don't overlap the union window. Not a warning.
+                logger.debug(f"Skipping {var_key}: dates out of range.")
                 return False
         return False
 
