@@ -125,7 +125,7 @@ class Compiler:
         var_keys: Optional[list[str]] = None,
         dx: float = DX,
         dy: float = DY,
-        no_zarr_backup: bool = False,
+        zarr_backup: bool = False,
         zarr_backup_dir: Optional[Path] = None,
     ) -> None:
         """
@@ -145,7 +145,7 @@ class Compiler:
                 variables (incremental mode).
             dx: Output grid cell width in degrees. Defaults to 0.25.
             dy: Output grid cell height in degrees. Defaults to 0.25.
-            no_zarr_backup: Skip copying written zarr files to the local store. Defaults to False.
+            zarr_backup: Copy written zarr files to the local store. Defaults to False.
             zarr_backup_dir: Override destination for the zarr backup. Defaults to local_store_root.
         """
         logger.info(
@@ -227,7 +227,7 @@ class Compiler:
 
         self.catalog.refresh()
 
-        if not no_zarr_backup:
+        if zarr_backup:
             # Backup all written files to local store in one pass — avoids repeated
             # large directory copies after each individual chunk
             for path in written_paths:

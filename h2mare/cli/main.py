@@ -94,33 +94,27 @@ def run(
             "Implied automatically by --no-compile and --no-convert."
         ),
     ),
-    no_backup: bool = typer.Option(
+    h2ds_zarr_backup: bool = typer.Option(
         False,
-        "--no-backup",
+        "--h2ds-zarr-backup",
         is_flag=True,
-        help="Skip both backup steps: zarr files are not copied to the local store and Parquet is not copied to the remote store.",
+        help="Copy the compiled h2ds zarr files to the local backup store.",
     ),
-    no_zarr_backup: bool = typer.Option(
+    h2ds_parquet_backup: bool = typer.Option(
         False,
-        "--no-zarr-backup",
+        "--h2ds-parquet-backup",
         is_flag=True,
-        help="Skip copying compiled zarr files to the local backup store.",
+        help="Copy the h2ds Parquet output to the remote store.",
     ),
-    no_parquet_backup: bool = typer.Option(
-        False,
-        "--no-parquet-backup",
-        is_flag=True,
-        help="Skip copying the Parquet output to the remote store.",
-    ),
-    zarr_backup_dir: Optional[Path] = typer.Option(
+    h2ds_zarr_backup_dir: Optional[Path] = typer.Option(
         None,
-        "--zarr-backup-dir",
-        help="Override destination directory for the zarr backup.",
+        "--h2ds-zarr-backup-dir",
+        help="Override destination directory for the zarr backup (only used with --h2ds-zarr-backup).",
     ),
-    parquet_backup_dir: Optional[Path] = typer.Option(
+    h2ds_parquet_backup_dir: Optional[Path] = typer.Option(
         None,
-        "--parquet-backup-dir",
-        help="Override destination for the Parquet backup.",
+        "--h2ds-parquet-backup-dir",
+        help="Override destination for the Parquet backup (only used with --h2ds-parquet-backup).",
     ),
 ) -> None:
     """Download and convert climate/ocean data for one or more variable keys."""
@@ -172,10 +166,10 @@ def run(
         no_convert=no_convert,
         no_compile=no_compile,
         no_parquet=no_parquet,
-        no_zarr_backup=no_backup or no_zarr_backup,
-        no_parquet_backup=no_backup or no_parquet_backup,
-        zarr_backup_dir=zarr_backup_dir,
-        parquet_backup_dir=parquet_backup_dir,
+        h2ds_zarr_backup=h2ds_zarr_backup,
+        h2ds_parquet_backup=h2ds_parquet_backup,
+        zarr_backup_dir=h2ds_zarr_backup_dir,
+        parquet_backup_dir=h2ds_parquet_backup_dir,
     ).run(variables=selected)
     if not success:
         raise typer.Exit(code=1)
