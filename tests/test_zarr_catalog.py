@@ -1,7 +1,7 @@
 """Tests for ZarrCatalog: build_file_path, dataset column, and provenance sidecars."""
 
 import json
-import pytest
+
 import msgspec
 import numpy as np
 import pandas as pd
@@ -9,7 +9,6 @@ import xarray as xr
 
 from h2mare.models import AppConfig
 from h2mare.storage.zarr_catalog import ZarrCatalog
-
 
 # ---------------------------------------------------------------------------
 # Helpers

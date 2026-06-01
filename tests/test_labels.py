@@ -2,7 +2,6 @@
 
 import numpy as np
 import pandas as pd
-import pytest
 import xarray as xr
 
 from h2mare.types import BBox, DateRange

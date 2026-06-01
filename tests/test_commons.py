@@ -5,8 +5,8 @@ from unittest.mock import patch
 import pandas as pd
 import pytest
 
-from h2mare.utils.date_range import resolve_date_range
 from h2mare.types import DateRange
+from h2mare.utils.date_range import resolve_date_range
 
 
 class TestResolveDateRange:

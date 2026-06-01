@@ -1,10 +1,9 @@
 """Tests for msgspec-based data models (KeyVarConfigEntry, AppConfig)."""
 
-import pytest
 import msgspec
+import pytest
 
 from h2mare.models import AppConfig, KeyVarConfigEntry, SecretsConfig
-
 
 # ---------------------------------------------------------------------------
 # Shared fixtures

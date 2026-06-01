@@ -1,18 +1,18 @@
 """Tests for parquet_helpers utility functions."""
 
-import pytest
-import polars as pl
-import numpy as np
 from datetime import date
 
-from h2mare.storage.parquet_helpers import (
-    polars_float64_to_float32,
-    aggregate_by_time,
-    aggregate_by_space_time,
-    _required_columns,
-)
-from h2mare.utils.plot import split_by_group, df_to_grid
+import numpy as np
+import polars as pl
+import pytest
 
+from h2mare.storage.parquet_helpers import (
+    _required_columns,
+    aggregate_by_space_time,
+    aggregate_by_time,
+    polars_float64_to_float32,
+)
+from h2mare.utils.plot import df_to_grid, split_by_group
 
 # ---------------------------------------------------------------------------
 # polars_float64_to_float32

@@ -1,14 +1,13 @@
 """Tests for DateRange and BBox."""
 
-import numpy as np
-import pytest
-import polars as pl
-import pandas as pd
-import xarray as xr
 from datetime import date, datetime
 
-from h2mare.types import DateRange, BBox, DownloadTask
+import pandas as pd
+import polars as pl
+import pytest
+import xarray as xr
 
+from h2mare.types import BBox, DateRange, DownloadTask
 
 # ---------------------------------------------------------------------------
 # DateRange

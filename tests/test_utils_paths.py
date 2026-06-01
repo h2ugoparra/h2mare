@@ -1,10 +1,8 @@
 """Tests for utils/paths.py."""
 
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import msgspec
-import pytest
 
 from h2mare.models import AppConfig
 from h2mare.utils.paths import resolve_download_path, resolve_store_path

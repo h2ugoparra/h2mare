@@ -1,7 +1,6 @@
 """Tests for CMEMSDownloader pattern generation and task creation logic."""
 
 import json
-from pathlib import Path
 from unittest.mock import patch
 
 import msgspec
@@ -15,7 +14,6 @@ from h2mare.downloader.cmems_downloader import (
 )
 from h2mare.models import AppConfig
 from h2mare.types import DateRange, DownloadTask, TimeResolution
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -293,7 +291,9 @@ class TestExecuteTask:
             dataset_type="rep",
         )
         with (
-            patch.object(dl, "download_subset", side_effect=ConnectionError("API down")),
+            patch.object(
+                dl, "download_subset", side_effect=ConnectionError("API down")
+            ),
             patch.object(dl, "_retry_call", **self._NO_RETRY),
         ):
             with pytest.raises(ConnectionError, match="API down"):

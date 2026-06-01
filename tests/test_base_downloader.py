@@ -9,7 +9,6 @@ import pytest
 from h2mare.downloader.base import BaseDownloader
 from h2mare.models import AppConfig
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

@@ -1,14 +1,14 @@
 """Tests for AVISODownloader.get_rep_availability and get_nrt_availability."""
 
 from unittest.mock import MagicMock, patch
-import pytest
+
 import msgspec
 import pandas as pd
+import pytest
 
-from h2mare.models import AppConfig
 from h2mare.downloader.aviso_downloader import AVISODownloader
+from h2mare.models import AppConfig
 from h2mare.types import DateRange
-
 
 # ---------------------------------------------------------------------------
 # Config helpers
@@ -182,8 +182,6 @@ class TestGetRepAvailabilityCaching:
 class TestWarnIfRepUpdated:
     def test_warning_emitted_when_api_end_date_is_newer(self, dl, tmp_path):
         import pandas as pd
-        import numpy as np
-        import xarray as xr
 
         # Catalog shows rep data ending 2022-12-31
         catalog_df = pd.DataFrame(
@@ -237,6 +235,7 @@ class TestWarnIfRepUpdated:
 
     def test_no_warning_when_catalog_is_empty(self, dl):
         import pandas as pd
+
         from h2mare.storage.zarr_catalog import ZarrCatalog
 
         with patch.object(

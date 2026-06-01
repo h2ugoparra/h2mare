@@ -1,11 +1,10 @@
 """Shared fixtures for h2mare test suite."""
 
-import pytest
-import numpy as np
-import pandas as pd
-import polars as pl
 from datetime import date
 
+import numpy as np
+import polars as pl
+import pytest
 
 # ---------------------------------------------------------------------------
 # DataFrame factories

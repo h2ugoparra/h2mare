@@ -1,7 +1,6 @@
 """Tests for config.py — Settings class."""
 
 import warnings
-from pathlib import Path
 
 import pytest
 

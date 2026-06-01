@@ -4,9 +4,9 @@ from datetime import date, datetime
 
 import polars as pl
 import pytest
+from conftest import make_grid_df
 
 from h2mare.format_converters.parquet2csv import parquet2csv
-from conftest import make_grid_df
 
 
 @pytest.fixture

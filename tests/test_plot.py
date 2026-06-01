@@ -1,11 +1,11 @@
 """Tests for plot_maps — data validation and time_col auto-derive logic."""
 
-import pytest
-import polars as pl
 from datetime import date
 
 # Use non-interactive backend before any matplotlib/cartopy import
 import matplotlib
+import polars as pl
+import pytest
 
 matplotlib.use("Agg")
 
@@ -109,7 +109,7 @@ class TestPlotMapsAutoDerive:
 
     def test_season_labels_correct(self):
         """Derived season values match meteorological convention."""
-        from h2mare.utils.plot import plot_maps, split_by_group
+        from h2mare.utils.plot import split_by_group
 
         month_to_season = {
             12: "winter",

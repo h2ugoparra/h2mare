@@ -171,7 +171,9 @@ def parquet(
                 raise typer.Exit(code=1)
             variables.extend(v2c)
 
-        logger.info(f"add-var: merging {variables} into h2ds Parquet under {parquet_base}")
+        logger.info(
+            f"add-var: merging {variables} into h2ds Parquet under {parquet_base}"
+        )
         try:
             converter = Zarr2Parquet(
                 var_key="h2ds",

@@ -1,7 +1,5 @@
 """Tests for processing/compiler.py — Compiler class and helpers."""
 
-import shutil
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import msgspec
@@ -17,7 +15,6 @@ from h2mare.processing.compiler import (
     postprocess_sst_fdist,
 )
 from h2mare.types import DateRange
-
 
 # ---------------------------------------------------------------------------
 # Helpers

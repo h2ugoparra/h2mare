@@ -8,7 +8,6 @@ import pytest
 from h2mare.storage.coverage import get_store_coverage, split_time_range
 from h2mare.types import DateRange, TimeResolution
 
-
 # ---------------------------------------------------------------------------
 # split_time_range
 # ---------------------------------------------------------------------------

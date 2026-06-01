@@ -1,7 +1,6 @@
 """Tests for write_append_zarr and atomic swap behaviour in storage.py."""
 
 import shutil
-from pathlib import Path
 from unittest.mock import patch
 
 import numpy as np
@@ -10,7 +9,6 @@ import pytest
 import xarray as xr
 
 from h2mare.storage.storage import _append_data, write_append_zarr
-
 
 # ---------------------------------------------------------------------------
 # Helpers

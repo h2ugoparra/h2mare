@@ -16,7 +16,6 @@ from h2mare.processing.core.fronts import (
     filt5,
 )
 
-
 # ---------------------------------------------------------------------------
 # filt5
 # ---------------------------------------------------------------------------
@@ -220,7 +219,8 @@ class TestProcessDaily:
                 return_value=(latlon_arr, sea_mask),
             ),
             patch(
-                "h2mare.processing.core.fronts.BOA_application", return_value=fake_fronts
+                "h2mare.processing.core.fronts.BOA_application",
+                return_value=fake_fronts,
             ),
         ):
             result = fp._process_daily(da, date)
@@ -258,7 +258,8 @@ class TestProcessDaily:
                 return_value=(latlon_arr, sea_mask),
             ),
             patch(
-                "h2mare.processing.core.fronts.BOA_application", return_value=fake_fronts
+                "h2mare.processing.core.fronts.BOA_application",
+                return_value=fake_fronts,
             ),
         ):
             result = fp._process_daily(da, date)
