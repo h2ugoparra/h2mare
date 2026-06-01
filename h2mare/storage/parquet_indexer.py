@@ -159,6 +159,9 @@ class ParquetIndexer:
     ) -> dict[str, DateRange]:
         return self._store.get_var_coverage(columns)
 
+    def get_var_coverage_end(self, columns: list[str]) -> dict:
+        return self._store.get_var_coverage_end(columns)
+
     def get_geoextent(self) -> BBox | None:
         return self._store.get_geoextent()
 

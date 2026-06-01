@@ -123,6 +123,9 @@ class Zarr2Parquet(BaseConverter):
             variables: Subset of variable names to read from the Zarr and merge
                 into the existing Parquet store (add-var mode).
         """
+        logger.info(
+            f"Initializing Zarr->Parquet conversion for variable key: {self.var_key.upper()}"
+        )
         # Mode 1 — add-var: reprocess the full Zarr range so the overlap resolver
         # can JOIN the new columns into every partition.
         if variables is not None and start_date is None and end_date is None:
@@ -265,7 +268,11 @@ class Zarr2Parquet(BaseConverter):
         if not reps:
             return []
 
-        parquet_var_cov = self.indexer.get_var_coverage(list(reps.values()))
+        # Only the last non-null date of each representative column is needed to
+        # date its group, so use the newest-first scan: it short-circuits after
+        # the latest partition when nothing lags, instead of reading the whole
+        # store on every incremental run.
+        parquet_var_end = self.indexer.get_var_coverage_end(list(reps.values()))
 
         groups: dict[tuple[pd.Timestamp, pd.Timestamp], set[str]] = defaultdict(set)
         for vkey, rep in reps.items():
@@ -276,10 +283,10 @@ class Zarr2Parquet(BaseConverter):
             # the append regime's responsibility.
             window_end = min(pd.Timestamp(source_cov.end), parquet_end)
 
-            rep_cov = parquet_var_cov.get(rep)
+            rep_end = parquet_var_end.get(rep)
             window_start = (
-                pd.Timestamp(rep_cov.end) + pd.Timedelta(days=1)
-                if rep_cov is not None
+                pd.Timestamp(rep_end) + pd.Timedelta(days=1)
+                if rep_end is not None
                 else pd.Timestamp(source_cov.start)
             )
 

@@ -361,14 +361,18 @@ class TestResolveBackfillGroups:
         *,
         parquet_end: pd.Timestamp,
         zarr_vars: set[str],
-        var_cov: dict,
+        var_end: dict,
     ) -> None:
-        """Wire up the mocked indexer/zarr_repo state the resolver reads."""
+        """Wire up the mocked indexer/zarr_repo state the resolver reads.
+
+        ``var_end`` maps a representative column to its last non-null date in the
+        parquet store, mirroring ``get_var_coverage_end``.
+        """
         z.indexer._dataset_meta_initialized = True
         z.indexer.get_time_coverage.return_value = DateRange(
             pd.Timestamp("1998-01-01"), parquet_end
         )
-        z.indexer.get_var_coverage.return_value = var_cov
+        z.indexer.get_var_coverage_end.return_value = var_end
         z.zarr_repo.get_variables.return_value = zarr_vars
 
     def test_empty_when_store_uninitialized(self, tmp_path):
@@ -383,9 +387,7 @@ class TestResolveBackfillGroups:
             z,
             parquet_end=pd.Timestamp("2021-06-30"),
             zarr_vars={"sst"},
-            var_cov={
-                "sst": DateRange(pd.Timestamp("1998-01-01"), pd.Timestamp("2021-03-31"))
-            },
+            var_end={"sst": pd.Timestamp("2021-03-31")},
         )
         with patch(
             "h2mare.format_converters.zarr2parquet.get_store_coverage"
@@ -410,9 +412,7 @@ class TestResolveBackfillGroups:
             z,
             parquet_end=pd.Timestamp("2021-06-30"),
             zarr_vars={"sst"},
-            var_cov={
-                "sst": DateRange(pd.Timestamp("1998-01-01"), pd.Timestamp("2021-06-30"))
-            },
+            var_end={"sst": pd.Timestamp("2021-06-30")},
         )
         with patch(
             "h2mare.format_converters.zarr2parquet.get_store_coverage"
@@ -429,9 +429,7 @@ class TestResolveBackfillGroups:
             z,
             parquet_end=pd.Timestamp("2021-06-30"),
             zarr_vars={"sst"},
-            var_cov={
-                "sst": DateRange(pd.Timestamp("1998-01-01"), pd.Timestamp("2021-03-31"))
-            },
+            var_end={"sst": pd.Timestamp("2021-03-31")},
         )
         with patch(
             "h2mare.format_converters.zarr2parquet.get_store_coverage"
@@ -451,7 +449,7 @@ class TestResolveBackfillGroups:
             z,
             parquet_end=pd.Timestamp("2021-06-30"),
             zarr_vars={"sst"},
-            var_cov={},  # sst never written to parquet
+            var_end={},  # sst never written to parquet
         )
         with patch(
             "h2mare.format_converters.zarr2parquet.get_store_coverage"
@@ -470,7 +468,7 @@ class TestResolveBackfillGroups:
             z,
             parquet_end=pd.Timestamp("2021-06-30"),
             zarr_vars=set(),  # nothing present
-            var_cov={},
+            var_end={},
         )
         assert z._resolve_backfill_groups() == []
 
