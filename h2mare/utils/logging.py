@@ -2,11 +2,11 @@
 
 A single rolling file — ``LOGS_DIR/h2mare.log`` — captures every run. The
 console keeps loguru's default ``{name}:{function}:{line}`` location for
-interactive debugging; the file format drops it.
+interactive debugging; the file records only time, level, and message.
 
 Call :func:`configure_logging` once per process. The CLI does this in a
-top-level Typer callback so every command logs identically; standalone
-``__main__`` entrypoints call it directly. The call is idempotent.
+top-level Typer callback so every command logs identically. The call is
+idempotent.
 """
 
 from __future__ import annotations
@@ -19,9 +19,9 @@ from typing import Optional
 
 from loguru import logger
 
-# File format mirrors loguru's default minus the {function}:{line} location
-# component, which stays only on the console handler.
-LOG_FILE_FORMAT = "{time:YYYY-MM-DD HH:mm:ss.SSS} | {level: <8} | {name} - {message}"
+# File format keeps only time, level, and message. The source location
+# ({name}:{function}:{line}) stays on the console handler only.
+LOG_FILE_FORMAT = "{time:YYYY-MM-DD HH:mm:ss.SSS} | {level: <8} | {message}"
 
 # Third-party loggers that flood the logs at INFO.
 _NOISY_LOGGERS = ("urllib3.connectionpool",)
