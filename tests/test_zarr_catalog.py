@@ -296,3 +296,81 @@ class TestDatasetColumn:
         df = catalog.df
         assert df["path"].nunique() == 1
         assert len(df) == 2
+
+
+# ---------------------------------------------------------------------------
+# Variable coverage: non-null end + ndarray-cell handling
+# ---------------------------------------------------------------------------
+
+
+def _make_padded_ds(start: str, n_days: int, n_valid: int, var: str) -> xr.Dataset:
+    """Dataset where *var* has real data for the first *n_valid* days, NaN after."""
+    times = pd.date_range(start, periods=n_days, freq="D")
+    data = np.ones((n_days, 3, 3))
+    data[n_valid:] = np.nan
+    return xr.Dataset(
+        {var: (["time", "lat", "lon"], data)},
+        coords={"time": times, "lat": [30.0, 35.0, 40.0], "lon": [-10.0, -5.0, 0.0]},
+    )
+
+
+def _df_for_zarr(zarr_path, variables, end_date) -> pd.DataFrame:
+    """Single-row catalog df. ``variables`` may be a list or ndarray on purpose."""
+    return pd.DataFrame(
+        [
+            {
+                "path": str(zarr_path),
+                "filename": zarr_path.name,
+                "variables": variables,
+                "start_date": pd.Timestamp("2026-01-01"),
+                "end_date": pd.Timestamp(end_date),
+            }
+        ]
+    )
+
+
+class TestVarsNonnullEnd:
+    def test_nonnull_end_ignores_nan_tail(self, tmp_path):
+        # ac_amp has data for 10 days then NaN-padded to 15 (mimics a lagging
+        # variable padded out to the global end by the compiler's outer merge).
+        ds = _make_padded_ds("2026-05-01", n_days=15, n_valid=10, var="ac_amp")
+        zarr_path = _write_zarr(tmp_path, ds, name="h2ds_2026.zarr")
+        catalog = _make_catalog(tmp_path)
+        catalog._df_cache = _df_for_zarr(zarr_path, ["ac_amp"], "2026-05-15")
+
+        result = catalog.get_vars_nonnull_end(["ac_amp"])
+
+        # Real extent is day 10 (2026-05-10), not the file end (2026-05-15).
+        assert result["ac_amp"] == pd.Timestamp("2026-05-10")
+
+    def test_nonnull_end_handles_ndarray_variables_cell(self, tmp_path):
+        # Catalogs loaded from Parquet hold the variables cell as an ndarray.
+        ds = _make_padded_ds("2026-05-01", n_days=15, n_valid=12, var="ac_amp")
+        zarr_path = _write_zarr(tmp_path, ds, name="h2ds_2026.zarr")
+        catalog = _make_catalog(tmp_path)
+        catalog._df_cache = _df_for_zarr(zarr_path, np.array(["ac_amp"]), "2026-05-15")
+
+        result = catalog.get_vars_nonnull_end(["ac_amp"])
+
+        assert result["ac_amp"] == pd.Timestamp("2026-05-12")
+
+    def test_absent_variable_omitted(self, tmp_path):
+        ds = _make_padded_ds("2026-05-01", n_days=5, n_valid=5, var="ac_amp")
+        zarr_path = _write_zarr(tmp_path, ds, name="h2ds_2026.zarr")
+        catalog = _make_catalog(tmp_path)
+        catalog._df_cache = _df_for_zarr(zarr_path, ["ac_amp"], "2026-05-05")
+
+        assert catalog.get_vars_nonnull_end(["not_a_var"]) == {}
+
+    def test_get_var_time_coverage_handles_ndarray_cell(self, tmp_path):
+        # Regression: ndarray cells previously made membership checks always
+        # false, so this silently returned None for disk-loaded catalogs.
+        catalog = _make_catalog(tmp_path)
+        catalog._df_cache = _df_for_zarr(
+            tmp_path / "h2ds_2026.zarr", np.array(["ac_amp", "c_amp"]), "2026-05-15"
+        )
+
+        cov = catalog.get_var_time_coverage("ac_amp")
+
+        assert cov is not None
+        assert cov.end == pd.Timestamp("2026-05-15")

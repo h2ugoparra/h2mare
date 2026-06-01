@@ -215,6 +215,66 @@ class TestResolveCompileRange:
 
 
 # ---------------------------------------------------------------------------
+# Compiler._get_h2ds_var_end
+# ---------------------------------------------------------------------------
+
+
+_EDDIES_ENTRY = {
+    "local_folder": "eddies",
+    "variables": ["amplitude", "speed_average"],  # raw source names
+    "variables_to_compile": ["ac_amp", "c_amp"],  # compiled h2ds names
+    "dataset_id_rep": "aviso-eddies",
+    "source": "aviso",
+    "pattern": r".*",
+    "subset": True,
+    "bbox": (-80, 0, 10, 70),
+}
+
+
+def _compiler_with_eddies(tmp_path):
+    cfg = msgspec.convert(
+        {"variables": {"h2ds": _H2DS_ENTRY, "eddies": _EDDIES_ENTRY}, "secrets": {}},
+        AppConfig,
+    )
+    with patch("h2mare.processing.compiler.ZarrCatalog"):
+        c = Compiler(
+            var_key="h2ds",
+            app_config=cfg,
+            remote_store_root=tmp_path / "remote",
+            local_store_root=tmp_path / "local",
+        )
+    c.var_keys = ["eddies", "h2ds"]
+    c._source_coverage = {"eddies": DateRange("2026-01-01", "2026-05-16")}
+    return c
+
+
+class TestGetH2dsVarEnd:
+    def test_uses_nonnull_end_of_representative_compiled_column(self, tmp_path):
+        """Keyed off variables_to_compile[0], measured by non-null data."""
+        c = _compiler_with_eddies(tmp_path)
+        c.catalog.get_vars_nonnull_end.return_value = {
+            "ac_amp": pd.Timestamp("2026-05-15")
+        }
+        assert c._get_h2ds_var_end("eddies") == pd.Timestamp("2026-05-15")
+        # rep column is the first variables_to_compile entry
+        c.catalog.get_vars_nonnull_end.assert_called_once_with(["ac_amp"])
+
+    def test_falls_back_to_file_end_when_no_nonnull(self, tmp_path):
+        c = _compiler_with_eddies(tmp_path)
+        c.catalog.get_vars_nonnull_end.return_value = {}
+        c.catalog.get_var_time_coverage.return_value = DateRange(
+            "2026-01-01", "2026-05-30"
+        )
+        assert c._get_h2ds_var_end("eddies") == pd.Timestamp("2026-05-30")
+
+    def test_returns_none_when_column_absent(self, tmp_path):
+        c = _compiler_with_eddies(tmp_path)
+        c.catalog.get_vars_nonnull_end.return_value = {}
+        c.catalog.get_var_time_coverage.return_value = None
+        assert c._get_h2ds_var_end("eddies") is None
+
+
+# ---------------------------------------------------------------------------
 # Compiler._has_overlap
 # ---------------------------------------------------------------------------
 

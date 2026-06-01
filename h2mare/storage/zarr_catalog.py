@@ -12,6 +12,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any, Literal, Optional, Sequence, Union
 
+import numpy as np
 import pandas as pd
 import xarray as xr
 from loguru import logger
@@ -23,6 +24,21 @@ from h2mare.utils.datetime_utils import normalize_date
 from h2mare.utils.labels import create_label_from_dataset
 from h2mare.utils.paths import resolve_store_path
 from h2mare.validators import validate_time_resolution, validate_var_key
+
+
+def _variables_list(vs: Any) -> list[str]:
+    """
+    Normalise a catalog ``variables`` cell to a plain list.
+
+    The column round-trips through Parquet, so a freshly scanned catalog holds
+    Python ``list`` objects while one loaded from disk holds ``numpy.ndarray``.
+    Membership checks must handle both (and missing/NaN cells).
+    """
+    if isinstance(vs, np.ndarray):
+        return vs.tolist()
+    if isinstance(vs, (list, tuple)):
+        return list(vs)
+    return []
 
 
 # ================ Convenience functions for quick access ==========================
@@ -704,11 +720,78 @@ class ZarrCatalog:
         df = self.df
         if df.empty or "variables" not in df.columns:
             return None
-        mask = df["variables"].apply(lambda vs: isinstance(vs, list) and var_name in vs)
+        mask = df["variables"].apply(lambda vs: var_name in _variables_list(vs))
         sub = df[mask]
         if sub.empty:
             return None
         return DateRange(sub["start_date"].min(), sub["end_date"].max())
+
+    def get_vars_nonnull_end(self, var_names: Sequence[str]) -> dict[str, pd.Timestamp]:
+        """
+        Last date at which each variable holds a non-null value in the store.
+
+        Unlike :meth:`get_var_time_coverage` — which reports the *file's* date
+        span for any file listing the variable — this reflects where the variable
+        actually has data. That distinction matters for compiled stores where a
+        lagging variable is NaN-padded out to the global end by ``xr.merge``: the
+        file end overstates its real coverage, whereas this method returns the
+        last date with genuine data.
+
+        Files are opened newest-first and scanning stops once every requested
+        variable has been found, so the common case (all variables current)
+        touches only the most recent file. Variables never found non-null — or
+        absent from the store — are omitted from the result.
+
+        Args:
+            var_names: Variables to look up (typically one representative column
+                per source var_key).
+
+        Returns:
+            Mapping of variable name to its last non-null date (normalised to
+            midnight). Empty when the store has no data.
+        """
+        df = self.df
+        if df.empty or "variables" not in df.columns or "path" not in df.columns:
+            return {}
+
+        files = df.sort_values("end_date", ascending=False).drop_duplicates(
+            subset="path"
+        )
+        remaining = set(var_names)
+        result: dict[str, pd.Timestamp] = {}
+
+        for _, row in files.iterrows():
+            if not remaining:
+                break
+            file_vars = _variables_list(row["variables"])
+            cols_here = [c for c in remaining if c in file_vars]
+            if not cols_here:
+                continue
+            try:
+                ds = xr.open_zarr(row["path"], consolidated=False)
+            except Exception as e:
+                logger.warning(f"Could not open {row['path']} for non-null scan: {e}")
+                continue
+            try:
+                if "time" not in ds.coords:
+                    continue
+                times = pd.to_datetime(ds["time"].values)
+                # Reduce each variable to a per-time "has any data" mask, batched
+                # into one lazy compute so the file is read in a single pass.
+                lazy = {
+                    c: ds[c].notnull().any(dim=[d for d in ds[c].dims if d != "time"])
+                    for c in cols_here
+                }
+                mask_ds = xr.Dataset(lazy).compute()
+                for c in cols_here:
+                    m = mask_ds[c].values
+                    if m.any():
+                        result[c] = pd.Timestamp(times[m].max()).normalize()
+                        remaining.discard(c)
+            finally:
+                ds.close()
+
+        return result
 
     def get_variables(self) -> set[str]:
         """
