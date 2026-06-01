@@ -201,7 +201,6 @@ def parquet(
         raise typer.Exit(code=1)
 
     for key in keys:
-        logger.info(f"Processing '{key}' under {parquet_base}")
         try:
             converter = Zarr2Parquet(
                 var_key=key,
