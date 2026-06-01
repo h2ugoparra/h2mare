@@ -63,8 +63,8 @@ variables:
 
   seapodym:
     local_folder: CMEMS_2nd_productivity/mnkc
-    variables: [mnkc_epi, mnkc_umeso, mnkc_mumeso, npp, zooc, zeu]
-    variables_to_compile: [mnkc_epi, mnkc_umeso, mnkc_mumeso, npp, zooc, zeu]
+    variables: [mnkc_epi, mnkc_umeso, mnkc_mumeso, npp, zooc, zeu, mnkc_lmeso, mnkc_hmlmeso, mnkc_mlmeso]
+    variables_to_compile: [mnkc_epi, mnkc_umeso, mnkc_mumeso, npp, zooc, zeu,mnkc_lmeso, mnkc_hmlmeso, mnkc_mlmeso]
     dataset_id_rep: cmems_mod_glo_bgc_my_0.083deg-lmtl_P1D-i
     source: cmems
     pattern: (\d{8})
