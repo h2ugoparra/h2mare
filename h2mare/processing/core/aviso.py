@@ -31,6 +31,7 @@ from h2mare.storage.zarr_catalog import ZarrCatalog
 from h2mare.types import BBox, DateLike, DateRange, TimeResolution
 from h2mare.utils.date_range import resolve_date_range
 from h2mare.utils.datetime_utils import normalize_date
+from h2mare.utils.logging import add_file_logger
 from h2mare.utils.paths import resolve_download_path, resolve_store_path
 from h2mare.utils.spatial import GridBuilder, haversine_min_distance_kdtree
 from h2mare.validators import validate_time_resolution, validate_var_key
@@ -517,7 +518,7 @@ def process_fsle(
 
 if __name__ == "__main__":
     log_path = get_settings().LOGS_DIR / f"{Path(__file__).stem}.log"
-    logger.add(log_path, level="INFO")
+    add_file_logger(log_path)
 
     ed_proc = EDDIESProcessor()
     ds = ed_proc.run()

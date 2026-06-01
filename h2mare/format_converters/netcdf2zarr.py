@@ -22,6 +22,7 @@ from h2mare.storage.xarray_helpers import chunk_dataset, rename_dims
 from h2mare.storage.zarr_catalog import ZarrCatalog
 from h2mare.types import TimeResolution
 from h2mare.utils.files_io import safe_move_files, safe_rmtree
+from h2mare.utils.logging import add_file_logger
 from h2mare.utils.paths import resolve_download_path
 from h2mare.validators import validate_time_resolution, validate_var_key
 
@@ -431,7 +432,7 @@ class Netcdf2Zarr(BaseConverter):
 
 if __name__ == "__main__":
     log_path = get_settings().LOGS_DIR / f"{Path(__file__).stem}.log"
-    logger.add(log_path, level="INFO")
+    add_file_logger(log_path)
 
     var_key = "eddies"
     Netcdf2Zarr(var_key).run()

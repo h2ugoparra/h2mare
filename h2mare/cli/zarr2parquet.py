@@ -44,6 +44,7 @@ import typer
 from loguru import logger
 
 from h2mare.config import get_settings
+from h2mare.utils.logging import add_file_logger
 
 app = typer.Typer(help="Convert compiled Zarr stores to Hive-partitioned Parquet.")
 
@@ -117,7 +118,7 @@ def parquet(
     """Convert compiled Zarr stores to Hive-partitioned Parquet for one or more variable keys."""
 
     log_path = get_settings().LOGS_DIR / "h2mare.log"
-    logger.add(log_path, level="INFO")
+    add_file_logger(log_path)
 
     # ---- Validate date arguments ----
     if bool(start_date) ^ bool(end_date):

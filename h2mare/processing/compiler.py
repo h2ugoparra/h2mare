@@ -23,6 +23,7 @@ from h2mare.storage.zarr_catalog import ZarrCatalog
 from h2mare.types import BBox, DateLike, DateRange, TimeResolution
 from h2mare.utils.date_range import resolve_date_range
 from h2mare.utils.datetime_utils import normalize_date
+from h2mare.utils.logging import add_file_logger
 from h2mare.utils.spatial import GridBuilder
 from h2mare.validators import validate_time_resolution, validate_var_key
 
@@ -446,6 +447,6 @@ class Compiler:
 
 if __name__ == "__main__":
     log_path = get_settings().LOGS_DIR / f"{Path(__file__).stem}.log"
-    logger.add(log_path, level="INFO")
+    add_file_logger(log_path)
 
     Compiler().run(start_date="2025-01-01", end_date="2025-01-31")

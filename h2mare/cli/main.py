@@ -35,11 +35,11 @@ from typing import List, Optional
 
 import pandas as pd
 import typer
-from loguru import logger
 
 from h2mare.config import get_settings
 from h2mare.downloader.registry import DOWNLOADER_REGISTRY
 from h2mare.pipeline_manager import PipelineManager
+from h2mare.utils.logging import add_file_logger
 
 app = typer.Typer()
 
@@ -128,7 +128,7 @@ def run(
     """Download and convert climate/ocean data for one or more variable keys."""
 
     log_path = get_settings().LOGS_DIR / "h2mare.log"
-    logger.add(log_path, level="INFO")
+    add_file_logger(log_path)
     logging.getLogger("urllib3.connectionpool").setLevel(logging.ERROR)
 
     # Validate date arguments
