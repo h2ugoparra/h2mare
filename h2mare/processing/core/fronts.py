@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import multiprocessing as mp
 import shutil
+from functools import partial
 
 import numpy as np
 import pandas as pd
@@ -212,19 +213,33 @@ class FrontProcessor:
         _zarr_ds = xr.open_zarr(zarr_path)
         da = _zarr_ds[self.var_key]
 
+        # The base grid (sea-point coordinates + land mask) depends only on
+        # lat/lon, which are identical for every day, so build it once here
+        # instead of recomputing it per day inside each worker.
+        lat = da.lat.values
+        lon = da.lon.values
+        latlon1_arr, sea_mask = create_base_grid(lat, lon)
+
         start_date = pd.Timestamp(ds.time.min().values)
         end_date = pd.Timestamp(ds.time.max().values)
         dates = pd.date_range(start_date, end_date, freq="D")
 
-        tasks = [(da, date) for date in dates]
         out: list[xr.DataArray] = []
 
         logger.info(
             f"Front detection process for {self.var_key.upper()}: {len(dates)} days using {n_workers} workers"
         )
+        worker = partial(
+            self._process_daily,
+            da=da,
+            latlon1_arr=latlon1_arr,
+            lat=lat,
+            lon=lon,
+            sea_mask=sea_mask,
+        )
         try:
             with mp.Pool(processes=n_workers) as pool:
-                results = pool.starmap(self._process_daily, tasks)
+                results = pool.map(worker, dates)
                 out.extend([r for r in results if r is not None])
         finally:
             _zarr_ds.close()
@@ -242,13 +257,17 @@ class FrontProcessor:
 
         return xr.combine_by_coords(out)
 
-    def _process_daily(self, da: xr.DataArray, date: pd.Timestamp):
-
+    def _process_daily(
+        self,
+        date: pd.Timestamp,
+        *,
+        da: xr.DataArray,
+        latlon1_arr: NDArray[np.float64],
+        lat: NDArray[np.float64],
+        lon: NDArray[np.float64],
+        sea_mask: NDArray[np.bool],
+    ):
         da_tmp = da.sel(time=date)
-        lat = da_tmp.lat.values
-        lon = da_tmp.lon.values
-
-        latlon1_arr, sea_mask = create_base_grid(lat, lon)
         latlon2_arr = BOA_application(da_tmp, threshold_dict[self.var_key])
 
         min_distance = haversine_min_distance_kdtree(latlon1_arr, latlon2_arr)
