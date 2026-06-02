@@ -213,17 +213,18 @@ class TestProcessDaily:
         )
         fake_fronts = np.array([[32.0, -7.5]])
 
-        with (
-            patch(
-                "h2mare.processing.core.fronts.create_base_grid",
-                return_value=(latlon_arr, sea_mask),
-            ),
-            patch(
-                "h2mare.processing.core.fronts.BOA_application",
-                return_value=fake_fronts,
-            ),
+        with patch(
+            "h2mare.processing.core.fronts.BOA_application",
+            return_value=fake_fronts,
         ):
-            result = fp._process_daily(da, date)
+            result = fp._process_daily(
+                date,
+                da=da,
+                latlon1_arr=latlon_arr,
+                lat=lat,
+                lon=lon,
+                sea_mask=sea_mask,
+            )
 
         assert isinstance(result, xr.DataArray)
         assert result.name == "sst_fdist"
@@ -252,17 +253,18 @@ class TestProcessDaily:
         )
         fake_fronts = np.array([[32.0, -7.5]])
 
-        with (
-            patch(
-                "h2mare.processing.core.fronts.create_base_grid",
-                return_value=(latlon_arr, sea_mask),
-            ),
-            patch(
-                "h2mare.processing.core.fronts.BOA_application",
-                return_value=fake_fronts,
-            ),
+        with patch(
+            "h2mare.processing.core.fronts.BOA_application",
+            return_value=fake_fronts,
         ):
-            result = fp._process_daily(da, date)
+            result = fp._process_daily(
+                date,
+                da=da,
+                latlon1_arr=latlon_arr,
+                lat=lat,
+                lon=lon,
+                sea_mask=sea_mask,
+            )
 
         values = result.sel(time=date).values
         assert np.all(np.isfinite(values))
