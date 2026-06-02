@@ -14,7 +14,7 @@ from h2mare.pipeline_manager import PipelineManager
 
 _ENTRY = {
     "local_folder": "sst",
-    "variables": ["analysed_sst"],
+    "source_vars": ["analysed_sst"],
     "dataset_id_rep": "cmems_mod_glo_phy_my",
     "source": "cmems",
     "pattern": r".*\.nc",
@@ -285,7 +285,7 @@ class TestCleanup:
                 "variables": {
                     "sst": {
                         "local_folder": "sst",
-                        "variables": ["analysed_sst"],
+                        "source_vars": ["analysed_sst"],
                         "dataset_id_rep": "cmems_mod",
                         "source": "cmems",
                         "pattern": r".*\.nc",

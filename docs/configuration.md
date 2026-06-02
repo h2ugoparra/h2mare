@@ -14,7 +14,7 @@ Each key under `variables:` defines one data stream:
 variables:
   sst:
     local_folder: CMEMS_SST           # subdirectory under STORE_ROOT
-    variables: [analysed_sst, ...]    # variable names inside the source file
+    source_vars: [analysed_sst, ...]  # variable names inside the source file
     dataset_id_rep: <cmems-id>        # reprocessed (multiyear) dataset ID
     dataset_id_nrt: <cmems-id>        # near-real-time dataset ID (optional)
     source: cmems                     # cmems | aviso | cds
@@ -27,7 +27,7 @@ variables:
 | Field | Required | Description |
 |---|---|---|
 | `local_folder` | yes | Subdirectory under `STORE_ROOT` for this variable's Zarr files |
-| `variables` | yes | Variable names to extract from source files |
+| `source_vars` | yes | Variable names to extract from source files |
 | `dataset_id_rep` | yes | Reprocessed dataset identifier |
 | `dataset_id_nrt` | no | Near-real-time dataset identifier. Omit for reanalysis-only products |
 | `source` | yes | Provider: `cmems`, `aviso`, or `cds` |
@@ -43,7 +43,7 @@ variables:
 | `rename_lonlat` | no | Set to `true` for variables whose Zarr store uses `lon`/`lat` coordinate names that must be renamed to `x`/`y` before `rioxarray` clip during extraction (e.g. AVISO `fsle`, `eddies`). Default `false`. |
 | `extract_depth_slices` | no | Depth levels (metres) to extract when slicing a 3-D variable during `Extractor` runs. Each level becomes a separate output column (e.g. `[0, 100, 500]` → `o2_0`, `o2_100`, `o2_500`). Omit for 2-D variables. |
 | `compile_depth_slices` | no | Depth levels (metres) to select when compiling a 3-D variable into h2ds. Each level becomes a separate output variable (e.g. `[0, 100, 500, 1000]` → `o2_0`, `o2_100`, `o2_500`, `o2_1000`). Omit for 2-D variables. Can differ from `extract_depth_slices`. |
-| `variables_to_compile` | no | Exact variable names as they appear in the compiled h2ds Zarr for this var_key, accounting for any renames or derived variables produced during the Convert step (e.g. `sst` → `[sst, analysis_error, sst_std, sst_fdist]`). Used by `h2mare parquet --add-var` to select only the relevant columns from the h2ds Zarr without the caller needing to know internal variable names. |
+| `compiled_vars` | no | Exact variable names as they appear in the compiled h2ds Zarr for this var_key, accounting for any renames or derived variables produced during the Convert step (e.g. `sst` → `[sst, analysis_error, sst_std, sst_fdist]`). Used by `h2mare parquet --add-var` to select only the relevant columns from the h2ds Zarr without the caller needing to know internal variable names. |
 
 ### Validation
 

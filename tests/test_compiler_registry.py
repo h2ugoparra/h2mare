@@ -428,7 +428,7 @@ class TestProcessVariableDispatch:
                 "variables": {
                     "h2ds": {
                         "local_folder": "h2ds",
-                        "variables": ["sst"],
+                        "source_vars": ["sst"],
                         "dataset_id_rep": "h2ds",
                         "source": "compiled",
                         "pattern": r"(\d{4})",
@@ -437,7 +437,7 @@ class TestProcessVariableDispatch:
                     },
                     "ssh": {
                         "local_folder": "ssh",
-                        "variables": ["adt"],
+                        "source_vars": ["adt"],
                         "dataset_id_rep": "cmems-ssh",
                         "source": "cmems",
                         "pattern": r".*\.nc",

@@ -16,7 +16,7 @@ from h2mare.types import DateRange
 
 _CDS_ENTRY = {
     "local_folder": "atm",
-    "variables": ["10m_u_component_of_wind", "10m_v_component_of_wind"],
+    "source_vars": ["10m_u_component_of_wind", "10m_v_component_of_wind"],
     "dataset_id_rep": "reanalysis-era5-single-levels",
     "source": "cds",
     "pattern": r".*\.grib",

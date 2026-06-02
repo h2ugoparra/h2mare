@@ -232,7 +232,7 @@ class Zarr2Parquet(BaseConverter):
         For every non-system source var_key whose columns appear in this Zarr
         store, the gap between its representative column's last non-null date in
         Parquet and its source coverage end is computed. Because all columns of a
-        var_key share the same dates (``variables_to_compile`` in config), one
+        var_key share the same dates (``compiled_vars`` in config), one
         representative column is enough to date the whole group — no need to scan
         every column.
 
@@ -257,9 +257,9 @@ class Zarr2Parquet(BaseConverter):
         zarr_vars = self.zarr_repo.get_variables()
         reps: dict[str, str] = {}
         for vkey, vc in self.app_config.variables.items():
-            if vkey in SYSTEM_VAR_KEYS or not vc.variables_to_compile:
+            if vkey in SYSTEM_VAR_KEYS or not vc.compiled_vars:
                 continue
-            rep = vc.variables_to_compile[0]
+            rep = vc.compiled_vars[0]
             if rep in zarr_vars:
                 reps[vkey] = rep
 
@@ -292,7 +292,7 @@ class Zarr2Parquet(BaseConverter):
                 logger.debug(f"{vkey}: parquet up to date, no backfill.")
                 continue
 
-            cols = self.app_config.variables[vkey].variables_to_compile or []
+            cols = self.app_config.variables[vkey].compiled_vars or []
             groups[(window_start, window_end)].update(cols)
             logger.debug(
                 f"{vkey}: backfill {window_start.date()} → {window_end.date()} ({cols})"

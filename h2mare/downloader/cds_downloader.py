@@ -202,7 +202,7 @@ class CDSDownloader(BaseDownloader):
 
         request = {
             "product_type": ["reanalysis"],
-            "variable": self.var_config.variables,
+            "variable": self.var_config.source_vars,
             "year": [year],
             "month": months,
             "day": days,  # [f"{d:02d}" for d in range(day_ini, day_fin + 1)],

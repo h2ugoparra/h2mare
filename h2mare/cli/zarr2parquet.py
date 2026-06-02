@@ -98,7 +98,7 @@ def parquet(
         help=(
             "Variable key(s) whose compiled columns should be merged into the existing "
             "h2ds Parquet store (repeat for multiple: --add-var thetao --add-var o2). "
-            "Reads variables_to_compile from config.yaml and JOINs them into every "
+            "Reads compiled_vars from config.yaml and JOINs them into every "
             "existing partition. Cannot be combined with -v."
         ),
     ),
@@ -159,10 +159,10 @@ def parquet(
 
         variables: list[str] = []
         for key in add_var_keys:
-            v2c = get_settings().app_config.variables[key].variables_to_compile
+            v2c = get_settings().app_config.variables[key].compiled_vars
             if not v2c:
                 typer.echo(
-                    f"Error: '{key}' has no variables_to_compile defined in config.yaml.",
+                    f"Error: '{key}' has no compiled_vars defined in config.yaml.",
                     err=True,
                 )
                 raise typer.Exit(code=1)

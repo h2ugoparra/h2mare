@@ -372,7 +372,7 @@ class EDDIESProcessor:
     def _prepare_raw_dataset(self, path: Path, dates: DateRange) -> xr.Dataset:
         """Preprocess original dataframe to subset by geo_extent with +10deg for distance calculations and by time range"""
         with xr.open_dataset(path) as ds:
-            ds = ds[self.var_config.variables]
+            ds = ds[self.var_config.source_vars]
             ds["longitude"] = ds["longitude"] - 360
             ds["time"] = ds["time"].dt.floor("D")
             ds = ds.sel(
@@ -507,7 +507,7 @@ def process_fsle(
         ds (xr.Dataset): dataset for processing
         var_config (KeyVarConfigEntry): Variable configuration entry containing variable names and bounding box for subsetting
     """
-    ds = ds[var_config.variables]
+    ds = ds[var_config.source_vars]
     ds = convert360_180(ds)
     if var_config.bbox is not None:
         xmin, ymin, xmax, ymax = var_config.bbox

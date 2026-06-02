@@ -16,7 +16,7 @@ from h2mare.storage.zarr_catalog import ZarrCatalog
 
 _ENTRY = {
     "local_folder": "sst",
-    "variables": ["analysed_sst"],
+    "source_vars": ["analysed_sst"],
     "dataset_id_rep": "cmems_mod_glo_phy_my_0.083deg_P1D-m",
     "source": "cmems",
     "pattern": r".*\.nc",
