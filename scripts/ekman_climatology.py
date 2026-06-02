@@ -14,15 +14,17 @@ import warnings
 import xarray as xr
 from loguru import logger
 
-from h2mare.config import settings
+from h2mare.config import get_settings
 
 warnings.simplefilter("ignore", UserWarning)
 
 var_key = "atm-instante"
-var_cfg = settings.app_config.variables[var_key]
+var_cfg = get_settings().app_config.variables[var_key]
 
-assert settings.STORE_ROOT is not None, "STORE_ROOT must be set in the environment"
-var_dir = settings.STORE_ROOT / var_cfg.local_folder
+assert get_settings().STORE_ROOT is not None, (
+    "STORE_ROOT must be set in the environment"
+)
+var_dir = get_settings().STORE_ROOT / var_cfg.local_folder
 
 files = sorted(var_dir.glob("*.zarr"))
 ekman = xr.open_mfdataset(files, engine="zarr")["ekman_pumping"]
@@ -41,7 +43,7 @@ ek_noleap = ekman_7d.where(
 # DOY mean climatology
 clim = ek_noleap.groupby("time.dayofyear").mean("time")
 
-clim_dir = settings.STORE_ROOT / "Climatology"
+clim_dir = get_settings().STORE_ROOT / "Climatology"
 clim_dir.mkdir(parents=True, exist_ok=True)
 
 file_path = clim_dir / "cds_ekman-doy-mean_80W-10E-0N-70N_1998-2017.nc"

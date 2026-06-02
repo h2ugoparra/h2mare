@@ -228,6 +228,3 @@ def get_settings() -> Settings:
     monkeypatching environment variables to obtain a fresh instance.
     """
     return Settings()
-
-
-settings = get_settings()  # backward-compatible alias
