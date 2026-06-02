@@ -399,6 +399,11 @@ class EDDIESProcessor:
     ) -> xr.Dataset | None:
         """Process all days in a period and return a concatenated Dataset."""
 
+        # Flattened query-point coordinates depend only on the fixed grid, so
+        # build them once here instead of per day inside each worker.
+        all_lats = np.repeat(grid.lat, len(grid.lon))
+        all_lons = np.tile(grid.lon, len(grid.lat))
+
         worker = partial(
             _process_daily_static,
             ds=ds_raw,
@@ -407,6 +412,8 @@ class EDDIESProcessor:
             lat1=grid.lat,
             lon1=grid.lon,
             sea_mask=grid.sea_mask,
+            all_lats=all_lats,
+            all_lons=all_lons,
         )
 
         with mp.Pool(processes=n_workers) as pool:
@@ -439,6 +446,8 @@ def _process_daily_static(
     lat1: NDArray,
     lon1: NDArray,
     sea_mask: NDArray,
+    all_lats: NDArray,
+    all_lons: NDArray,
 ) -> xr.Dataset | None:
     """Process daily files statically to avoid pickel class function."""
     try:
@@ -453,8 +462,6 @@ def _process_daily_static(
         dist_grid[sea_mask] = min_dist
 
         # --- Vectorised nearest-neighbour lookup ---
-        all_lats = np.repeat(lat1, len(lon1))
-        all_lons = np.tile(lon1, len(lat1))
         nearest_indices = find_nearest_vectorized(all_lats, all_lons, lat2, lon2)
         nearest_data = ds_day.isel(obs=nearest_indices)
 

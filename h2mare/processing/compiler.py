@@ -117,6 +117,11 @@ class Compiler:
         # Cache of per-variable non-null end dates in h2ds, filled lazily on the
         # first incremental range resolution (one store scan per run).
         self._nonnull_ends_cache: Optional[dict[str, pd.Timestamp]] = None
+        # Per-variable source catalogs, built once and reused across all time
+        # chunks in a run. A source store's contents are stable during a
+        # compile (only the h2ds output is written), so re-scanning it per
+        # chunk is wasted I/O.
+        self._catalog_cache: dict[str, ZarrCatalog] = {}
 
     def run(
         self,
@@ -399,7 +404,11 @@ class Compiler:
         )
 
         is_system = var_key in SYSTEM_VAR_KEYS
-        catalog = None if is_system else ZarrCatalog(var_key)
+        catalog = (
+            None
+            if is_system
+            else self._catalog_cache.setdefault(var_key, ZarrCatalog(var_key))
+        )
 
         if not is_system and not self._has_overlap(var_key, date_range, catalog):
             return None
