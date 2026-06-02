@@ -15,7 +15,7 @@ from pathlib import Path
 import xarray as xr
 from loguru import logger
 
-from h2mare.config import settings
+from h2mare.config import get_settings
 from h2mare.utils.spatial import clip_land_data
 
 warnings.simplefilter("ignore", UserWarning)
@@ -29,11 +29,13 @@ def get_path_for_year(files: list[Path], year: int) -> Path | None:
 
 
 var_key = "atm-instante"
-var_cfg = settings.app_config.variables[var_key]
+var_cfg = get_settings().app_config.variables[var_key]
 
-assert settings.STORE_ROOT is not None, "STORE_ROOT must be set in the environment"
-var_dir = settings.STORE_ROOT / var_cfg.local_folder
-clim_dir = settings.STORE_ROOT / "Climatology"
+assert get_settings().STORE_ROOT is not None, (
+    "STORE_ROOT must be set in the environment"
+)
+var_dir = get_settings().STORE_ROOT / var_cfg.local_folder
+clim_dir = get_settings().STORE_ROOT / "Climatology"
 
 files = sorted(var_dir.glob("*.zarr"))
 ekman = xr.open_mfdataset(files, engine="zarr")["ekman_pumping"]

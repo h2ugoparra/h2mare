@@ -12,7 +12,7 @@ import warnings
 
 import xarray as xr
 
-from h2mare.config import settings
+from h2mare.config import get_settings
 from h2mare.types import BBox
 from h2mare.utils import GridBuilder, create_filename_label, resolve_store_path
 
@@ -21,7 +21,7 @@ warnings.filterwarnings("ignore")
 DX, DY = 0.25, 0.25
 
 var_key = "bathy"
-var_cfg = settings.app_config.variables[var_key]
+var_cfg = get_settings().app_config.variables[var_key]
 var_dir = resolve_store_path(var_cfg)
 
 geo_extent = var_cfg.bbox
