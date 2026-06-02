@@ -19,7 +19,7 @@ _MINIMAL_APP_CONFIG = msgspec.convert(
         "variables": {
             "sst": {
                 "local_folder": "sst",
-                "variables": ["analysed_sst"],
+                "source_vars": ["analysed_sst"],
                 "dataset_id_rep": "cmems-sst",
                 "source": "cmems",
                 "pattern": r".*\.nc",

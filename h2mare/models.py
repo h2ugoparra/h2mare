@@ -13,7 +13,7 @@ class KeyVarConfigEntry(msgspec.Struct):
     # Subdirectory under STORE_ROOT for this variable's Zarr files.
     local_folder: str
     # Variable names to extract from source files.
-    variables: str | list[str]
+    source_vars: str | list[str]
     # Reprocessed (multiyear) dataset identifier.
     dataset_id_rep: str
     # Provider: "cmems", "aviso", or "cds".
@@ -62,7 +62,7 @@ class KeyVarConfigEntry(msgspec.Struct):
     # Exact variable names as they appear in the compiled h2ds Zarr for this
     # var_key. Used to select only these columns when adding a variable to an
     # existing Parquet store (--add-var). None means not yet declared.
-    variables_to_compile: Optional[list[str]] = None
+    compiled_vars: Optional[list[str]] = None
 
     def __post_init__(self):
         if self.bbox is not None:

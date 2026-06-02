@@ -401,7 +401,7 @@ class TestResolveBackfillGroups:
         window, cols = groups[0]
         assert window.start.date() == date(2021, 4, 1)  # parquet end + 1 day
         assert window.end.date() == date(2021, 6, 30)  # capped at parquet end
-        # All of sst's variables_to_compile are read, not just the representative
+        # All of sst's compiled_vars are read, not just the representative
         assert "sst" in cols
         assert "sst_fdist" in cols
 

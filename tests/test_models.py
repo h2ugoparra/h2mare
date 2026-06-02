@@ -11,7 +11,7 @@ from h2mare.models import AppConfig, KeyVarConfigEntry, SecretsConfig
 
 VALID_ENTRY = {
     "local_folder": "sst",
-    "variables": ["analysed_sst"],
+    "source_vars": ["analysed_sst"],
     "dataset_id_rep": "cmems_mod_glo_phy_my_0.083deg_P1D-m",
     "source": "cmems",
     "pattern": r".*\.nc",
@@ -46,11 +46,11 @@ class TestKeyVarConfigEntry:
         assert entry.depth_range == (0.0, 500.0)
 
     def test_variables_as_string(self):
-        """variables field accepts a plain string (not just a list)."""
+        """source_vars field accepts a plain string (not just a list)."""
         entry = msgspec.convert(
-            {**VALID_ENTRY, "variables": "analysed_sst"}, KeyVarConfigEntry
+            {**VALID_ENTRY, "source_vars": "analysed_sst"}, KeyVarConfigEntry
         )
-        assert entry.variables == "analysed_sst"
+        assert entry.source_vars == "analysed_sst"
 
     # --- bbox validation ---
 

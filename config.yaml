@@ -4,8 +4,8 @@
 variables:
   sst:
     local_folder: CMEMS_SST
-    variables: [analysed_sst, analysis_error]
-    variables_to_compile: [sst, analysis_error, sst_std, sst_fdist]
+    source_vars: [analysed_sst, analysis_error]
+    compiled_vars: [sst, analysis_error, sst_std, sst_fdist]
     dataset_id_rep: METOFFICE-GLO-SST-L4-REP-OBS-SST
     dataset_id_nrt: METOFFICE-GLO-SST-L4-NRT-OBS-SST-V2
     source: cmems
@@ -16,8 +16,8 @@ variables:
 
   ssh:
     local_folder: CMEMS_SSH
-    variables: [adt, sla, ugos, vgos]
-    variables_to_compile: [adt, sla, ugos, vgos, adt_std, sla_std, gke]
+    source_vars: [adt, sla, ugos, vgos]
+    compiled_vars: [adt, sla, ugos, vgos, adt_std, sla_std, gke]
     dataset_id_rep: cmems_obs-sl_glo_phy-ssh_my_allsat-l4-duacs-0.125deg_P1D
     dataset_id_nrt: cmems_obs-sl_glo_phy-ssh_nrt_allsat-l4-duacs-0.125deg_P1D
     source: cmems
@@ -28,8 +28,8 @@ variables:
 
   mld:
     local_folder: CMEMS_MLD
-    variables: [mlotst]
-    variables_to_compile: [mld]
+    source_vars: [mlotst]
+    compiled_vars: [mld]
     dataset_id_rep: cmems_mod_glo_phy_my_0.083deg_P1D-m
     source: cmems
     pattern: (\d{4}-\d{2}-\d{2})-(\d{4}-\d{2}-\d{2})
@@ -39,8 +39,8 @@ variables:
 
   thetao:
     local_folder: CMEMS_Thetao
-    variables: [thetao]
-    variables_to_compile: [thetao_100, thetao_200, thetao_500, thetao_1000]
+    source_vars: [thetao]
+    compiled_vars: [thetao_100, thetao_200, thetao_500, thetao_1000]
     dataset_id_rep: cmems_mod_glo_phy_my_0.083deg_P1D-m
     source: cmems
     pattern: (\d{4}-\d{2}-\d{2})-(\d{4}-\d{2}-\d{2})
@@ -52,8 +52,8 @@ variables:
 
   chl:
     local_folder: CMEMS_Chla_4km_daily
-    variables: [CHL]
-    variables_to_compile: [chl, chl_fdist]
+    source_vars: [CHL]
+    compiled_vars: [chl, chl_fdist]
     dataset_id_rep: cmems_obs-oc_glo_bgc-plankton_my_l4-gapfree-multi-4km_P1D
     source: cmems
     pattern: (\d{4}-\d{2}-\d{2})-(\d{4}-\d{2}-\d{2})
@@ -63,8 +63,8 @@ variables:
 
   seapodym:
     local_folder: CMEMS_2nd_productivity/mnkc
-    variables: [mnkc_epi, mnkc_umeso, mnkc_mumeso, npp, zooc, zeu, mnkc_lmeso, mnkc_hmlmeso, mnkc_mlmeso]
-    variables_to_compile: [mnkc_epi, mnkc_umeso, mnkc_mumeso, npp, zooc, zeu,mnkc_lmeso, mnkc_hmlmeso, mnkc_mlmeso]
+    source_vars: [mnkc_epi, mnkc_umeso, mnkc_mumeso, npp, zooc, zeu, mnkc_lmeso, mnkc_hmlmeso, mnkc_mlmeso]
+    compiled_vars: [mnkc_epi, mnkc_umeso, mnkc_mumeso, npp, zooc, zeu,mnkc_lmeso, mnkc_hmlmeso, mnkc_mlmeso]
     dataset_id_rep: cmems_mod_glo_bgc_my_0.083deg-lmtl_P1D-i
     source: cmems
     pattern: (\d{8})
@@ -73,8 +73,8 @@ variables:
 
   o2:
     local_folder: CMEMS_Biochemical
-    variables: [o2]
-    variables_to_compile: [o2_0, o2_100, o2_500, o2_1000]
+    source_vars: [o2]
+    compiled_vars: [o2_0, o2_100, o2_500, o2_1000]
     dataset_id_rep: cmems_mod_glo_bgc_my_0.25deg_P1D-m
     source: cmems
     pattern: (\d{4}-\d{2}-\d{2})-(\d{4}-\d{2}-\d{2})
@@ -87,8 +87,8 @@ variables:
     
   fsle:
     local_folder: AVISO_FSLE
-    variables: [fsle_max]
-    variables_to_compile: [fsle_max]
+    source_vars: [fsle_max]
+    compiled_vars: [fsle_max]
     dataset_id_rep: /value-added/lyapunov/delayed-time/global
     dataset_id_nrt: /value-added/lyapunov/near-real-time/global
     source: aviso
@@ -99,7 +99,7 @@ variables:
 
   eddies:
     local_folder: AVISO_Eddy_Trajectory
-    variables: [
+    source_vars: [
       time,
       latitude,
       longitude,
@@ -110,7 +110,7 @@ variables:
       amplitude,
       speed_average
       ]
-    variables_to_compile: [
+    compiled_vars: [
       ac_amp, ac_dist_km, ac_ndays, ac_normdist, ac_speed, ac_speedrad_km, ac_track,
       c_amp, c_dist_km, c_ndays, c_normdist, c_speed, c_speedrad_km, c_track
       ]
@@ -124,13 +124,13 @@ variables:
   
   atm-instante:
     local_folder: CDS_Atm_instante
-    variables: [
+    source_vars: [
       mean_sea_level_pressure,
       10m_u_component_of_wind,
       10m_v_component_of_wind,
       total_cloud_cover,
       ]
-    variables_to_compile: [msl, u10, v10, tcc, wind_mean, wind_std, wind_max]
+    compiled_vars: [msl, u10, v10, tcc, wind_mean, wind_std, wind_max]
     dataset_id_rep: reanalysis-era5-single-levels
     source: cds
     pattern: (\d{4}-\d{2}-\d{2})-(\d{4}-\d{2}-\d{2})
@@ -140,12 +140,12 @@ variables:
 
   atm-accum-avg:
     local_folder: CDS_Atm_accum
-    variables: [
+    source_vars: [
       total_precipitation,
       mean_northward_turbulent_surface_stress,
       mean_eastward_turbulent_surface_stress,
       ]
-    variables_to_compile: [
+    compiled_vars: [
       avg_iews, avg_inss, ekman_pumping, ekman_7d, ekman_anom,
       ekman_anom_lag3, ekman_anom_lag7, ekman_anom_lag14,
       n_upwell_events_3d, n_upwell_events_7d, n_upwell_events_14d, tp
@@ -160,12 +160,12 @@ variables:
 
   radiation:
     local_folder: CDS_Radiation
-    variables: [
+    source_vars: [
       surface_latent_heat_flux,
       surface_solar_radiation_downwards,
       toa_incident_solar_radiation,
       ]
-    variables_to_compile: [slhf, ssrd, tisr]
+    compiled_vars: [slhf, ssrd, tisr]
     dataset_id_rep: reanalysis-era5-single-levels
     source: cds
     pattern: (\d{4}-\d{2}-\d{2})-(\d{4}-\d{2}-\d{2})
@@ -176,11 +176,11 @@ variables:
 
   waves:
     local_folder: CDS_Waves
-    variables: [
+    source_vars: [
       significant_height_of_combined_wind_waves_and_swell,
       mean_direction_of_total_swell,
       ]
-    variables_to_compile: [swh, mdts]
+    compiled_vars: [swh, mdts]
     dataset_id_rep: reanalysis-era5-single-levels
     source: cds
     pattern: (\d{4}-\d{2}-\d{2})-(\d{4}-\d{2}-\d{2})
@@ -190,8 +190,8 @@ variables:
 
   bathy:
     local_folder: ETOPO_Topography
-    variables: [z]
-    variables_to_compile: [bathy, bathy_std]
+    source_vars: [z]
+    compiled_vars: [bathy, bathy_std]
     dataset_id_rep: Etopo_v1
     source: noaa
     pattern: ()
@@ -202,8 +202,8 @@ variables:
 
   moon:
     local_folder: MOON_Phases
-    variables: [moon_phase]
-    variables_to_compile: [moon_phase]
+    source_vars: [moon_phase]
+    compiled_vars: [moon_phase]
     dataset_id_rep: ephem4.2
     source: python
     pattern: ()
@@ -211,8 +211,8 @@ variables:
 
   h2ds:
     local_folder: h2ds
-    variables: []
-    variables_to_compile: []
+    source_vars: []
+    compiled_vars: []
     dataset_id_rep: compiled-data-0.25deg-P1D
     source: h2mare
     pattern: ()

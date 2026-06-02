@@ -20,7 +20,7 @@ from h2mare.types import TimeResolution
 
 _SST_ENTRY_SUBSET = {
     "local_folder": "sst",
-    "variables": ["analysed_sst"],
+    "source_vars": ["analysed_sst"],
     "dataset_id_rep": "cmems-rep-sst",
     "source": "cmems",
     "pattern": r"(\d{8})_(\d{8})",
@@ -38,7 +38,7 @@ _SST_ENTRY_SINGLE = {
 
 _MLD_ENTRY = {
     "local_folder": "mld",
-    "variables": ["mlotst"],
+    "source_vars": ["mlotst"],
     "dataset_id_rep": "cmems-mld",
     "source": "cmems",
     "pattern": r"(\d{8})_(\d{8})",

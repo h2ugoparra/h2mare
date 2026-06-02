@@ -482,7 +482,7 @@ class CMEMSDownloader(BaseDownloader):
             start=start,
             end=end,
             output_dir=output_dir or self.download_dir,
-            variables=self.var_config.variables,
+            variables=self.var_config.source_vars,
             bbox=getattr(self.var_config, "bbox", None),
             depth_range=getattr(self.var_config, "depth_range", None),
         )

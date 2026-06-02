@@ -22,7 +22,7 @@ from h2mare.types import DateRange
 
 _H2DS_ENTRY = {
     "local_folder": "h2ds",
-    "variables": ["sst"],
+    "source_vars": ["sst"],
     "dataset_id_rep": "h2ds",
     "source": "compiled",
     "pattern": r"(\d{4})",
@@ -32,7 +32,7 @@ _H2DS_ENTRY = {
 
 _SST_ENTRY = {
     "local_folder": "sst",
-    "variables": ["analysed_sst"],
+    "source_vars": ["analysed_sst"],
     "dataset_id_rep": "cmems-rep-sst",
     "source": "cmems",
     "pattern": r".*\.nc",
@@ -221,8 +221,8 @@ class TestResolveCompileRange:
 
 _EDDIES_ENTRY = {
     "local_folder": "eddies",
-    "variables": ["amplitude", "speed_average"],  # raw source names
-    "variables_to_compile": ["ac_amp", "c_amp"],  # compiled h2ds names
+    "source_vars": ["amplitude", "speed_average"],  # raw source names
+    "compiled_vars": ["ac_amp", "c_amp"],  # compiled h2ds names
     "dataset_id_rep": "aviso-eddies",
     "source": "aviso",
     "pattern": r".*",
@@ -250,13 +250,13 @@ def _compiler_with_eddies(tmp_path):
 
 class TestGetH2dsVarEnd:
     def test_uses_nonnull_end_of_representative_compiled_column(self, tmp_path):
-        """Keyed off variables_to_compile[0], measured by non-null data."""
+        """Keyed off compiled_vars[0], measured by non-null data."""
         c = _compiler_with_eddies(tmp_path)
         c.catalog.get_vars_nonnull_end.return_value = {
             "ac_amp": pd.Timestamp("2026-05-15")
         }
         assert c._get_h2ds_var_end("eddies") == pd.Timestamp("2026-05-15")
-        # rep column is the first variables_to_compile entry
+        # rep column is the first compiled_vars entry
         c.catalog.get_vars_nonnull_end.assert_called_once_with(["ac_amp"])
 
     def test_falls_back_to_file_end_when_no_nonnull(self, tmp_path):

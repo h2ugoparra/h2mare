@@ -18,7 +18,7 @@ variable_attrs:
 variables:
   sst:
     local_folder: sst
-    variables:
+    source_vars:
       - analysed_sst
     dataset_id_rep: cmems-rep-sst
     source: cmems

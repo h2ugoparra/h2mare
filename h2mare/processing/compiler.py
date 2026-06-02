@@ -252,7 +252,7 @@ class Compiler:
         Last non-null date in h2ds for each source var_key's representative column.
 
         Computed once per run and cached. The representative is
-        ``variables_to_compile[0]``; by config convention all of a var_key's
+        ``compiled_vars[0]``; by config convention all of a var_key's
         compiled columns share the same dates, so one column dates the group.
         Uses :meth:`ZarrCatalog.get_vars_nonnull_end` (a single newest-first
         scan) so the whole set costs one pass over the most recent h2ds file.
@@ -260,7 +260,7 @@ class Compiler:
         if self._nonnull_ends_cache is None:
             reps: list[str] = []
             for vk in self._source_coverage:
-                cols = self.app_config.variables[vk].variables_to_compile or []
+                cols = self.app_config.variables[vk].compiled_vars or []
                 if cols:
                     reps.append(cols[0])
             self._nonnull_ends_cache = self.catalog.get_vars_nonnull_end(
@@ -272,7 +272,7 @@ class Compiler:
         """
         Last compiled date of *vkey* in h2ds, measured by real (non-null) data.
 
-        Keyed off the compiled column names (``variables_to_compile``), not the
+        Keyed off the compiled column names (``compiled_vars``), not the
         raw source variable names, and uses non-null coverage rather than the
         h2ds file end. This is what lets a lagging variable (e.g. eddies, whose
         columns are NaN-padded out to the global h2ds end) be detected as behind
@@ -285,7 +285,7 @@ class Compiler:
             found nothing; or ``None`` when the column is absent from h2ds
             (never compiled → caller backfills from the source start).
         """
-        cols = self.app_config.variables[vkey].variables_to_compile or []
+        cols = self.app_config.variables[vkey].compiled_vars or []
         if not cols:
             return None
         rep = cols[0]

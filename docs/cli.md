@@ -170,7 +170,7 @@ When the h2ds Parquet store already exists and a new variable has been compiled 
 uv run h2mare parquet --add-var thetao
 ```
 
-Each var_key passed to `--add-var` is resolved to its `variables_to_compile` list in `config.yaml` (e.g. `thetao` → `[thetao_100, thetao_200, thetao_500, thetao_1000]`). Only those columns are read from the h2ds Zarr, and a `FULL OUTER JOIN` on `(time, lat, lon)` adds them to each partition. Cannot be combined with `-v`.
+Each var_key passed to `--add-var` is resolved to its `compiled_vars` list in `config.yaml` (e.g. `thetao` → `[thetao_100, thetao_200, thetao_500, thetao_1000]`). Only those columns are read from the h2ds Zarr, and a `FULL OUTER JOIN` on `(time, lat, lon)` adds them to each partition. Cannot be combined with `-v`.
 
 ---
 

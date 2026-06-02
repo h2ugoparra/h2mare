@@ -24,7 +24,7 @@ from h2mare.types import DateRange, TimeResolution
 
 _EDDIES_ENTRY = {
     "local_folder": "eddies",
-    "variables": [
+    "source_vars": [
         "track",
         "effective_radius",
         "speed_radius",
@@ -41,7 +41,7 @@ _EDDIES_ENTRY = {
 
 _FSLE_ENTRY = {
     "local_folder": "fsle",
-    "variables": ["fsle_max"],
+    "source_vars": ["fsle_max"],
     "dataset_id_rep": "META_ALT_FSLE_OBS_010_006",
     "source": "aviso",
     "pattern": r"(\d{4})(\d{2})(\d{2})",
@@ -161,7 +161,7 @@ class TestProcessFsle:
     def test_output_clipped_to_bbox(self):
         ds = self._make_fsle_ds()
         var_config = MagicMock()
-        var_config.variables = ["fsle_max"]
+        var_config.source_vars = ["fsle_max"]
         var_config.bbox = (-10, 30, 20, 50)
 
         result = process_fsle(ds, var_config)
@@ -174,7 +174,7 @@ class TestProcessFsle:
     def test_lon_converted_from_360_to_180(self):
         ds = self._make_fsle_ds()
         var_config = MagicMock()
-        var_config.variables = ["fsle_max"]
+        var_config.source_vars = ["fsle_max"]
         var_config.bbox = (-180, -90, 180, 90)
 
         result = process_fsle(ds, var_config)
@@ -185,7 +185,7 @@ class TestProcessFsle:
         ds = self._make_fsle_ds()
         ds["extra_var"] = ds["fsle_max"] * 2
         var_config = MagicMock()
-        var_config.variables = ["fsle_max"]
+        var_config.source_vars = ["fsle_max"]
         var_config.bbox = (-10, 30, 20, 50)
 
         result = process_fsle(ds, var_config)

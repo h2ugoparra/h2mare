@@ -16,7 +16,7 @@ from h2mare.types import DateRange
 
 _ENTRY = {
     "local_folder": "AVISO_FSLE",
-    "variables": ["fsle_max"],
+    "source_vars": ["fsle_max"],
     "dataset_id_rep": "/dataset/fsle/rep",
     "dataset_id_nrt": "/dataset/fsle/nrt",
     "source": "aviso",
