@@ -855,8 +855,13 @@ class ZarrCatalog:
             return {
                 "num_files": 0,
                 "time_coverage": None,
+                "bbox": "No data",
+                "period": self.time_resolution,
                 "variables": set(),
                 "total_timesteps": 0,
+                "store_root": str(self.store_root),
+                "catalog_path": str(self.catalog_path),
+                "last_scanned": None,
             }
 
         time_cov = self.get_time_coverage()

@@ -50,8 +50,8 @@ def _print_catalog(var_key: str, show_rows: bool) -> None:
     variables = summary.get("variables") or set()
     typer.echo(f"  Variables  : {', '.join(sorted(variables)) if variables else '—'}")
     typer.echo(f"  Timesteps  : {summary.get('total_timesteps', '—')}")
-    typer.echo(f"  Store      : {summary['store_root']}")
-    typer.echo(f"  Catalog    : {summary['catalog_path']}")
+    typer.echo(f"  Store      : {summary.get('store_root', '—')}")
+    typer.echo(f"  Catalog    : {summary.get('catalog_path', '—')}")
     last = summary.get("last_scanned")
     last_str = (
         last.strftime("%Y-%m-%d %H:%M:%S")
