@@ -73,6 +73,7 @@ constraint-dependencies = ["sparse==0.14.0"]
 dev = [
     "ipykernel>=7.2.0",
     "nbformat>=5.10.4",
+    "pyright>=1.1.410",
     "pytest>=9.0.3",
     "pytest-cov>=7.1.0",
     "ruff>=0.9.0",
@@ -102,4 +103,9 @@ runner = uv-venv-lock-runner
 extras = dev
 commands =
     pytest tests/ -q
+
+[testenv:pyright]
+description = Static type check with pyright (targets the 3.11 floor via pyrightconfig.json)
+commands =
+    pyright h2mare
 """
