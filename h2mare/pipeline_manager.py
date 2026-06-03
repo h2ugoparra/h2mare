@@ -156,6 +156,13 @@ class PipelineManager:
                 _failed = True
 
         self._cleanup_empty_download_dirs(variables)
+
+        if _failed:
+            logger.warning("Pipeline finished with errors — see messages above.")
+        elif self.dry_run:
+            logger.success("Dry run complete — no data written.")
+        else:
+            logger.success("Pipeline completed successfully.")
         return not _failed
 
     def _cleanup_empty_download_dirs(self, variables: List[str]) -> None:

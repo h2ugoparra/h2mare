@@ -445,13 +445,6 @@ class CMEMSDownloader(BaseDownloader):
         if self.var_config.subset:
             chunks = split_time_range(task.date_range, time_split)
 
-            # Only note the split when there's more than one chunk; for a single
-            # chunk the task-level success log already covers the date range.
-            if len(chunks) > 1:
-                logger.debug(
-                    f"Split into {len(chunks)} chunk(s) ({time_split} intervals)"
-                )
-
             for chunk in chunks:
                 self._retry_call(
                     self.download_subset,
