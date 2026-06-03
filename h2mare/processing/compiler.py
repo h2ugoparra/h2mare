@@ -179,17 +179,8 @@ class Compiler:
 
         self.base_grid = GridBuilder(self.bbox, dx, dy).generate_grid()
 
-        logger.info(
-            f"Key variables to compile: {self.var_keys}, "
-            f"for period {requested_range.start.date()} -> {requested_range.end.date()}"
-        )
-
         # time chunks
         chunks = split_time_range(requested_range, self.time_resolution)
-
-        logger.debug(
-            f"Split into {len(chunks)} chunk(s) ({self.time_resolution} intervals)"
-        )
 
         written_paths: list[Path] = []
 
