@@ -11,6 +11,7 @@ A pipeline for downloading and preprocessing multi-source oceanographic and atmo
 ```text
 h2mare/
   ├── config.py / models.py / types.py    # Settings + msgspec config; runtime types (DateRange, BBox)
+  ├── validators.py                        # Shared validation (validate_var_key, …) reused across packages
   ├── pipeline_manager.py                  # Orchestrates Download → Convert → Compile from config + registries
   │
   ├── cli/                  # Typer commands: run, convert, compile, parquet, catalog
