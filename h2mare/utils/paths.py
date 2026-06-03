@@ -60,12 +60,13 @@ def resolve_store_path(
     Example:
         >>> path = resolve_store_path(var_config, store_root="/custom/path")
     """
+    settings = get_settings()
     if store_root is not None:
         path = Path(store_root)
-    elif get_settings().STORE_ROOT is not None:
-        path = get_settings().STORE_ROOT / var_config.local_folder
+    elif settings.STORE_ROOT is not None:
+        path = settings.STORE_ROOT / var_config.local_folder
     else:
-        path = get_settings().ZARR_DIR / var_config.local_folder
+        path = settings.ZARR_DIR / var_config.local_folder
 
     path = path.resolve()
 

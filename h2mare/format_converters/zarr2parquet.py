@@ -313,13 +313,14 @@ class Zarr2Parquet(BaseConverter):
                 is appended automatically when omitted.
         """
         if remote_root is None:
-            if get_settings().STORE_ROOT is None:
+            store_root = get_settings().STORE_ROOT
+            if store_root is None:
                 logger.warning(
                     "STORE_ROOT is not set — skipping Parquet backup. "
                     "Set STORE_ROOT in .env or pass remote_root explicitly."
                 )
                 return
-            remote_root = get_settings().STORE_ROOT / "parquet"
+            remote_root = store_root / "parquet"
 
         dest = remote_root / self.parquet_root.name
         logger.info(f"Backing up Parquet: {self.parquet_root} → {dest}")

@@ -390,6 +390,9 @@ class Extractor:
         elif self.input_type == "shp":
             bounds = tuple(data.total_bounds)
 
+        else:
+            raise ValueError(f"Unsupported input_type: {self.input_type!r}")
+
         return BBox.from_tuple(bounds)
 
     def _resolve_coverage(self, catalog: ZarrCatalog) -> list[pd.Timestamp]:
@@ -818,6 +821,9 @@ class Extractor:
                     "bathy config entry is missing required 'data_file' field"
                 )
             data_path = store_root / var_cfg.data_file
+
+        else:
+            raise ValueError(f"Unsupported input_type: {self.input_type!r}")
 
         bounds = self._define_bbox(data)
         logger.info(

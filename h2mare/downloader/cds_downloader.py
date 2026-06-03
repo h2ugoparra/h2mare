@@ -197,8 +197,11 @@ class CDSDownloader(BaseDownloader):
 
         client = cdsapi.Client()
 
-        if self.var_config.bbox is not None:
-            bbox = BBox.from_tuple(self.var_config.bbox)
+        bbox = (
+            BBox.from_tuple(self.var_config.bbox)
+            if self.var_config.bbox is not None
+            else None
+        )
 
         request = {
             "product_type": ["reanalysis"],
