@@ -213,6 +213,7 @@ class AVISODownloader(BaseDownloader):
         rep_files = self._get_dataset_files(self.var_config.dataset_id_rep)
         rep_avail = self._get_dataset_availability(rep_files)
 
+        nrt_files = []
         nrt_avail = None
         if self.var_config.dataset_id_nrt:
             nrt_files = self._get_dataset_files(self.var_config.dataset_id_nrt)

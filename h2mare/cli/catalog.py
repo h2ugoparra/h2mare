@@ -53,9 +53,12 @@ def _print_catalog(var_key: str, show_rows: bool) -> None:
     typer.echo(f"  Store      : {summary['store_root']}")
     typer.echo(f"  Catalog    : {summary['catalog_path']}")
     last = summary.get("last_scanned")
-    typer.echo(
-        f"  Scanned    : {last.strftime('%Y-%m-%d %H:%M:%S') if pd.notna(last) else '—'}"
+    last_str = (
+        last.strftime("%Y-%m-%d %H:%M:%S")
+        if last is not None and pd.notna(last)
+        else "—"
     )
+    typer.echo(f"  Scanned    : {last_str}")
 
     if not df.empty and "dataset" in df.columns:
         typer.echo("\n  Dataset breakdown:")

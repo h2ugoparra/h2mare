@@ -173,6 +173,9 @@ def compile_default(
     """Fallback processor: open from catalog and interpolate to the base grid."""
     from loguru import logger
 
+    if catalog is None:
+        return None
+
     try:
         ds = catalog.open_dataset(
             start_date=date_range.start,

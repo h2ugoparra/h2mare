@@ -63,6 +63,7 @@ def resolve_date_range(
             f"Date range in store: {store_coverage.start.date()} -> {store_coverage.end.date()}"
         )
 
+    assert start is not None and end is not None
     if start > end:
         if inferred:
             return None

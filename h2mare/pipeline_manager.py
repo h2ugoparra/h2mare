@@ -78,6 +78,13 @@ class PipelineManager:
                 continue
 
             DownloaderClass = self.registry.get(var_config.source)
+            if DownloaderClass is None:
+                logger.warning(
+                    f"⚠️ No downloader registered for source '{var_config.source}' "
+                    f"(variable '{var_key}'). Skipping."
+                )
+                _failed = True
+                continue
 
             downloader = DownloaderClass(
                 var_key=var_key,
