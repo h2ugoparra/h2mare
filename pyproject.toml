@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "h2mare"
-version = "0.2.0"
+version = "0.2.1"
 description = "Downloader and data management tools for climate and ocean datasets."
 authors = [
     { name = "Hugo Parra", email = "h2ugo.parra@pm.me" }
