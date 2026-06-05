@@ -6,7 +6,9 @@ Main components:
 - models: Data models for configuration
 """
 
-__version__ = "0.1.0"
+from importlib.metadata import version
+
+__version__ = version("h2mare")
 
 from .config import get_settings
 from .models import SYSTEM_VAR_KEYS, AppConfig, KeyVarConfigEntry, VariablesConfig
