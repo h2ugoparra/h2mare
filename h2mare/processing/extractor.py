@@ -772,7 +772,26 @@ class Extractor:
         lat_coord = "lat" if "lat" in ds.coords else "y"
         lon_coord = "lon" if "lon" in ds.coords else "x"
         if lat_coord in ds.coords and lon_coord in ds.coords:
-            ds = ds.sel({lat_coord: slice(ymin, ymax), lon_coord: slice(xmin, xmax)})
+            # Pad by one grid cell so a sub-cell bbox (e.g. a short geometry on a
+            # coarse 0.5° grid) still captures surrounding cells. Without this, a
+            # bbox falling between cell centers yields an empty slice and clip
+            # fails with "Unable to determine bounds from coordinates".
+            lat_res = (
+                float(abs(ds[lat_coord][1] - ds[lat_coord][0]))
+                if ds[lat_coord].size > 1
+                else 0.0
+            )
+            lon_res = (
+                float(abs(ds[lon_coord][1] - ds[lon_coord][0]))
+                if ds[lon_coord].size > 1
+                else 0.0
+            )
+            ds = ds.sel(
+                {
+                    lat_coord: slice(ymin - lat_res, ymax + lat_res),
+                    lon_coord: slice(xmin - lon_res, xmax + lon_res),
+                }
+            )
 
         ds_computed = load_dataset_to_memory(ds)
 
