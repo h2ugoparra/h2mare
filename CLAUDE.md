@@ -95,9 +95,32 @@ on write; `idx.plot` is a `cached_property` invalidated after `add_data()`.
 
 ## Git workflow
 
-- Never commit to main directly
-- Branch naming: 'feat/', 'fix/', 'chore/'
-- Commit messages: conventional commits format
+Follows the global Git Workflow (see `~/.claude/CLAUDE.md`).
+
+**Branches**
+- `main` — production; stable, deployable, never commit directly.
+- `dev` — integration/staging; features land here first.
+- `feature/<name>` — one per feature, branched from `dev`, merged back to `dev`.
+
+**Per feature/fix**
+- Branch fresh: `git checkout dev && git pull origin dev && git checkout -b feature/<name>`.
+- Work, then `git add <file>` → `git commit -m "feat: ..."` → `git push -u origin feature/<name>`.
+- Resuming or dev moved? `git pull origin dev` *before* coding more — avoids most conflicts.
+
+**Merge via PR on GitHub (never local merge)**
+- Open PR (base `dev`), review the diff, approve, merge.
+- Clean up: `git checkout dev && git pull origin dev && git branch -d feature/<name>` and delete the remote branch.
+
+**Release**
+- PR `dev` → `main`, review, merge; then `git checkout main && git pull origin main`.
+- Optional tag: `git tag -a v1.0.0 -m "..." && git push origin v1.0.0`.
+
+**Rules**
+- Always branch from the latest `dev` — *pull before you branch*.
+- Even small fixes get a branch (`fix/<name>`) — never merge directly.
+- Commit with a type: `feat:` / `fix:` / `docs:` / `chore:` / `perf:` / `refactor:`; say what changed and why.
+- Branch with a matching prefix: `feature/` / `fix/` / `docs/` / `chore/` / `perf/` / `refactor/`.
+- Protect `main` and `dev` (require PR review).
 
 ## Coding Rules
 
