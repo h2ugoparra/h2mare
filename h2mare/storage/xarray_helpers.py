@@ -38,20 +38,36 @@ def get_dataset_encoding(ds: xr.Dataset) -> dict:
 
 
 def chunk_dataset(
-    ds: xr.Dataset, target_mb: int = 32, time_dim: str = "time"
+    ds: xr.Dataset,
+    target_mb: int = 32,
+    time_dim: str = "time",
+    spatial_chunk: int = 256,
 ) -> xr.Dataset:
     """
-    Convert all variables from float64 to float32 and chunk all dims to max size
-    while estimating a time size close to target_mb.
+    Convert all variables from float64 to float32 and chunk for storage,
+    keeping each chunk close to target_mb.
 
-    Spatial dims (lat/lon) are always kept at full size. Non-spatial, non-time
-    dims (e.g. depth) are chunked to 1 when the per-step payload exceeds
-    target_mb, preventing oversized chunks on 4-D datasets.
+    Spatial dims (lat/lon/x/y) are tiled to ``spatial_chunk`` cells (capped at the
+    dim size). Tiling is what makes point/geometry extraction cheap: a small bbox
+    reads only the overlapping tiles instead of decompressing the full grid for
+    every timestep. The time chunk then fills the remaining budget up to ~target_mb.
+    Non-spatial, non-time dims (e.g. depth) are chunked to 1 when a full-grid
+    per-step payload exceeds target_mb, preventing oversized chunks on 4-D datasets.
+
+    Trade-off: tiling speeds up subset reads but produces more, smaller chunk files
+    and makes full-grid single-timestep reads (e.g. a global daily map) costlier,
+    since the larger time chunk pulls neighbouring timesteps per tile.
+
+    Note: appends rewrite a period file at its *existing* chunking
+    (``write_append_zarr`` reads ``ds_old.chunksizes``), so changing this only
+    affects newly created files — existing stores keep their layout until
+    re-chunked explicitly.
 
     Args:
         ds: dataset to chunk.
         target_mb : Target uncompressed chunk size in MB.
         time_dim : Time dimension name.
+        spatial_chunk : Max cells per chunk along each spatial dim (lat/lon/x/y).
     """
     ds = xr_float64_to_float32(ds)
 
@@ -76,7 +92,10 @@ def chunk_dataset(
     for dim, size in ds.sizes.items():
         if dim == time_dim:
             continue
-        if dim.lower() in spatial_dims or bytes_per_step <= target_bytes:
+        if dim.lower() in spatial_dims:
+            # Tile spatial dims so a small bbox reads only the overlapping tiles.
+            dim_dict[dim] = min(spatial_chunk, int(size))
+        elif bytes_per_step <= target_bytes:
             dim_dict[dim] = size
         else:
             dim_dict[dim] = 1
