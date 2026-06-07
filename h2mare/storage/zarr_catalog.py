@@ -699,11 +699,25 @@ class ZarrCatalog:
             )
             return ds
 
+        # Pad by one grid cell so a sub-cell bbox (e.g. a short geometry on a
+        # coarse 0.5° grid) still captures surrounding cells. Without this, a
+        # bbox falling between cell centers yields an empty slice downstream.
+        lat_res = (
+            float(abs(ds[lat_coord][1] - ds[lat_coord][0]))
+            if ds[lat_coord].size > 1
+            else 0.0
+        )
+        lon_res = (
+            float(abs(ds[lon_coord][1] - ds[lon_coord][0]))
+            if ds[lon_coord].size > 1
+            else 0.0
+        )
+
         try:
             return ds.sel(
                 {
-                    lat_coord: slice(bbox.ymin, bbox.ymax),
-                    lon_coord: slice(bbox.xmin, bbox.xmax),
+                    lat_coord: slice(bbox.ymin - lat_res, bbox.ymax + lat_res),
+                    lon_coord: slice(bbox.xmin - lon_res, bbox.xmax + lon_res),
                 }
             )
         except Exception as e:

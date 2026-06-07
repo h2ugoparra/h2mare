@@ -97,12 +97,20 @@ class TestConvert360To180:
 
 
 class TestChunkDataset:
-    def test_2d_spatial_dims_stay_full_size(self):
-        """lat and lon are always kept at full size."""
+    def test_spatial_dims_below_tile_stay_full_size(self):
+        """lat/lon smaller than spatial_chunk are kept whole (single chunk)."""
         ds = _make_ds(n_time=10, n_lat=50, n_lon=60)
-        result = chunk_dataset(ds, target_mb=32)
+        result = chunk_dataset(ds, target_mb=32, spatial_chunk=256)
         assert result.chunks["lat"] == (50,)
         assert result.chunks["lon"] == (60,)
+
+    def test_spatial_dims_above_tile_are_tiled(self):
+        """lat/lon larger than spatial_chunk are split into tiles of that size."""
+        ds = _make_ds(n_time=10, n_lat=50, n_lon=60)
+        result = chunk_dataset(ds, target_mb=32, spatial_chunk=20)
+        # 50 -> 20,20,10 ; 60 -> 20,20,20
+        assert result.chunks["lat"] == (20, 20, 10)
+        assert result.chunks["lon"] == (20, 20, 20)
 
     def test_converts_float64_to_float32(self):
         """float64 variables are downcast to float32."""
