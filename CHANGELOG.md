@@ -5,6 +5,29 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-06-07
+
+### Changed
+
+- `chunk_dataset` now tiles spatial dims (lat/lon/x/y) to `spatial_chunk`
+  (default 256, capped at the dim size) instead of keeping them full-size, so
+  point/geometry extraction over a small bbox reads only the overlapping tiles
+  instead of decompressing the whole global slice per timestep. The time chunk
+  fills the remaining `target_mb` budget. Existing stores keep their layout
+  until re-chunked explicitly.
+- `Extractor` and `ZarrCatalog` now pad bbox slices by one grid cell, so a
+  sub-cell bbox (e.g. a short geometry on a coarse 0.5° grid) falling between
+  cell centers still captures surrounding cells instead of yielding an empty
+  slice.
+
+### Added
+
+- `scripts/profile_extract_chunking.py` — before/after profiling of the
+  spatial-tiling effect on contiguous and sparse (CSV point) reads, without
+  modifying the real store.
+- `scripts/rechunk_stores.py` — atomically rewrite existing Zarr stores into
+  spatial tiles + float32 (dry-run by default; `--apply` to write).
+
 ## [0.2.1] - 2026-06-03
 
 ### Changed
@@ -83,5 +106,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Numerous correctness fixes in the fronts processor, FSLE processing
   (bbox handling), extraction (NaN coordinates), and Parquet schema unioning.
 
+[0.3.0]: https://github.com/h2ugoparra/h2mare/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/h2ugoparra/h2mare/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/h2ugoparra/h2mare/compare/v0.1.1...v0.2.0
