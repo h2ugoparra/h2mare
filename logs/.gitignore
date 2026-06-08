@@ -1,0 +1,4 @@
+# Keep this directory tracked so Task Scheduler logging has a target,
+# but ignore the log files it holds.
+*
+!.gitignore
