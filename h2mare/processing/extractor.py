@@ -849,7 +849,13 @@ class Extractor:
             f"Extracting {vkey.upper()} data | {self.data.shape[0]} rows | {bounds}"
         )
 
-        ds = xr.open_dataset(data_path)
+        # The hi-res layer (shp path) is a spatially-tiled Zarr store; the 0.25°
+        # layer (csv path) stays netCDF. Open by suffix so the bbox .sel() below
+        # reads only the overlapping tiles instead of the full grid.
+        if data_path.suffix == ".zarr":
+            ds = xr.open_zarr(data_path)
+        else:
+            ds = xr.open_dataset(data_path)
         ds_bbox = BBox.from_dataset(ds)
 
         if not bounds.overlaps(ds_bbox):
