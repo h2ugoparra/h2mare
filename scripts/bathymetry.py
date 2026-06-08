@@ -12,17 +12,21 @@ Stage 2 reads stage 1's output from disk, so either stage can be re-run on its
 own (e.g. re-tile without recomputing the 0.25° layer, or vice versa).
 """
 
+import time
 import warnings
 from pathlib import Path
 from typing import NamedTuple
 
 import xarray as xr
+from loguru import logger
 
 from h2mare.config import get_settings
 from h2mare.types import BBox
 from h2mare.utils import create_filename_label, resolve_store_path
 
-warnings.filterwarnings("ignore")
+# Narrow to RuntimeWarning (matches processing/compiler.py): silences the noisy
+# all-NaN / empty-slice reduction warnings without hiding Deprecation/Future ones.
+warnings.filterwarnings("ignore", category=RuntimeWarning)
 
 DX = 0.25  # target coarse-grid cell size (degrees)
 
@@ -54,6 +58,7 @@ def build_merged_layer(cfg: BathyConfig) -> Path:
     files = list(surf15_dir.glob("ETOPO_2022_v1_15s_*_surface.nc"))
     if not files:
         raise FileNotFoundError(f"No 15s ETOPO tiles found under {surf15_dir}")
+    logger.info(f"Merging {len(files)} 15s tile(s) from {surf15_dir}")
 
     # sortby before slicing: slice(min, max) only selects correctly on ascending
     # coords. ETOPO tiles are ascending today, but a descending batch would make
@@ -72,6 +77,9 @@ def build_merged_layer(cfg: BathyConfig) -> Path:
             f"bbox {cfg.bbox} selects no pixels from the 15s tiles "
             f"(lat={ds.lat.size}, lon={ds.lon.size}) — check bbox vs tile coverage"
         )
+    logger.info(
+        f"Selected grid: lat={ds.lat.size}, lon={ds.lon.size} | bbox={cfg.bbox}"
+    )
 
     store_path = (
         cfg.var_dir
@@ -84,8 +92,11 @@ def build_merged_layer(cfg: BathyConfig) -> Path:
     # chunks on write ("would overlap multiple Dask chunks").
     for var in ds.variables:
         ds[var].encoding.pop("chunks", None)
+    logger.info(f"Writing tiled Zarr (tile={TILE}) -> {store_path}")
+    t0 = time.perf_counter()
     ds.to_zarr(store_path, mode="w")
     ds.close()
+    logger.success(f"Merged layer written in {time.perf_counter() - t0:.1f}s")
     return store_path
 
 
@@ -93,7 +104,19 @@ def build_coarse_layer(cfg: BathyConfig, merged: Path) -> Path:
     """Coarsen the merged 15s layer to a 0.25° mean/std netCDF and return its path."""
     da = xr.open_zarr(merged)["z"]
 
-    coarsen_factor = int(round(DX / (da.lon.values[1] - da.lon.values[0])))
+    # Guard the factor: DX must be a near-integer multiple of the native cell
+    # size, otherwise round() would silently pick a wrong window size for a
+    # surprise input resolution.
+    native_res = float(da.lon.values[1] - da.lon.values[0])
+    ratio = DX / native_res
+    coarsen_factor = round(ratio)
+    if abs(ratio - coarsen_factor) > 1e-3:
+        raise ValueError(
+            f"native resolution {native_res:.6f}° does not divide DX={DX}° to an "
+            f"integer factor (ratio={ratio:.4f}); check the merged grid"
+        )
+    logger.info(f"Coarsening {merged.name} by factor {coarsen_factor} -> {DX}°")
+
     da_coarse = da.coarsen(
         lat=coarsen_factor,
         lon=coarsen_factor,
@@ -113,6 +136,7 @@ def build_coarse_layer(cfg: BathyConfig, merged: Path) -> Path:
         / f"etopo_0.25deg_{create_filename_label(cfg.bbox, 'year')}_mean-std_surface.nc"
     )
     ds_new.to_netcdf(out_path)
+    logger.success(f"Coarse mean/std written -> {out_path}")
     return out_path
 
 
