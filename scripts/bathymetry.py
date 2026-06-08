@@ -52,15 +52,26 @@ def build_merged_layer(cfg: BathyConfig) -> Path:
     """Merge the 15s tiles into a spatially-tiled Zarr store and return its path."""
     surf15_dir = cfg.var_dir / "15s_resolution/surface"
     files = list(surf15_dir.glob("ETOPO_2022_v1_15s_*_surface.nc"))
+    if not files:
+        raise FileNotFoundError(f"No 15s ETOPO tiles found under {surf15_dir}")
 
+    # sortby before slicing: slice(min, max) only selects correctly on ascending
+    # coords. ETOPO tiles are ascending today, but a descending batch would make
+    # the slice silently return an empty array — sort defensively.
     ds = (
         xr.open_mfdataset(files, combine="by_coords")
         .drop_vars(["crs"])
+        .sortby(["lat", "lon"])
         .sel(
             lon=slice(cfg.bbox.xmin, cfg.bbox.xmax),
             lat=slice(cfg.bbox.ymin, cfg.bbox.ymax),
         )
     )
+    if ds.lat.size == 0 or ds.lon.size == 0:
+        raise ValueError(
+            f"bbox {cfg.bbox} selects no pixels from the 15s tiles "
+            f"(lat={ds.lat.size}, lon={ds.lon.size}) — check bbox vs tile coverage"
+        )
 
     store_path = (
         cfg.var_dir
