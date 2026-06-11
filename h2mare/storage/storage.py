@@ -14,6 +14,7 @@ import pandas as pd
 import xarray as xr
 from loguru import logger
 
+from h2mare.storage.xarray_helpers import snap_grid_coords
 from h2mare.types import BBox, DateRange
 
 
@@ -30,6 +31,13 @@ def write_append_zarr(
         ds: New dataset to write/append
         path: Destination zarr path, built by the caller via ``ZarrCatalog.build_file_path()``
     """
+    # Canonicalize grid labels before any write/append so float-noise drift —
+    # between a source's reprocessed periods, or between new data and a legacy
+    # store on a slightly different grid — can't union into a doubled axis. The
+    # old side is snapped too in _append_data, so an append self-heals the store.
+    # Idempotent: a no-op for data already on the rounded grid.
+    ds = snap_grid_coords(ds)
+
     if path.exists():
         logger.debug(f"{path.name} exists — appending.")
         _append_data(var_key, ds, path)
@@ -88,7 +96,10 @@ def _append_data(var_key: str, ds_new: xr.Dataset, path: Path) -> None:
         logger.info(
             f"Variable-addition: merging {sorted(ds_new_vars)} into {path.name}."
         )
-        ds_out = xr.merge([ds_old, ds_new], join="outer")
+        # Snap the on-disk grid too: ds_new is already snapped (write_append_zarr),
+        # so aligning ds_old here keeps the outer join from unioning a legacy
+        # noise-drifted grid against the rounded one.
+        ds_out = xr.merge([snap_grid_coords(ds_old), ds_new], join="outer")
         chunk_sizes = {dim: sizes[0] for dim, sizes in ds_old.chunksizes.items()}
         ds_out = ds_out.chunk(chunk_sizes)
         src_to_close.append(ds_old)
@@ -101,7 +112,12 @@ def _append_data(var_key: str, ds_new: xr.Dataset, path: Path) -> None:
         ds_resolved = _resolve_overlap(ds_new, path)
 
         if ds_resolved is not None:
-            ds_out = xr.concat([ds_resolved, ds_new], dim="time", data_vars="minimal")
+            # ds_new is already snapped (write_append_zarr); snap the retained
+            # head of the existing store so concat aligns instead of unioning a
+            # legacy noise-drifted grid against the rounded one.
+            ds_out = xr.concat(
+                [snap_grid_coords(ds_resolved), ds_new], dim="time", data_vars="minimal"
+            )
             # Rechunk to match the existing zarr layout and avoid dask chunk-alignment errors.
             chunk_sizes = {
                 dim: sizes[0] for dim, sizes in ds_resolved.chunksizes.items()

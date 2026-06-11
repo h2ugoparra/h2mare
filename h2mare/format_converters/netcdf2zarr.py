@@ -18,7 +18,7 @@ from h2mare.config import AppConfig, get_settings
 from h2mare.format_converters.base import BaseConverter
 from h2mare.processing.registry import PROCESSORS
 from h2mare.storage.storage import write_append_zarr
-from h2mare.storage.xarray_helpers import chunk_dataset, rename_dims
+from h2mare.storage.xarray_helpers import chunk_dataset, rename_dims, snap_grid_coords
 from h2mare.storage.zarr_catalog import ZarrCatalog
 from h2mare.types import TimeResolution
 from h2mare.utils.files_io import safe_move_files, safe_rmtree
@@ -376,6 +376,10 @@ class Netcdf2Zarr(BaseConverter):
         processor = PROCESSORS.get(self.var_key)
         if processor:
             ds = processor(ds, self.var_config, self.var_key)
+
+        # Snap lon/lat to a canonical grid so float-noise drift between a source's
+        # reprocessed periods can't union into a doubled axis on read/append.
+        ds = snap_grid_coords(ds)
 
         return chunk_dataset(ds)
 

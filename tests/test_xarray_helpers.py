@@ -11,6 +11,7 @@ from h2mare.storage.xarray_helpers import (
     get_dataset_encoding,
     have_vars_unique_values,
     rename_dims,
+    snap_grid_coords,
     unified_time_chunk,
 )
 
@@ -172,6 +173,46 @@ class TestChunkDataset:
         # With depth=1, lat=300, lon=300: 1*300*300*4 = 360 000 bytes ≈ 0.34 MB
         # time_chunk = floor(1 MB / 0.34 MB) = 2 → must be > 1
         assert result.chunks["time"][0] > 1
+
+
+class TestSnapGridCoords:
+    def test_noise_drift_collapses_to_rounded_grid(self):
+        """Labels off the grid by sub-4dp float noise snap to the rounded grid."""
+        ds = xr.Dataset(
+            coords={"lon": [-14.91671, -14.83329], "lat": [40.00001, 40.08334]}
+        )
+        out = snap_grid_coords(ds)
+        np.testing.assert_array_equal(out.lon.values, [-14.9167, -14.8333])
+        np.testing.assert_array_equal(out.lat.values, [40.0, 40.0833])
+
+    def test_two_noise_drifted_grids_become_identical(self):
+        """The core fix: two grids 1.5e-5 apart snap to bit-identical labels."""
+        a = xr.Dataset(coords={"lon": [10.000004, 10.083337]})
+        b = xr.Dataset(coords={"lon": [10.000019, 10.083322]})
+        assert not np.array_equal(a.lon.values, b.lon.values)
+        assert np.array_equal(
+            snap_grid_coords(a).lon.values, snap_grid_coords(b).lon.values
+        )
+
+    def test_finer_than_4dp_grid_left_unchanged(self):
+        """A genuinely finer grid (cells <1e-4 apart) is refused, never merged."""
+        ds = xr.Dataset(coords={"lon": [1.00001, 1.00002]})
+        out = snap_grid_coords(ds)
+        np.testing.assert_array_equal(out.lon.values, ds.lon.values)
+
+    def test_clean_grid_is_noop(self):
+        """A grid already on the rounded grid (e.g. 0.25°) is returned unchanged."""
+        ds = xr.Dataset(
+            coords={"lon": [-10.0, -9.75, -9.5], "lat": [30.0, 30.25, 30.5]}
+        )
+        out = snap_grid_coords(ds)
+        np.testing.assert_array_equal(out.lon.values, ds.lon.values)
+        np.testing.assert_array_equal(out.lat.values, ds.lat.values)
+
+    def test_missing_coords_are_ignored(self):
+        ds = xr.Dataset({"x": (["a"], np.ones(3))}, coords={"a": [0, 1, 2]})
+        out = snap_grid_coords(ds)
+        assert "lon" not in out.coords and "lat" not in out.coords
 
 
 class TestRenameDims:
