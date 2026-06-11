@@ -210,3 +210,41 @@ def rename_dims(ds: xr.Dataset) -> xr.Dataset:
     if "valid_time" in ds.sizes:
         mapping["valid_time"] = "time"
     return ds.rename(mapping)
+
+
+# Decimal places lon/lat labels are rounded to. The finest grid in the pipeline
+# is CMEMS' 1/12° (~0.0833°) product; its cells sit ~5500× farther apart than
+# the ~1.5e-5° float noise a source introduces when it reprocesses/re-grids a
+# product. Rounding to 4 dp (~11 m at the equator) erases that noise without ever
+# merging two real cells.
+GRID_COORD_DECIMALS = 4
+
+
+def snap_grid_coords(ds: xr.Dataset, decimals: int = GRID_COORD_DECIMALS) -> xr.Dataset:
+    """Round lon/lat coordinate labels to a canonical precision.
+
+    Source providers occasionally reprocess a product and shift its grid by
+    floating-point noise (CMEMS seapodym moved its longitudes by ~1.5e-5° from
+    2023 on). When period files carrying such near-but-unequal labels are later
+    combined — ``xr.open_mfdataset(join="outer")`` on read, or ``xr.concat`` on
+    append — the mismatched labels get *unioned* instead of aligned, doubling the
+    axis and NaN-filling each block at the other grid's phantom cells. Snapping
+    every file's labels to the same rounded grid keeps them bit-identical so they
+    align rather than union.
+    """
+    new_coords = {}
+    for name in ("lon", "lat"):
+        if name not in ds.coords:
+            continue
+        rounded = np.round(ds[name].values, decimals)
+        if np.unique(rounded).size != rounded.size:
+            # Rounding would collapse genuinely distinct cells — leave it alone
+            # rather than silently corrupt a finer grid than we assumed.
+            logger.warning(
+                f"snap_grid_coords: rounding '{name}' to {decimals} dp would merge "
+                f"distinct cells ({rounded.size} -> {np.unique(rounded).size}); "
+                "leaving it unchanged."
+            )
+            continue
+        new_coords[name] = rounded
+    return ds.assign_coords(new_coords) if new_coords else ds
