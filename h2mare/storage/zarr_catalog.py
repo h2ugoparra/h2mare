@@ -19,7 +19,7 @@ from loguru import logger
 from h2mare.config import AppConfig, get_settings
 from h2mare.storage.zarr_scanner import ZarrDirectoryScanner
 from h2mare.types import BBox, DateLike, DateRange, TimeResolution
-from h2mare.utils.datetime_utils import normalize_date
+from h2mare.utils.datetime_utils import normalize_dates
 from h2mare.utils.labels import create_label_from_dataset
 from h2mare.utils.paths import resolve_store_path
 from h2mare.utils.spatial import sel_padded_bbox
@@ -305,15 +305,11 @@ class ZarrCatalog:
             {'/path/1998.zarr': [Timestamp('1998-01-15')],
              '/path/2020.zarr': [Timestamp('2020-06-20')]}
         """
-        # Normalize input to list of timestamps
-        date_list = normalize_date(dates)
-
+        date_list = normalize_dates(dates)
         if not date_list:
             return {}
 
         result: dict[str, list[pd.Timestamp]] = defaultdict(list)
-
-        date_list = [date_list] if isinstance(date_list, pd.Timestamp) else date_list
 
         # Snapshot the catalog once: with auto_refresh=True every .df access
         # re-stats the store directory, which per-date adds up to one directory
@@ -456,9 +452,7 @@ class ZarrCatalog:
         chunks: dict | str | None,
     ) -> xr.Dataset:
         """Open dataset for specific sparse dates."""
-        # Normalize dates
-        date_list = normalize_date(dates)
-
+        date_list = normalize_dates(dates)
         if not date_list:
             raise ValueError("No valid dates provided")
 
@@ -490,8 +484,6 @@ class ZarrCatalog:
         ds = self._normalize_time(ds)
 
         # Select only requested dates
-        if isinstance(date_list, pd.Timestamp):
-            date_list = [date_list]
         requested_dates = pd.DatetimeIndex(date_list).normalize()
         available_dates = pd.DatetimeIndex(ds.time.values).normalize()
 
