@@ -255,6 +255,25 @@ class TestGetTimeCoverage:
         assert cov.start.date() == date(2021, 3, 1)
         assert cov.end.date() == date(2022, 9, 1)
 
+    def test_min_max_found_across_split_partition_files(self, tmp_path):
+        # Regression: when a boundary partition is split across several files
+        # (row-count splits), only the alphabetically first/last file used to be
+        # scanned — here the true min lives in b.parquet and the true max in
+        # a.parquet, so the old shortcut reported 3/10 → 3/20.
+        part = tmp_path / "store" / "year=2021" / "month=3"
+        part.mkdir(parents=True)
+        make_grid_df([date(2021, 3, 10), date(2021, 3, 28)]).write_parquet(
+            part / "a.parquet"
+        )
+        make_grid_df([date(2021, 3, 1), date(2021, 3, 20)]).write_parquet(
+            part / "b.parquet"
+        )
+
+        store = ParquetStore(tmp_path / "store")
+        cov = store.get_time_coverage()
+        assert cov.start.date() == date(2021, 3, 1)
+        assert cov.end.date() == date(2021, 3, 28)
+
 
 class TestGetVarCoverage:
     def test_empty_store_returns_empty(self, tmp_path):

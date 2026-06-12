@@ -9,6 +9,7 @@ import xarray as xr
 
 from h2mare.models import AppConfig
 from h2mare.storage.zarr_catalog import ZarrCatalog
+from h2mare.types import BBox
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -374,3 +375,26 @@ class TestVarsNonnullEnd:
 
         assert cov is not None
         assert cov.end == pd.Timestamp("2026-05-15")
+
+
+# ---------------------------------------------------------------------------
+# get_bbox
+# ---------------------------------------------------------------------------
+
+
+class TestGetBbox:
+    def test_returns_none_when_unset(self, tmp_path):
+        catalog = _make_catalog(tmp_path)
+        assert catalog.get_bbox() is None
+
+    def test_converts_tuple_to_bbox(self, tmp_path):
+        catalog = _make_catalog(tmp_path)
+        catalog.var_config.bbox = (-10.0, 30.0, 0.0, 40.0)
+        assert catalog.get_bbox() == BBox(-10.0, 30.0, 0.0, 40.0)
+
+    def test_returns_bbox_instance_unchanged(self, tmp_path):
+        # Regression: a BBox-typed config bbox used to fall through the
+        # isinstance check and silently return None.
+        catalog = _make_catalog(tmp_path)
+        catalog.var_config.bbox = BBox(-10.0, 30.0, 0.0, 40.0)
+        assert catalog.get_bbox() == BBox(-10.0, 30.0, 0.0, 40.0)
