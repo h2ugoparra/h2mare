@@ -224,6 +224,53 @@ class TestResolveDimsOverlap:
         result = store.resolve_dims_overlap(df_prep)
         assert result is True
 
+    def test_partial_window_backfill_preserves_earlier_column_values(self, tmp_path):
+        """Regression: a backfill window smaller than the partition used to
+        null the backfilled column for every row outside the window — the
+        existing side EXCLUDEd the column wholesale, so rows df_new did not
+        cover got null from the JOIN (observed: chl May 1-26 erased by a
+        May 27-31 backfill)."""
+        store = _store(tmp_path)
+        df = make_grid_df(
+            [date(2021, 5, d) for d in (1, 2, 27, 28)],
+            variables={"sst": 20.0, "chl": 0.5},
+        )
+        # chl lags: rows exist for May 27-28 but chl is still null there
+        df = df.with_columns(
+            pl.when(pl.col("time") >= date(2021, 5, 27))
+            .then(None)
+            .otherwise(pl.col("chl"))
+            .alias("chl")
+        )
+        store.add_data(df)
+
+        # Backfill chl for May 27-28 only (window smaller than the partition)
+        store.add_data(
+            make_grid_df([date(2021, 5, 27), date(2021, 5, 28)], variables={"chl": 0.9})
+        )
+
+        files = list(store.parquet_root.rglob("*.parquet"))
+        out = pl.concat([pl.read_parquet(f) for f in files])
+        early = out.filter(pl.col("time") < date(2021, 5, 27))
+        late = out.filter(pl.col("time") >= date(2021, 5, 27))
+        assert early["chl"].null_count() == 0, "earlier chl values were wiped"
+        assert late["chl"].null_count() == 0, "backfill window not applied"
+        assert float(late["chl"].mean()) == pytest.approx(0.9, abs=0.2)
+        assert out["sst"].null_count() == 0, "unrelated column affected"
+
+    def test_df_new_null_wins_inside_its_window(self, tmp_path):
+        """Within rows df_new covers, the fresh value takes precedence even
+        when it is null — re-supplied data is authoritative for its range."""
+        store = self._setup(tmp_path, [date(2021, 1, 1)], variables={"sst": 5.0})
+        df_new = make_grid_df([date(2021, 1, 1)], variables={"sst": 1.0}).with_columns(
+            pl.lit(None, dtype=pl.Float64).alias("sst")
+        )
+        store.add_data(df_new)
+
+        files = list(store.parquet_root.rglob("*.parquet"))
+        out = pl.concat([pl.read_parquet(f) for f in files])
+        assert out["sst"].null_count() == len(out)
+
     def test_merge_spanning_multiple_partitions(self, tmp_path):
         """Each affected partition is merged independently — a new column
         spanning several month partitions must land in all of them, with

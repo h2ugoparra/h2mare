@@ -504,38 +504,56 @@ class ParquetStore:
                         f"hive_partitioning=true) LIMIT 0"
                     ).fetchall()
                 }
-                partially_written = (new_cols & cols_here) - self.partition_cols
-                if partially_written:
-                    logger.debug(
-                        f"Partially-written columns in {partition} "
-                        f"(excluded from existing side): {partially_written}"
-                    )
-                # Exclude from the existing side: time-derived partition cols
-                # (the write is per partition, so they are never needed on the
-                # merged rows), columns df_new re-supplies, and partially-written
-                # new columns from a previously interrupted run — each only when
-                # actually present here, since EXCLUDE of a missing column is a
-                # binder error.
-                excl = (
-                    set(time_part_cols) | duplicated_cols | partially_written
-                ) & cols_here
+                # Columns carried by BOTH sides (re-supplied duplicates, or new
+                # columns partially written by an interrupted run). df_new's
+                # value must win only where df_new actually has the row; rows
+                # outside df_new's date range keep their stored values. The old
+                # blanket EXCLUDE of these columns from the existing side
+                # nulled them for every row df_new didn't cover — a backfill
+                # window smaller than the partition wiped the column's earlier
+                # days (observed: chl May 1-26 erased by a May 27-31 backfill).
+                overlap_cols = sorted(
+                    ((duplicated_cols | new_cols) & cols_here) - self.partition_cols
+                )
+                # Exclude time-derived partition cols (the write is per
+                # partition, so they are never needed on the merged rows) and
+                # the overlapping data cols — the latter re-enter aliased so
+                # they can be reconciled row-by-row after the JOIN. EXCLUDE of
+                # a missing column is a binder error, hence the cols_here cap.
+                excl = (set(time_part_cols) & cols_here) | set(overlap_cols)
                 exclude_clause = f" EXCLUDE ({', '.join(excl)})" if excl else ""
+                alias_sql = "".join(f', "{c}" AS "{c}__h2m_old"' for c in overlap_cols)
 
                 df_part = df.filter(self._partition_filter_expr(partition))
-                conn.register(
-                    "df_new",
-                    df_part.drop(time_part_cols) if time_part_cols else df_part,
-                )
+                if time_part_cols:
+                    df_part = df_part.drop(time_part_cols)
+                if overlap_cols:
+                    # Row marker: TRUE on rows df_new contributed, null on
+                    # rows that exist only in the stored partition.
+                    df_part = df_part.with_columns(pl.lit(True).alias("__h2m_from_new"))
+                conn.register("df_new", df_part)
                 merged = conn.execute(
                     f"""
                     WITH existing AS (
-                        SELECT *{exclude_clause}
+                        SELECT *{exclude_clause}{alias_sql}
                         FROM read_parquet('{part_glob}', hive_partitioning = true)
                     )
                     SELECT * FROM existing
                     FULL OUTER JOIN df_new USING ({key_cols})
                 """
                 ).pl()
+
+                if overlap_cols:
+                    merged = merged.with_columns(
+                        [
+                            pl.when(pl.col("__h2m_from_new"))
+                            .then(pl.col(c))
+                            .otherwise(pl.col(f"{c}__h2m_old"))
+                            .alias(c)
+                            for c in overlap_cols
+                        ]
+                    ).drop(["__h2m_from_new"] + [f"{c}__h2m_old" for c in overlap_cols])
+
                 partition_data = self._align_to_schema(merged, include_partitions=False)
                 self.atomic_partition_write(partition_data, partition)
 
