@@ -5,6 +5,7 @@ Extract data based on csv or shapefile format files from datasets in zarr format
 from __future__ import annotations
 
 import json
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Optional, Union, overload
@@ -21,7 +22,7 @@ from scipy.spatial import KDTree
 from h2mare import AppConfig, get_settings
 from h2mare.storage.zarr_catalog import ZarrCatalog
 from h2mare.types import BBox
-from h2mare.utils.logging import log_time
+from h2mare.utils.logging import configure_extraction_logging, log_time
 from h2mare.utils.paths import resolve_store_path
 from h2mare.utils.spatial import sel_padded_bbox
 
@@ -97,7 +98,9 @@ def _extract_geometry(
         return result
 
     except (OSError, ValueError, RuntimeError) as e:
-        logger.error(f"Extraction failed for id={id}, date={date}: {e}")
+        # Per-geometry detail only — thousands of geometries would flood the
+        # log at ERROR. The end-of-run null summary carries the aggregate.
+        logger.debug(f"Extraction failed for id={id}, date={date}: {e}")
 
     # --- Return NaNs for failed geometry to preserve structure ---
     nan_result: dict = {index_col: id}
@@ -147,7 +150,8 @@ def _extract_geometry_bathy(
         return result
 
     except (OSError, ValueError, RuntimeError) as e:
-        logger.error(f"Extraction failed for id={id}: {e}")
+        # Per-geometry detail only — see _extract_geometry.
+        logger.debug(f"Extraction failed for id={id}: {e}")
 
     # --- Return NaNs for failed geometry to preserve structure ---
     nan_result: dict = {index_col: id}
@@ -177,6 +181,7 @@ class Extractor:
         app_config: Optional[AppConfig] = None,
         store_root: Optional[Union[str, Path]] = None,
         crs: int | None = 4326,
+        log_file: Optional[Union[str, Path]] = None,
     ):
         """
         Extract data from shp/csv file_path of open file
@@ -190,8 +195,13 @@ class Extractor:
             app_config (AppConfig, optional): Dataclass with environmental data specifics. Defaults to cfg.
             store_root (Union[str, Path], optional): Path for environmental data main folder. Defaults to STORE_ROOT.
             crs (int | None, optional): Projection EPSG code for geometry extraction. Defaults to 4326.
+            log_file (str | Path, optional): Extraction log file for this session.
+                Defaults to LOGS_DIR/extractor.log (first Extractor in the
+                process decides; subsequent values are ignored).
 
         """
+        configure_extraction_logging(log_path=log_file)
+
         self.time_col = time_col if time_col is not None else "time"
         self.index_col = index_col if index_col is not None else _AUTO_INDEX_SENTINEL
         self.lon_col = lon_col if lon_col is not None else "lon"
@@ -232,12 +242,12 @@ class Extractor:
         if has_time_component:
             time_is_uniform = data["time"].dt.time.nunique() == 1
             if time_is_uniform:
-                logger.info("Uniform time component detected. Truncating to date.")
+                logger.debug("Uniform time component detected. Truncating to date.")
                 data["time"] = data["time"].dt.normalize()
             else:
-                logger.info("Variable time component detected. Keeping full datetime.")
+                logger.debug("Variable time component detected. Keeping full datetime.")
         else:
-            logger.info("No time component detected. Keeping as date.")
+            logger.debug("No time component detected. Keeping as date.")
 
         return data
 
@@ -249,14 +259,17 @@ class Extractor:
         if isinstance(file_path, gpd.GeoDataFrame):
             data_base = file_path.copy()
             self.input_type = "shp"
+            self.input_label = "<in-memory GeoDataFrame>"
 
         elif isinstance(file_path, pd.DataFrame):
             data_base = file_path.copy()
             self.input_type = "csv"
+            self.input_label = "<in-memory DataFrame>"
 
         else:
             file_path = Path(file_path)
             suffix = file_path.suffix.lower()
+            self.input_label = file_path.name
 
             if suffix == ".shp":
                 data_base = gpd.read_file(file_path)
@@ -287,12 +300,12 @@ class Extractor:
         if self.index_col == _AUTO_INDEX_SENTINEL:
             if _AUTO_INDEX_SENTINEL in data.columns:
                 # Reuse existing __row_id__ from a previous run — do not recreate
-                logger.info(
+                logger.debug(
                     f"Found existing '{_AUTO_INDEX_SENTINEL}' column. Reusing as index."
                 )
                 data = data.set_index(_AUTO_INDEX_SENTINEL)
             else:
-                logger.info(
+                logger.debug(
                     "No index column name provided. Creating sequential '__row_id__' indexation."
                 )
                 data = data.reset_index(drop=True)
@@ -518,7 +531,6 @@ class Extractor:
         n_workers: int = ...,
     ) -> None: ...
 
-    @log_time
     def run(
         self,
         var_dict: Optional[
@@ -545,6 +557,45 @@ class Extractor:
             >>> extractor = Extractor(file_path=input_path, time_col='ls_date', index_col='idlance')
             >>> results = extractor.run(output_path, var_dict=var_dict, n_workers=12)
         """
+        t0 = time.perf_counter()
+        # job="extract" routes every message in this scope (including from the
+        # storage layer) to the extraction sink; see configure_extraction_logging.
+        with logger.contextualize(job="extract"):
+            out_label = str(output_path) if output_path is not None else "DataFrame"
+            logger.info(
+                f"Extraction started: input={self.input_label} "
+                f"({self.data.shape[0]} rows, {self.input_type}) → output={out_label}"
+            )
+
+            df_processed, all_succeeded = self._run_impl(var_dict, n_workers)
+
+            if output_path is not None:
+                self._save_results(df_processed, Path(output_path))
+
+            n_new = sum(1 for c in df_processed.columns if c not in self.data.columns)
+            outcome = (
+                f"input={self.input_label} → output={out_label}, "
+                f"{len(df_processed)} rows × {n_new} new column(s) "
+                f"in {time.perf_counter() - t0:.1f}s"
+            )
+            if all_succeeded:
+                logger.success(f"Extraction complete: {outcome}")
+            else:
+                logger.warning(
+                    f"Extraction finished with errors: {outcome} — "
+                    "checkpoint preserved for resume."
+                )
+
+        if output_path is not None:
+            return None
+        return df_processed
+
+    def _run_impl(
+        self,
+        var_dict: Optional[Union[str, list[str], dict[str, str | list[str] | None]]],
+        n_workers: int,
+    ) -> tuple[pd.DataFrame, bool]:
+        """Extraction loop body; returns (results, all_succeeded)."""
         # n_workers only drives the ThreadPoolExecutor in shp (geometry) extraction;
         # csv (point) extraction is vectorized and ignores it — so don't advertise it there.
         if self.input_type == "shp":
@@ -578,37 +629,44 @@ class Extractor:
                 logger.info(f"Skipping {var_key}: already extracted.")
                 continue
 
+            t0 = time.perf_counter()
             try:
-                result = self.process_single_varkey(
-                    var_key=var_key, vars=vars_, n_workers=n_workers
-                )
-
-                result.drop(
-                    columns=["time", "lat", "lon", "geom"],
-                    errors="ignore",
-                    inplace=True,
-                )
-                if result.index.duplicated().any():
-                    logger.warning(
-                        f"Duplicate index values in '{var_key}' result — keeping first occurrence."
+                with logger.contextualize(var=var_key):
+                    result = self.process_single_varkey(
+                        var_key=var_key, vars=vars_, n_workers=n_workers
                     )
-                    result = result[~result.index.duplicated(keep="first")]
-                df_processed = df_processed.join(result)
 
-                # Mark var_key as completed and save checkpoint atomically
-                completed_keys.add(var_key)
-                staging = tmp_path.with_suffix(".tmp")
-                df_processed.reset_index().to_feather(staging)
-                staging.replace(tmp_path)
-                _save_completed_keys(tmp_path, completed_keys)
-                logger.info(f"Checkpoint saved to {tmp_path}")
+                    result.drop(
+                        columns=["time", "lat", "lon", "geom"],
+                        errors="ignore",
+                        inplace=True,
+                    )
+                    if result.index.duplicated().any():
+                        logger.warning(
+                            f"Duplicate index values in '{var_key}' result — keeping first occurrence."
+                        )
+                        result = result[~result.index.duplicated(keep="first")]
+                    df_processed = df_processed.join(result)
+
+                    # Mark var_key as completed and save checkpoint atomically
+                    completed_keys.add(var_key)
+                    staging = tmp_path.with_suffix(".tmp")
+                    df_processed.reset_index().to_feather(staging)
+                    staging.replace(tmp_path)
+                    _save_completed_keys(tmp_path, completed_keys)
+                    logger.debug(f"Checkpoint saved to {tmp_path}")
+
+                    logger.success(
+                        f"{var_key}: {len(result)} row(s), "
+                        f"{result.shape[1]} column(s) "
+                        f"in {time.perf_counter() - t0:.1f}s"
+                    )
 
             except Exception as e:
-                logger.error(f"Error processing '{var_key}': {e}")
+                logger.opt(exception=True).error(f"Error processing '{var_key}': {e}")
                 all_succeeded = False
                 continue
 
-        logger.success("Extraction completed!")
         logger.info("=" * 60)
         logger.info("  Number of null values per variable:")
         result_cols = [c for c in df_processed.columns if c not in self.data.columns]
@@ -619,16 +677,8 @@ class Extractor:
         if all_succeeded:
             tmp_path.unlink(missing_ok=True)
             _keys_path(tmp_path).unlink(missing_ok=True)
-        else:
-            logger.warning(
-                "Some var_keys failed. Checkpoint files preserved for resume."
-            )
 
-        if output_path is not None:
-            self._save_results(df_processed, Path(output_path))
-            return
-
-        return df_processed
+        return df_processed, all_succeeded
 
     @staticmethod
     def _nearest_grid_indices(
