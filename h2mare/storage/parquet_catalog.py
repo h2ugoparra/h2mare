@@ -86,10 +86,9 @@ class ParquetCatalog:
         """
         parquet_root = self._store.parquet_root
         _partition_by = self._store._partition_by
-        all_files = sorted(parquet_root.rglob("*.parquet"))
 
         if dates is None:
-            return all_files
+            return sorted(parquet_root.rglob("*.parquet"))
 
         has_year = "year" in _partition_by
         has_month = "month" in _partition_by
@@ -98,31 +97,26 @@ class ParquetCatalog:
             start, end = map(to_datetime, dates)
 
             if has_year and has_month:
-                valid_partitions: set[tuple[int, int]] = set()
+                # Glob only the candidate partition directories — walking the
+                # whole tree first scales with store size, not query size.
+                files: list[Path] = []
                 y, m = start.year, start.month
                 while (y, m) <= (end.year, end.month):
-                    valid_partitions.add((y, m))
+                    files.extend(
+                        (parquet_root / f"year={y}" / f"month={m}").rglob("*.parquet")
+                    )
                     m += 1
                     if m > 12:
                         m = 1
                         y += 1
-                return [
-                    f
-                    for f in all_files
-                    if any(
-                        f"year={y}/month={mo}" in f.as_posix()
-                        for y, mo in valid_partitions
-                    )
-                ]
+                return sorted(files)
             elif has_year:
-                valid_years = set(range(start.year, end.year + 1))
-                return [
-                    f
-                    for f in all_files
-                    if any(f"year={y}" in f.as_posix() for y in valid_years)
-                ]
+                files = []
+                for y in range(start.year, end.year + 1):
+                    files.extend((parquet_root / f"year={y}").rglob("*.parquet"))
+                return sorted(files)
             else:
-                return all_files
+                return sorted(parquet_root.rglob("*.parquet"))
 
         elif isinstance(dates, list):
             if has_year and has_month:
@@ -130,20 +124,17 @@ class ParquetCatalog:
                 for d in dates:
                     try:
                         dt = to_datetime(d)
-                        year, month = dt.year, dt.month
-                        patterns = (
-                            f"year={year}/month={month}",
-                            f"{year}/{month:02d}",
-                            f"{year}-{month:02d}",
-                        )
-                        for pattern in patterns:
-                            result.update(parquet_root.rglob(f"*{pattern}*/*.parquet"))
                     except Exception as e:
                         logger.exception(f"Failed to parse date '{d}': {e}")
                         continue
-                return sorted(result) or all_files
+                    result.update(
+                        (parquet_root / f"year={dt.year}" / f"month={dt.month}").rglob(
+                            "*.parquet"
+                        )
+                    )
+                return sorted(result) or sorted(parquet_root.rglob("*.parquet"))
             else:
-                return all_files
+                return sorted(parquet_root.rglob("*.parquet"))
 
         else:
             raise ValueError("`dates` must be list or (start, end) tuple")

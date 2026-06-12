@@ -296,6 +296,22 @@ class TestPartitionBy:
         range_files = idx._resolve_files(("2021-01-01", "2021-12-31"))
         assert set(range_files) == set(all_files)
 
+    def test_resolve_files_year_month_range_selects_partitions(self, parquet_dir):
+        idx = ParquetIndexer(parquet_dir)
+        df = make_grid_df([date(2021, 5, 1), date(2021, 6, 15), date(2021, 8, 1)])
+        idx.add_data(df)
+        files = idx._resolve_files(("2021-06-01", "2021-06-30"))
+        assert files
+        assert all("month=6" in str(f) for f in files)
+
+    def test_resolve_files_date_list_selects_partitions(self, parquet_dir):
+        idx = ParquetIndexer(parquet_dir)
+        df = make_grid_df([date(2021, 5, 1), date(2021, 6, 15)])
+        idx.add_data(df)
+        files = idx._resolve_files(["2021-06-15"])
+        assert files
+        assert all("month=6" in str(f) for f in files)
+
     def test_overlap_resolution_custom_partition(self, parquet_dir):
         """Overlap resolution with a custom partition col merges correctly."""
         idx = ParquetIndexer(parquet_dir, partition_by=["year", "region"])

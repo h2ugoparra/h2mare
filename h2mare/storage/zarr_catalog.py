@@ -314,8 +314,18 @@ class ZarrCatalog:
         result: dict[str, list[pd.Timestamp]] = defaultdict(list)
 
         date_list = [date_list] if isinstance(date_list, pd.Timestamp) else date_list
+
+        # Snapshot the catalog once: with auto_refresh=True every .df access
+        # re-stats the store directory, which per-date adds up to one directory
+        # sweep per extraction sample.
+        df = self.df
+        if df.empty:
+            self._log("warning", "Catalog is empty, no paths available")
+            return {}
+        df = df.sort_values("start_date")
+
         for ts in date_list:
-            matches = self._find_overlapping_files(ts, ts)
+            matches = df[(df["start_date"] <= ts) & (df["end_date"] >= ts)]
             if matches.empty:
                 self._log("debug", f"No zarr file contains date: {ts}")
                 continue
