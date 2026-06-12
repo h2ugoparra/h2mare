@@ -1,8 +1,45 @@
 """Tests for utils/logging.py."""
 
+import logging as stdlib_logging
 from unittest.mock import patch
 
-from h2mare.utils.logging import log_time
+from loguru import logger
+
+from h2mare.utils.logging import _InterceptHandler, log_time
+
+
+class TestInterceptHandler:
+    """Stdlib logging records (cdsapi, copernicusmarine, …) must flow into
+    loguru so they land in the same pipeline.log file sink."""
+
+    def _stdlib_logger_with_intercept(self, name: str) -> stdlib_logging.Logger:
+        lg = stdlib_logging.getLogger(name)
+        lg.setLevel(stdlib_logging.INFO)
+        lg.handlers = [_InterceptHandler()]
+        lg.propagate = False
+        return lg
+
+    def test_stdlib_record_reaches_loguru_sink(self):
+        captured: list[str] = []
+        sink_id = logger.add(captured.append, format="{level}|{message}")
+        try:
+            lg = self._stdlib_logger_with_intercept("test_intercept_a")
+            lg.info("request accepted")
+        finally:
+            logger.remove(sink_id)
+
+        assert any("INFO|request accepted" in line for line in captured)
+
+    def test_unknown_level_falls_back_to_levelno(self):
+        captured: list[str] = []
+        sink_id = logger.add(captured.append, format="{message}")
+        try:
+            lg = self._stdlib_logger_with_intercept("test_intercept_b")
+            lg.log(35, "custom level message")  # 35 has no loguru name
+        finally:
+            logger.remove(sink_id)
+
+        assert any("custom level message" in line for line in captured)
 
 
 class TestLogTime:
