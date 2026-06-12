@@ -421,6 +421,83 @@ class TestPartialVariableAppend:
 
 
 # ---------------------------------------------------------------------------
+# _append_data — middle-window rewrite (tail preservation)
+# ---------------------------------------------------------------------------
+
+
+class TestMiddleWindowAppend:
+    """A ds_new covering a window in the middle of the stored range (explicit
+    --start/--end compile) must preserve the existing dates after the window —
+    the old head+new concat silently dropped them."""
+
+    def test_tail_dates_survive_middle_window(self, tmp_path):
+        path = tmp_path / "sst.zarr"
+        ds_orig = _make_ds("2020-01-01", 20)
+        ds_orig.to_zarr(path)
+
+        ds_new = _make_ds("2020-01-05", 6, seed=7)  # Jan 5-10
+        _append_data("sst", ds_new, path)
+
+        out = xr.open_zarr(path, consolidated=False)
+        assert len(out.time) == 20
+        # head and tail keep the stored values; the window comes from ds_new
+        np.testing.assert_allclose(
+            out.sst.sel(time="2020-01-03").values,
+            ds_orig.sst.sel(time="2020-01-03").values,
+        )
+        np.testing.assert_allclose(
+            out.sst.sel(time="2020-01-07").values,
+            ds_new.sst.sel(time="2020-01-07").values,
+        )
+        np.testing.assert_allclose(
+            out.sst.sel(time="2020-01-15").values,
+            ds_orig.sst.sel(time="2020-01-15").values,
+        )
+        out.close()
+
+    def test_tail_survives_when_window_starts_at_file_start(self, tmp_path):
+        """Head empty (window starts at the stored start) — the tail alone
+        must still be retained."""
+        path = tmp_path / "sst.zarr"
+        ds_orig = _make_ds("2020-01-01", 20)
+        ds_orig.to_zarr(path)
+
+        ds_new = _make_ds("2020-01-01", 5, seed=8)  # Jan 1-5
+        _append_data("sst", ds_new, path)
+
+        out = xr.open_zarr(path, consolidated=False)
+        assert len(out.time) == 20
+        np.testing.assert_allclose(
+            out.sst.sel(time="2020-01-12").values,
+            ds_orig.sst.sel(time="2020-01-12").values,
+        )
+        out.close()
+
+    def test_subset_middle_window_preserves_everything_around_it(self, tmp_path):
+        """Subset vars + middle window combined: the absent variable keeps its
+        full span, the updated one keeps head and tail."""
+        path = tmp_path / "h2ds.zarr"
+        ds_orig = _make_two_var_ds("2020-01-01", 20)
+        ds_orig.to_zarr(path)
+
+        ds_new = _make_two_var_ds("2020-01-05", 6, seed=9)[["adt"]]
+        _append_data("h2ds", ds_new, path)
+
+        out = xr.open_zarr(path, consolidated=False)
+        assert len(out.time) == 20
+        np.testing.assert_allclose(out.sst.values, ds_orig.sst.values)
+        np.testing.assert_allclose(
+            out.adt.sel(time="2020-01-07").values,
+            ds_new.adt.sel(time="2020-01-07").values,
+        )
+        np.testing.assert_allclose(
+            out.adt.sel(time="2020-01-15").values,
+            ds_orig.adt.sel(time="2020-01-15").values,
+        )
+        out.close()
+
+
+# ---------------------------------------------------------------------------
 # _append_data — overlap resolution
 # ---------------------------------------------------------------------------
 
