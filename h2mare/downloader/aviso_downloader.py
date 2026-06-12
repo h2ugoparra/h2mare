@@ -269,11 +269,14 @@ class AVISODownloader(BaseDownloader):
 
             with open(local_path, "wb") as f:
                 if file_size:
+                    # disable=None: tqdm auto-disables on non-tty, so scheduled
+                    # runs don't persist one log line per refresh tick.
                     with tqdm(
                         total=file_size,
                         unit="B",
                         unit_scale=True,
                         desc=path.split("/")[-1],
+                        disable=None,
                     ) as pbar:
 
                         def callback(data):
@@ -320,6 +323,7 @@ class AVISODownloader(BaseDownloader):
                                 unit="B",
                                 unit_scale=True,
                                 desc=path.split("/")[-1],
+                                disable=None,
                             ) as pbar:
 
                                 def callback(data):
