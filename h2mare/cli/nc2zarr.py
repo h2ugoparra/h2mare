@@ -77,8 +77,9 @@ def convert(
             continue
 
         in_dir = base_dir / var_config.local_folder
-        logger.info(f"Converting '{var}' from {in_dir}")
-        Netcdf2Zarr(var, download_root=in_dir).run()
+        with logger.contextualize(var=var):
+            logger.info(f"Converting '{var}' from {in_dir}")
+            Netcdf2Zarr(var, download_root=in_dir).run()
 
 
 if __name__ == "__main__":

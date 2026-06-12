@@ -5,6 +5,7 @@ CMEMS data downloader using Copernicus Marine Toolbox API.
 from __future__ import annotations
 
 import json
+import time
 import warnings
 from datetime import timedelta
 from pathlib import Path
@@ -403,16 +404,22 @@ class CMEMSDownloader(BaseDownloader):
             self._cleanup_empty_download_dir()
             return False
 
+        t0 = time.perf_counter()
         for task in tasks:
             self._execute_task(task=task, time_split=time_split, output_dir=output_dir)
 
-            logger.success(
+            logger.debug(
                 f"Task complete: {task.dataset_id} "
                 f"for period {task.date_range} downloaded"
             )
 
         self._write_manifest(tasks, output_dir or self.download_dir)
         self._cleanup_empty_download_dir()
+        logger.success(
+            f"Download complete: {len(tasks)} task(s) "
+            f"({requested_range.start.date()} → {requested_range.end.date()}) "
+            f"in {time.perf_counter() - t0:.1f}s"
+        )
         return True
 
     def _write_manifest(self, tasks: list[DownloadTask], output_dir: Path) -> None:

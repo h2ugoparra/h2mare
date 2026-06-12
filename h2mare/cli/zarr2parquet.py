@@ -172,18 +172,19 @@ def parquet(
             f"add-var: merging {variables} into h2ds Parquet under {parquet_base}"
         )
         try:
-            converter = Zarr2Parquet(
-                var_key="h2ds",
-                parquet_root=parquet_base,
-                store_root=store_path,
-            )
-            converter.run(
-                start_date=start_date,
-                end_date=end_date,
-                variables=variables,
-            )
-            if parquet_backup:
-                converter.sync_data(remote_root=parquet_backup_dir)
+            with logger.contextualize(var="h2ds"):
+                converter = Zarr2Parquet(
+                    var_key="h2ds",
+                    parquet_root=parquet_base,
+                    store_root=store_path,
+                )
+                converter.run(
+                    start_date=start_date,
+                    end_date=end_date,
+                    variables=variables,
+                )
+                if parquet_backup:
+                    converter.sync_data(remote_root=parquet_backup_dir)
         except ValueError as e:
             logger.error(f"add-var failed: {e}")
         return
@@ -201,14 +202,15 @@ def parquet(
 
     for key in keys:
         try:
-            converter = Zarr2Parquet(
-                var_key=key,
-                parquet_root=parquet_base,
-                store_root=store_path,
-            )
-            converter.run(start_date=start_date, end_date=end_date, depth=depth)
-            if parquet_backup:
-                converter.sync_data(remote_root=parquet_backup_dir)
+            with logger.contextualize(var=key):
+                converter = Zarr2Parquet(
+                    var_key=key,
+                    parquet_root=parquet_base,
+                    store_root=store_path,
+                )
+                converter.run(start_date=start_date, end_date=end_date, depth=depth)
+                if parquet_backup:
+                    converter.sync_data(remote_root=parquet_backup_dir)
         except ValueError as e:
             logger.error(f"Skipping '{key}': {e}")
             continue

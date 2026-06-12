@@ -87,47 +87,51 @@ class PipelineManager:
                 _failed = True
                 continue
 
-            downloader = DownloaderClass(
-                var_key=var_key,
-                app_config=self.app_config,
-                store_root=self.store_root,
-            )
-
-            try:
-                downloaded = downloader.run(
-                    dry_run=self.dry_run,
-                    start_date=self.start_date,
-                    end_date=self.end_date,
+            # Everything this variable logs — download and convert, including
+            # inside the storage layer — carries var=<var_key> in the log file.
+            with logger.contextualize(var=var_key):
+                downloader = DownloaderClass(
+                    var_key=var_key,
+                    app_config=self.app_config,
+                    store_root=self.store_root,
                 )
-            except Exception as e:
-                logger.opt(exception=True).error(
-                    f"Download failed for '{var_key}': {e}"
-                )
-                _failed = True
-                continue
 
-            if self.no_convert or self.dry_run or not downloaded:
-                continue
+                try:
+                    downloaded = downloader.run(
+                        dry_run=self.dry_run,
+                        start_date=self.start_date,
+                        end_date=self.end_date,
+                    )
+                except Exception as e:
+                    logger.opt(exception=True).error(
+                        f"Download failed for '{var_key}': {e}"
+                    )
+                    _failed = True
+                    continue
 
-            try:
-                Netcdf2Zarr(var_key).run()
-            except Exception as e:
-                logger.opt(exception=True).error(
-                    f"Processing failed for '{var_key}': {e}"
-                )
-                _failed = True
+                if self.no_convert or self.dry_run or not downloaded:
+                    continue
+
+                try:
+                    Netcdf2Zarr(var_key).run()
+                except Exception as e:
+                    logger.opt(exception=True).error(
+                        f"Processing failed for '{var_key}': {e}"
+                    )
+                    _failed = True
 
         if not self.no_compile and not self.no_convert and not self.dry_run:
             from h2mare.processing.compiler import Compiler
 
             try:
-                Compiler(remote_store_root=self.store_root).run(
-                    start_date=self.start_date,
-                    end_date=self.end_date,
-                    var_keys=variables,
-                    zarr_backup=self.h2ds_zarr_backup,
-                    zarr_backup_dir=self.zarr_backup_dir,
-                )
+                with logger.contextualize(var="h2ds"):
+                    Compiler(remote_store_root=self.store_root).run(
+                        start_date=self.start_date,
+                        end_date=self.end_date,
+                        var_keys=variables,
+                        zarr_backup=self.h2ds_zarr_backup,
+                        zarr_backup_dir=self.zarr_backup_dir,
+                    )
             except Exception as e:
                 logger.opt(exception=True).error(f"Compile step failed: {e}")
                 _failed = True
@@ -140,17 +144,18 @@ class PipelineManager:
 
             try:
                 h2ds_local_folder = self.app_config.variables["h2ds"].local_folder
-                converter = Zarr2Parquet(
-                    var_key="h2ds",
-                    parquet_root=get_settings().PARQUET_DIR,
-                    store_root=self.store_root / h2ds_local_folder,
-                )
-                converter.run(
-                    start_date=self.start_date,
-                    end_date=self.end_date,
-                )
-                if self.h2ds_parquet_backup:
-                    converter.sync_data(remote_root=self.parquet_backup_dir)
+                with logger.contextualize(var="h2ds"):
+                    converter = Zarr2Parquet(
+                        var_key="h2ds",
+                        parquet_root=get_settings().PARQUET_DIR,
+                        store_root=self.store_root / h2ds_local_folder,
+                    )
+                    converter.run(
+                        start_date=self.start_date,
+                        end_date=self.end_date,
+                    )
+                    if self.h2ds_parquet_backup:
+                        converter.sync_data(remote_root=self.parquet_backup_dir)
             except Exception as e:
                 logger.opt(exception=True).error(f"Parquet conversion step failed: {e}")
                 _failed = True
