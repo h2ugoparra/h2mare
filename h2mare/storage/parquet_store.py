@@ -106,10 +106,6 @@ class ParquetStore:
             path = path / f"{col}={val}"
         return path
 
-    def _partition_glob(self) -> str:
-        parts = "/".join(f"{col}=*" for col in self._partition_by)
-        return str(self.parquet_root / parts / "*.parquet").replace("\\", "/")
-
     def _partition_filter_sql(self, pairs: list[tuple]) -> str:
         clauses = []
         for vals in pairs:
@@ -475,74 +471,67 @@ class ParquetStore:
         if existing_pairs:
             conn = duckdb.connect()
 
-            conn.register("df_new", df.drop(time_part_cols) if time_part_cols else df)
-
-            parquet_glob = self._partition_glob()
-
-            # Detect new_cols that were partially written by a previous interrupted run.
-            # DuckDB schema-unifies the glob so any column present in *any* file appears here.
-            # Such columns must be excluded from the existing CTE to avoid a name clash in
-            # the FULL OUTER JOIN (both sides would have the column → Polars renames to _1).
-            partially_written: set[str] = set()
-            if new_cols:
-                try:
-                    file_col_rows = conn.execute(
-                        f"DESCRIBE SELECT * FROM read_parquet('{parquet_glob}', "
-                        f"hive_partitioning=true) LIMIT 0"
-                    ).fetchall()
-                    actual_file_cols = {row[0] for row in file_col_rows}
-                    # Exclude partition cols: DESCRIBE on a hive-partitioned parquet glob
-                    # includes virtual year/month columns that aren't physical data columns.
-                    partially_written = (
-                        new_cols & actual_file_cols
-                    ) - self.partition_cols
-                    if partially_written:
-                        logger.debug(
-                            f"Partially-written columns detected (excluded from existing CTE): {partially_written}"
-                        )
-                except Exception as e:
-                    logger.debug(f"Could not detect partially-written columns: {e}")
-
-            # Exclude time-derived partition cols from existing CTE (re-derived after JOIN);
-            # custom partition cols remain so they survive the FULL OUTER JOIN correctly.
-            # Also exclude partially_written cols to prevent name clashes in the JOIN.
-            exclude_cols = set(time_part_cols) | duplicated_cols | partially_written
-            exclude_sql = ", ".join(exclude_cols)
-
-            filter_sql = self._partition_filter_sql(existing_pairs)
             key_cols = ", ".join(
                 [self.time_col, self.lon_col, self.lat_col] + custom_part_cols
             )
 
-            merged = conn.execute(
-                f"""
-                WITH existing AS (
-                    SELECT * EXCLUDE ({exclude_sql})
-                    FROM read_parquet('{parquet_glob}', hive_partitioning = true)
-                    WHERE {filter_sql}
+            # Merge one partition at a time: a single JOIN over every affected
+            # partition materializes them all in memory at once — the peak-memory
+            # bottleneck on a backfill touching many months. Equality on the time
+            # join key confines each existing row's match to its own partition,
+            # so per-partition joins produce exactly the same rows as one big join.
+            # Reading each partition's own files (rather than the store glob with
+            # a WHERE) also keeps the bind schema stable while earlier partitions
+            # are rewritten with new columns.
+            for partition in existing_pairs:
+                part_glob = str(self._partition_path(partition) / "*.parquet").replace(
+                    "\\", "/"
                 )
-                SELECT * FROM existing
-                FULL OUTER JOIN df_new USING ({key_cols})
-            """
-            ).pl()
+                # Columns present in this partition: its physical file columns
+                # plus the hive virtuals derived from the path.
+                cols_here = {
+                    row[0]
+                    for row in conn.execute(
+                        f"DESCRIBE SELECT * FROM read_parquet('{part_glob}', "
+                        f"hive_partitioning=true) LIMIT 0"
+                    ).fetchall()
+                }
+                partially_written = (new_cols & cols_here) - self.partition_cols
+                if partially_written:
+                    logger.debug(
+                        f"Partially-written columns in {partition} "
+                        f"(excluded from existing side): {partially_written}"
+                    )
+                # Exclude from the existing side: time-derived partition cols
+                # (the write is per partition, so they are never needed on the
+                # merged rows), columns df_new re-supplies, and partially-written
+                # new columns from a previously interrupted run — each only when
+                # actually present here, since EXCLUDE of a missing column is a
+                # binder error.
+                excl = (
+                    set(time_part_cols) | duplicated_cols | partially_written
+                ) & cols_here
+                exclude_clause = f" EXCLUDE ({', '.join(excl)})" if excl else ""
+
+                df_part = df.filter(self._partition_filter_expr(partition))
+                conn.register(
+                    "df_new",
+                    df_part.drop(time_part_cols) if time_part_cols else df_part,
+                )
+                merged = conn.execute(
+                    f"""
+                    WITH existing AS (
+                        SELECT *{exclude_clause}
+                        FROM read_parquet('{part_glob}', hive_partitioning = true)
+                    )
+                    SELECT * FROM existing
+                    FULL OUTER JOIN df_new USING ({key_cols})
+                """
+                ).pl()
+                partition_data = self._align_to_schema(merged, include_partitions=False)
+                self.atomic_partition_write(partition_data, partition)
 
             conn.close()
-
-            _time_rederive: dict[str, pl.Expr] = {
-                "year": pl.col(self.time_col).dt.year().cast(pl.Int32),
-                "month": pl.col(self.time_col).dt.month().cast(pl.Int32),
-                "day": pl.col(self.time_col).dt.day().cast(pl.Int32),
-            }
-            rederive = [_time_rederive[c].alias(c) for c in time_part_cols]
-            if rederive:
-                merged = merged.with_columns(rederive)
-
-            for partition in existing_pairs:
-                partition_data = merged.filter(self._partition_filter_expr(partition))
-                partition_data = self._align_to_schema(
-                    partition_data, include_partitions=False
-                )
-                self.atomic_partition_write(partition_data, partition)
 
         for partition in new_pairs:
             df_write = self._align_to_schema(
