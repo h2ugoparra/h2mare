@@ -95,7 +95,11 @@ class TestAtomicSwap:
         ds.close()
 
     def test_original_restored_when_final_move_fails(self, tmp_path):
-        """If renaming tmp → final fails, the original is restored from backup."""
+        """If renaming tmp → final fails, the original is restored from backup.
+
+        Uses overlapping dates so the rewrite (swap) path is exercised — a
+        clean trailing append now goes through the in-place fast path.
+        """
         path = tmp_path / "sst.zarr"
         _make_ds("2020-01-01", 5).to_zarr(path)
 
@@ -110,7 +114,7 @@ class TestAtomicSwap:
 
         with patch("h2mare.storage.storage.shutil.move", side_effect=failing_move):
             with pytest.raises(RuntimeError, match="original restored from backup"):
-                _append_data("sst", _make_ds("2020-01-06", 5), path)
+                _append_data("sst", _make_ds("2020-01-03", 5), path)
 
         # Original data still intact
         ds = xr.open_zarr(path)
@@ -133,9 +137,114 @@ class TestAtomicSwap:
 
         with patch("h2mare.storage.storage.shutil.move", side_effect=failing_move):
             with pytest.raises(RuntimeError):
-                _append_data("sst", _make_ds("2020-01-06", 5), path)
+                _append_data("sst", _make_ds("2020-01-03", 5), path)
 
         assert not path.with_name(path.name + ".bak").exists()
+
+
+# ---------------------------------------------------------------------------
+# _append_data — in-place append fast path
+# ---------------------------------------------------------------------------
+
+
+class TestFastAppend:
+    """A clean trailing append (same variables, same grid, strictly after the
+    stored dates) must extend the zarr in place instead of rewriting it."""
+
+    def test_fast_path_skips_rewrite(self, tmp_path):
+        path = tmp_path / "sst.zarr"
+        _make_ds("2020-01-01", 5).to_zarr(path)
+
+        # If the rewrite path were taken, this sentinel would raise.
+        with patch(
+            "h2mare.storage.storage._resolve_overlap",
+            side_effect=AssertionError("rewrite path used for a clean append"),
+        ):
+            _append_data("sst", _make_ds("2020-01-06", 3), path)
+
+        ds = xr.open_zarr(path, consolidated=False)
+        times = pd.DatetimeIndex(ds.time.values)
+        assert len(times) == 8
+        assert times.is_monotonic_increasing and times.is_unique
+        ds.close()
+
+    def test_appended_values_match_source(self, tmp_path):
+        path = tmp_path / "sst.zarr"
+        ds_old = _make_ds("2020-01-01", 5, seed=1)
+        ds_old.to_zarr(path)
+        ds_new = _make_ds("2020-01-06", 3, seed=2)
+        _append_data("sst", ds_new, path)
+
+        result = xr.open_zarr(path, consolidated=False)
+        np.testing.assert_allclose(
+            result.sst.sel(time="2020-01-02").values,
+            ds_old.sst.sel(time="2020-01-02").values,
+        )
+        np.testing.assert_allclose(
+            result.sst.sel(time="2020-01-08").values,
+            ds_new.sst.sel(time="2020-01-08").values,
+        )
+        result.close()
+
+    def test_unaligned_chunk_boundary(self, tmp_path):
+        """Appending onto a partially-filled boundary chunk must keep all values."""
+        path = tmp_path / "sst.zarr"
+        ds_old = _make_ds("2020-01-01", 7, seed=3)
+        ds_old.chunk({"time": 5}).to_zarr(path)  # last zarr chunk holds 2 of 5
+        ds_new = _make_ds("2020-01-08", 4, seed=4)
+        _append_data("sst", ds_new.chunk({"time": 3}), path)
+
+        result = xr.open_zarr(path, consolidated=False)
+        assert len(result.time) == 11
+        np.testing.assert_allclose(
+            result.sst.sel(time="2020-01-07").values,
+            ds_old.sst.sel(time="2020-01-07").values,
+        )
+        np.testing.assert_allclose(
+            result.sst.sel(time="2020-01-11").values,
+            ds_new.sst.sel(time="2020-01-11").values,
+        )
+        result.close()
+
+    def test_grid_mismatch_falls_back_to_rewrite(self, tmp_path):
+        from h2mare.storage import storage as storage_mod
+
+        path = tmp_path / "sst.zarr"
+        _make_ds("2020-01-01", 5).to_zarr(path)
+
+        times = pd.date_range("2020-01-06", periods=3, freq="D")
+        rng = np.random.default_rng(5)
+        ds_new = xr.Dataset(
+            {"sst": (["time", "lat", "lon"], rng.uniform(10, 30, (3, 3, 3)))},
+            coords={
+                "time": times,
+                "lat": [30.0, 36.0, 40.0],  # differs from stored grid
+                "lon": [-10.0, -5.0, 0.0],
+            },
+        )
+        with patch(
+            "h2mare.storage.storage._resolve_overlap",
+            wraps=storage_mod._resolve_overlap,
+        ) as spy:
+            _append_data("sst", ds_new, path)
+        spy.assert_called_once()
+
+    def test_overlapping_dates_fall_back_to_rewrite(self, tmp_path):
+        from h2mare.storage import storage as storage_mod
+
+        path = tmp_path / "sst.zarr"
+        _make_ds("2020-01-01", 5).to_zarr(path)
+
+        with patch(
+            "h2mare.storage.storage._resolve_overlap",
+            wraps=storage_mod._resolve_overlap,
+        ) as spy:
+            _append_data("sst", _make_ds("2020-01-04", 5), path)
+        spy.assert_called_once()
+
+        ds = xr.open_zarr(path, consolidated=False)
+        assert pd.DatetimeIndex(ds.time.values).is_unique
+        ds.close()
 
 
 # ---------------------------------------------------------------------------
