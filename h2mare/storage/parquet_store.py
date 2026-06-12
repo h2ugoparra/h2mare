@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import calendar
 import shutil
 from datetime import datetime
 from pathlib import Path
@@ -716,6 +717,104 @@ class ParquetStore:
                     still.append(c)
                 else:
                     result[c] = to_datetime(v)
+            remaining = still
+        return result
+
+    def _leaf_partition_period_end(self, part_dir: Path) -> datetime:
+        """Last calendar date a leaf partition directory can contain."""
+        if "month" in self._partition_by:
+            y = int(part_dir.parent.name.split("=", 1)[1])
+            m = int(part_dir.name.split("=", 1)[1])
+            return datetime(y, m, calendar.monthrange(y, m)[1])
+        y = int(part_dir.name.split("=", 1)[1])
+        return datetime(y, 12, 31)
+
+    def get_var_backfill_start(
+        self,
+        columns: list[str],
+        not_before: dict[str, datetime] | None = None,
+    ) -> dict[str, datetime]:
+        """
+        Earliest "hole" date per column, scanning newest partitions first.
+
+        A hole is a date that has rows in the store but only null values for
+        the column — the signature left when rows were appended while the
+        column's source still lagged. :meth:`get_var_coverage_end` alone cannot
+        see holes: once a later append lands with the column populated, the
+        last non-null date jumps past the gap, and an end-based backfill window
+        strands it forever.
+
+        Scanning runs newest→oldest and stops, per column, at the first
+        partition where the column is fully populated (every date with rows has
+        a non-null value) — holes come from recent source lag, so anything
+        older than a fully-covered partition is taken as sound. In the common
+        all-current case only the newest partition is read. Columns absent from
+        a partition's files are skipped there, as in ``get_var_coverage_end``.
+
+        Args:
+            columns: Data columns to check.
+            not_before: Optional per-column floor (typically the column's
+                source coverage start). Partitions entirely older than the
+                floor are not scanned for that column — without this, a column
+                whose source begins mid-store (and is legitimately null before
+                that) would force a full-store walk on every incremental run.
+
+        Returns:
+            Mapping of column name to its earliest hole date. Columns with no
+            holes are omitted; empty when the store has no data or the
+            partition layout is not purely temporal.
+        """
+        if not self._dataset_meta_initialized:
+            return {}
+        if self._partition_by not in (["year"], ["year", "month"]):
+            return {}
+
+        coord_cols = {self.time_col, self.lon_col, self.lat_col}
+        schema_cols = set(self.get_schema())
+        remaining = [
+            c
+            for c in columns
+            if c in schema_cols and c not in coord_cols and c not in self.partition_cols
+        ]
+
+        result: dict[str, datetime] = {}
+        for part_dir in self._leaf_partition_dirs_newest_first():
+            if not remaining:
+                break
+            if not_before:
+                period_end = self._leaf_partition_period_end(part_dir)
+                remaining = [
+                    c
+                    for c in remaining
+                    if c not in not_before or period_end >= not_before[c]
+                ]
+                if not remaining:
+                    break
+            files = list(part_dir.rglob("*.parquet"))
+            if not files:
+                continue
+            present = set(pl.read_parquet_schema(files[0]))
+            cols_here = [c for c in remaining if c in present]
+            if not cols_here:
+                continue
+            # Per date: does the column hold any non-null value?
+            per_date = (
+                pl.scan_parquet(files)
+                .group_by(self.time_col)
+                .agg([pl.col(c).is_not_null().any().alias(c) for c in cols_here])
+                .collect(engine="streaming")
+            )
+            still: list[str] = []
+            for c in remaining:
+                if c not in cols_here:
+                    still.append(c)
+                    continue
+                holes = per_date.filter(~pl.col(c))[self.time_col]
+                if holes.is_empty():
+                    # Fully covered here — older partitions are taken as sound.
+                    continue
+                result[c] = to_datetime(holes.min())
+                still.append(c)  # an older hole may exist; keep scanning
             remaining = still
         return result
 

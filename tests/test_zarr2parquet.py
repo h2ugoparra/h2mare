@@ -362,17 +362,20 @@ class TestResolveBackfillGroups:
         parquet_end: pd.Timestamp,
         zarr_vars: set[str],
         var_end: dict,
+        hole_start: dict | None = None,
     ) -> None:
         """Wire up the mocked indexer/zarr_repo state the resolver reads.
 
         ``var_end`` maps a representative column to its last non-null date in the
-        parquet store, mirroring ``get_var_coverage_end``.
+        parquet store, mirroring ``get_var_coverage_end``; ``hole_start`` mirrors
+        ``get_var_backfill_start`` (earliest all-null date per column).
         """
         z.indexer._dataset_meta_initialized = True
         z.indexer.get_time_coverage.return_value = DateRange(
             pd.Timestamp("1998-01-01"), parquet_end
         )
         z.indexer.get_var_coverage_end.return_value = var_end
+        z.indexer.get_var_backfill_start.return_value = hole_start or {}
         z.zarr_repo.get_variables.return_value = zarr_vars
 
     def test_empty_when_store_uninitialized(self, tmp_path):
@@ -471,6 +474,125 @@ class TestResolveBackfillGroups:
             var_end={},
         )
         assert z._resolve_backfill_groups() == []
+
+    def test_fillable_hole_widens_window_past_nonnull_island(self, tmp_path):
+        """The island scenario: sst non-null again on recent dates, but a NaN
+        stretch sits behind it. The window must start at the hole, not at
+        last-non-null + 1 day."""
+        z = _make_converter(tmp_path)
+        self._prime(
+            z,
+            parquet_end=pd.Timestamp("2021-06-30"),
+            zarr_vars={"sst"},
+            var_end={"sst": pd.Timestamp("2021-06-03")},  # island
+            hole_start={"sst": pd.Timestamp("2021-05-01")},
+        )
+        with (
+            patch(
+                "h2mare.format_converters.zarr2parquet.get_store_coverage"
+            ) as mock_src,
+            patch.object(
+                Zarr2Parquet,
+                "_fillable_hole_dates",
+                return_value=[pd.Timestamp("2021-05-01")],
+            ),
+        ):
+            mock_src.return_value = DateRange(
+                pd.Timestamp("1998-01-01"), pd.Timestamp("2021-06-30")
+            )
+            groups = z._resolve_backfill_groups()
+
+        assert len(groups) == 1
+        assert groups[0][0].start.date() == date(2021, 5, 1)
+        assert groups[0][0].end.date() == date(2021, 6, 30)
+
+    def test_unfillable_hole_falls_back_to_end_based_window(self, tmp_path):
+        """A hole the Zarr cannot fill (legitimate source gap, e.g. chl days the
+        raw product never published) must not widen the window — otherwise every
+        incremental run re-merges a window that can never converge."""
+        z = _make_converter(tmp_path)
+        self._prime(
+            z,
+            parquet_end=pd.Timestamp("2021-06-30"),
+            zarr_vars={"sst"},
+            var_end={"sst": pd.Timestamp("2021-06-03")},
+            hole_start={"sst": pd.Timestamp("2021-05-01")},
+        )
+        with (
+            patch(
+                "h2mare.format_converters.zarr2parquet.get_store_coverage"
+            ) as mock_src,
+            patch.object(Zarr2Parquet, "_fillable_hole_dates", return_value=[]),
+        ):
+            mock_src.return_value = DateRange(
+                pd.Timestamp("1998-01-01"), pd.Timestamp("2021-06-30")
+            )
+            groups = z._resolve_backfill_groups()
+
+        # End-based gap (Jun 4 → Jun 30) still backfills; the hole does not.
+        assert len(groups) == 1
+        assert groups[0][0].start.date() == date(2021, 6, 4)
+
+    def test_hole_floor_passes_source_start_and_lookback(self, tmp_path):
+        """get_var_backfill_start receives a per-column floor bounded by source
+        start and the lookback window."""
+        z = _make_converter(tmp_path)
+        parquet_end = pd.Timestamp("2021-06-30")
+        self._prime(
+            z,
+            parquet_end=parquet_end,
+            zarr_vars={"sst"},
+            var_end={"sst": parquet_end},
+        )
+        with patch(
+            "h2mare.format_converters.zarr2parquet.get_store_coverage"
+        ) as mock_src:
+            mock_src.return_value = DateRange(pd.Timestamp("1998-01-01"), parquet_end)
+            z._resolve_backfill_groups()
+
+        _, kwargs = z.indexer.get_var_backfill_start.call_args
+        floor = kwargs["not_before"]["sst"]
+        # 1998 source start is older than the lookback → lookback wins.
+        assert pd.Timestamp(floor) == parquet_end - pd.Timedelta(days=400)
+
+
+# ---------------------------------------------------------------------------
+# _fillable_hole_dates
+# ---------------------------------------------------------------------------
+
+
+class TestFillableHoleDates:
+    def test_separates_lag_holes_from_source_gaps(self, tmp_path):
+        import numpy as np
+        import polars as pl
+        import xarray as xr
+
+        z = _make_converter(tmp_path)
+        times = pd.date_range("2021-05-01", periods=4, freq="D")
+        data = np.ones((4, 2, 2))
+        data[2] = np.nan  # May 3: the zarr has no data either (source gap)
+        z.zarr_repo.open_dataset.return_value = xr.Dataset(
+            {"sst": (["time", "lat", "lon"], data)},
+            coords={"time": times, "lat": [30.0, 35.0], "lon": [-10.0, -5.0]},
+        )
+        # Parquet: sst populated on May 1 only; May 2 row exists but is null.
+        z.indexer.time_col = "time"
+        z.indexer.scan.return_value = pl.LazyFrame(
+            {"time": [date(2021, 5, 1), date(2021, 5, 2)], "sst": [1.0, None]}
+        )
+
+        out = z._fillable_hole_dates("sst", DateRange("2021-05-01", "2021-05-04"))
+
+        # Zarr has data on May 1, 2, 4; parquet covers May 1 → fillable: 2 and 4.
+        # May 3 is a source gap and must not appear.
+        assert out == [pd.Timestamp("2021-05-02"), pd.Timestamp("2021-05-04")]
+
+    def test_no_zarr_files_returns_empty(self, tmp_path):
+        z = _make_converter(tmp_path)
+        z.zarr_repo.open_dataset.side_effect = FileNotFoundError("no files")
+        assert (
+            z._fillable_hole_dates("sst", DateRange("2021-05-01", "2021-05-04")) == []
+        )
 
 
 # ---------------------------------------------------------------------------
