@@ -74,6 +74,13 @@ uv run ruff check --fix h2mare/
 uv run ruff format h2mare/
 ```
 
+## Pipeline semantics & gotchas
+
+- `run -v X` compiles **only X's columns** into h2ds; other lagging variables catch up on the next full `uv run h2mare compile` (no `-v`).
+- Store repair: explicit dates re-read **all** variables and rewrite affected partitions wholesale — `uv run h2mare parquet --start-date ... --end-date ...`. Prefer whole-month windows.
+- Write-path merge semantics are deliberate and pinned by regression tests (`tests/test_storage.py`, `tests/test_parquet_store.py`): incoming data wins where it has rows (even when null); stored values survive outside its window; time-less statics (bathy) come from the fresh side; tails and absent variables are preserved. Read those tests before changing `storage.py::_append_data` or `parquet_store.py::resolve_dims_overlap`.
+- Data quirks: `chl` has legitimate all-null days (~1999/2000 — the raw product never published them; the zarr is null too, so they are not backfillable). `seapodym` covers 2025 only.
+
 ## ParquetIndexer
 
 Primary interface for reading and writing the Parquet store (`storage/parquet_indexer.py`).
@@ -114,6 +121,7 @@ Follows the global Git Workflow (see `~/.claude/CLAUDE.md`).
 **Release**
 - PR `dev` → `main`, review, merge; then `git checkout main && git pull origin main`.
 - Optional tag: `git tag -a v1.0.0 -m "..." && git push origin v1.0.0`.
+- Bump `pyproject.toml` version + `uv lock` via a `chore/` PR into `dev` *before* the release PR.
 
 **Rules**
 - Always branch from the latest `dev` — *pull before you branch*.
@@ -121,6 +129,7 @@ Follows the global Git Workflow (see `~/.claude/CLAUDE.md`).
 - Commit with a type: `feat:` / `fix:` / `docs:` / `chore:` / `perf:` / `refactor:`; say what changed and why.
 - Branch with a matching prefix: `feature/` / `fix/` / `docs/` / `chore/` / `perf/` / `refactor/`.
 - Protect `main` and `dev` (require PR review).
+- Merging requires 3 green checks (`branch-name`, `commit-lint`, `quality`) **and** an up-to-date branch: `gh pr update-branch <#> --rebase`, wait for checks, then `gh pr merge <#> --merge --delete-branch`.
 
 ## Coding Rules
 
@@ -128,3 +137,5 @@ Follows the global Git Workflow (see `~/.claude/CLAUDE.md`).
 - **Paths** — always access paths via `settings.*`; never hardcode
 - **`.env`** — `STORE_ROOT` (required); `AVISO_FTP_SERVER`, `AVISO_USERNAME`, `AVISO_PASSWORD` (required for AVISO variables); `H2MARE_ROOT` (optional, overrides project root detection)
 - **Types** — use `DateRange`, `BBox`, `DateLike` from `h2mare/types.py`; no raw tuples. Accept plain tuples in public APIs and construct the named type internally.
+- **Regression tests** — must fail on unfixed code; verify with `git stash push <src-file>` → run test → `git stash pop`.
+- **Test helpers** — `tests/conftest.py:make_grid_df` builds time×lon×lat Polars frames for parquet-layer tests; `_make_ds` helpers in `tests/test_storage.py` build zarr-ready datasets.
