@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import shutil
-import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Iterator, Literal
@@ -65,19 +64,11 @@ class ParquetStore:
         if not self.parquet_root.exists() or not any(
             self.parquet_root.rglob("*.parquet")
         ):
-            if not self.parquet_root.exists() and sys.stdin.isatty():
-                answer = (
-                    input(
-                        f"Directory '{self.parquet_root}' does not exist. Create it? [y/N] "
-                    )
-                    .strip()
-                    .lower()
-                )
-                if answer != "y":
-                    raise FileNotFoundError(
-                        f"Aborted: '{self.parquet_root}' was not created."
-                    )
-            logger.debug(f"No data in {self.parquet_root}. Creating directory.")
+            # parquet_root is the configured store location — create it without
+            # asking. Prompting here (a library constructor) stalled pipeline
+            # runs whenever stdin happened to be a TTY.
+            if not self.parquet_root.exists():
+                logger.info(f"Creating parquet store directory: {self.parquet_root}")
             self.parquet_root.mkdir(parents=True, exist_ok=True)
         else:
             # Build the union schema once — each get_schema() call on a fresh
