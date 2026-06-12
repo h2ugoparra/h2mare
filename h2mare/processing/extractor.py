@@ -576,7 +576,12 @@ class Extractor:
             >>> extractor = Extractor(file_path=input_path, time_col='ls_date', index_col='idlance')
             >>> results = extractor.run(output_path, var_dict=var_dict, n_workers=12)
         """
-        logger.info(f"Starting extraction process with {n_workers} workers.")
+        # n_workers only drives the ThreadPoolExecutor in shp (geometry) extraction;
+        # csv (point) extraction is vectorized and ignores it — so don't advertise it there.
+        if self.input_type == "shp":
+            logger.info(f"Starting extraction process with {n_workers} workers.")
+        else:
+            logger.info("Starting extraction process.")
 
         var_dict = self._normalize_var_dict(var_dict)
 
