@@ -7,6 +7,7 @@ import shutil
 from datetime import datetime
 from pathlib import Path
 from typing import Iterator, Literal
+from uuid import uuid4
 
 import polars as pl
 import pyarrow as pa
@@ -392,6 +393,12 @@ class ParquetStore:
                 self._build_partition_schema(df), flavor="hive"
             ),
             existing_data_behavior="overwrite_or_ignore",
+            # The default basename ("part-{i}.parquet") restarts at 0 on every
+            # write, so appending into a partition that already has files
+            # silently overwrites part-0 and destroys its rows (e.g. appending
+            # one new day into the current month's partition). A per-write
+            # unique prefix makes appends purely additive.
+            basename_template=f"part-{uuid4().hex[:8]}-{{i}}.parquet",
             max_rows_per_file=max_file,
             max_rows_per_group=max_group,
         )
