@@ -132,6 +132,21 @@ class TestAtomicPartitionWrite:
         store.atomic_partition_write(df_physical, (2021, 6))
         assert not tmp.exists()
 
+    def test_append_into_existing_partition_keeps_old_rows(self, tmp_path):
+        """Regression: appending non-overlapping dates into a partition that
+        already has files used to overwrite part-0.parquet (pyarrow restarts
+        the default basename at 0 each write), silently destroying its rows —
+        e.g. appending one new day into the current month's partition."""
+        store = _store(tmp_path)
+        store.add_data(make_grid_df([date(2021, 6, 1), date(2021, 6, 2)]))
+        # Non-overlapping date in the same month → plain append path
+        store.add_data(make_grid_df([date(2021, 6, 3)]))
+
+        files = list((store.parquet_root / "year=2021" / "month=6").rglob("*.parquet"))
+        loaded = pl.concat([pl.read_parquet(f) for f in files])
+        days = set(loaded["time"].cast(pl.Utf8).to_list())
+        assert days == {"2021-06-01", "2021-06-02", "2021-06-03"}
+
     def test_second_write_replaces_partition(self, tmp_path):
         store = _store(tmp_path)
         df1 = make_grid_df([date(2021, 1, 1)], variables={"sst": 5.0})
