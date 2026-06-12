@@ -79,6 +79,21 @@ class TestCleanupEmptyDownloadDir:
         dl.download_dir = tmp_path / "nonexistent" / "sst"
         dl._cleanup_empty_download_dir()  # must not raise
 
+    def test_removes_dir_left_with_empty_subfolders(self, dl):
+        """Regression: eddies' rep/nrt staging subfolders survived the move of
+        their files and kept the download directory alive forever."""
+        (dl.download_dir / "rep").mkdir(parents=True, exist_ok=True)
+        (dl.download_dir / "nrt").mkdir(exist_ok=True)
+        dl._cleanup_empty_download_dir()
+        assert not dl.download_dir.exists()
+
+    def test_keeps_dir_when_subfolder_has_files(self, dl):
+        nrt = dl.download_dir / "nrt"
+        nrt.mkdir(parents=True, exist_ok=True)
+        (nrt / "pending.nc").touch()
+        dl._cleanup_empty_download_dir()
+        assert (nrt / "pending.nc").exists()
+
 
 # ---------------------------------------------------------------------------
 # _warn_if_rep_updated

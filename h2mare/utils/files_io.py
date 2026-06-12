@@ -30,6 +30,33 @@ def _force_remove(func, path, exc_info):
         logger.debug(f"_force_remove: could not remove {path}: {e}")
 
 
+def prune_empty_dirs(root: Path) -> int:
+    """
+    Remove empty directories beneath *root*, deepest first, so a chain of
+    nested empty folders (e.g. ``eddies/nrt`` or ``CMEMS_2nd_productivity/mnkc``)
+    collapses in one pass. *root* itself is kept; directories containing any
+    file are untouched.
+
+    Returns:
+        Number of directories removed.
+    """
+    if not root.exists():
+        return 0
+    removed = 0
+    subdirs = sorted(
+        (p for p in root.rglob("*") if p.is_dir()),
+        key=lambda p: len(p.parts),
+        reverse=True,
+    )
+    for d in subdirs:
+        try:
+            d.rmdir()  # succeeds only when empty
+            removed += 1
+        except OSError:
+            continue
+    return removed
+
+
 def safe_rmtree(path: Path, retries=10, delay=0.5) -> None:
     """
     Remove a directory tree with retries (prevent Windows file locks).

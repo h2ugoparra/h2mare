@@ -9,6 +9,7 @@ import xarray as xr
 from h2mare.utils.files_io import (
     clean_era_dataset,
     move_files,
+    prune_empty_dirs,
     safe_move_files,
     safe_rmtree,
     unizp_files,
@@ -168,3 +169,32 @@ class TestCleanEraDataset:
         ds = self._make_ds(t, np.arange(4.0))
         result = clean_era_dataset(ds, "u10")
         assert len(result.time) == 4
+
+
+# ---------------------------------------------------------------------------
+# prune_empty_dirs
+# ---------------------------------------------------------------------------
+
+
+class TestPruneEmptyDirs:
+    def test_removes_nested_empty_chain(self, tmp_path):
+        (tmp_path / "a" / "b" / "c").mkdir(parents=True)
+        removed = prune_empty_dirs(tmp_path)
+        assert removed == 3
+        assert not (tmp_path / "a").exists()
+        assert tmp_path.exists()  # root itself is kept
+
+    def test_keeps_dirs_containing_files(self, tmp_path):
+        rep = tmp_path / "var" / "rep"
+        rep.mkdir(parents=True)
+        (rep / "data.nc").touch()
+        (tmp_path / "var" / "nrt").mkdir()
+
+        removed = prune_empty_dirs(tmp_path)
+
+        assert removed == 1  # only nrt
+        assert (rep / "data.nc").exists()
+        assert not (tmp_path / "var" / "nrt").exists()
+
+    def test_missing_root_returns_zero(self, tmp_path):
+        assert prune_empty_dirs(tmp_path / "nope") == 0

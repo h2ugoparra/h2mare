@@ -10,6 +10,7 @@ from loguru import logger
 
 from h2mare import SYSTEM_VAR_KEYS, AppConfig, get_settings
 from h2mare.format_converters.netcdf2zarr import Netcdf2Zarr
+from h2mare.utils.files_io import prune_empty_dirs
 
 
 class PipelineManager:
@@ -154,7 +155,7 @@ class PipelineManager:
                 logger.opt(exception=True).error(f"Parquet conversion step failed: {e}")
                 _failed = True
 
-        self._cleanup_empty_download_dirs(variables)
+        self._cleanup_empty_download_dirs()
 
         if _failed:
             logger.warning("Pipeline finished with errors — see messages above.")
@@ -164,14 +165,19 @@ class PipelineManager:
             logger.success("Pipeline completed successfully.")
         return not _failed
 
-    def _cleanup_empty_download_dirs(self, variables: List[str]) -> None:
-        """Remove per-variable download subdirectories that are empty after the pipeline run."""
+    def _cleanup_empty_download_dirs(self) -> None:
+        """
+        Prune empty directories left under the downloads root after a run.
+
+        A bottom-up prune handles what a per-variable rmdir cannot: nested
+        empty subfolders (eddies' rep/nrt staging dirs) and multi-level
+        local_folder paths (e.g. CMEMS_2nd_productivity/mnkc) whose parent
+        survives when only the leaf is removed.
+        """
         downloads_root = get_settings().DOWNLOADS_DIR
-        for var_key in variables:
-            var_config = self.app_config.variables.get(var_key)
-            if var_config is None:
-                continue
-            folder = downloads_root / var_config.local_folder
-            if folder.exists() and not any(folder.iterdir()):
-                folder.rmdir()
-                logger.debug(f"Removed empty download directory: {folder}")
+        removed = prune_empty_dirs(downloads_root)
+        if removed:
+            logger.debug(
+                f"Removed {removed} empty download director{'y' if removed == 1 else 'ies'} "
+                f"under {downloads_root}"
+            )
