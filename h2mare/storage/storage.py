@@ -125,11 +125,21 @@ def _append_data(var_key: str, ds_new: xr.Dataset, path: Path) -> None:
             # ds_new is already snapped (write_append_zarr); snap the retained
             # head of the existing store so concat aligns instead of unioning a
             # legacy noise-drifted grid against the rounded one.
-            # Concat only the variables ds_new carries: variables it lacks are
-            # re-merged in full below, and concatenating them here would
-            # NaN-fill them over ds_new's window.
+            # The head contributes only variables that ds_new carries AND that
+            # have a time dimension. Variables ds_new lacks are re-merged in
+            # full below (concatenating them here would NaN-fill them over
+            # ds_new's window); time-less statics (e.g. bathy) are not
+            # concatenated by xr.concat but merged with an exact-equality
+            # check, so a float-level recompute difference raises MergeError —
+            # the freshly compiled copy in ds_new wins instead.
             head = snap_grid_coords(ds_resolved)
-            head = head[[v for v in head.data_vars if v in ds_new_vars]]
+            head = head[
+                [
+                    v
+                    for v in head.data_vars
+                    if v in ds_new_vars and "time" in head[v].dims
+                ]
+            ]
             ds_out = xr.concat([head, ds_new], dim="time", data_vars="minimal")
             # Rechunk to match the existing zarr layout and avoid dask chunk-alignment errors.
             chunk_sizes = {
