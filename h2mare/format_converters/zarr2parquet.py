@@ -23,6 +23,12 @@ from h2mare.storage.coverage import get_store_coverage, split_time_range
 from h2mare.storage.parquet_indexer import ParquetIndexer
 from h2mare.types import DateRange, TimeResolution
 
+# How far behind the parquet end the incremental backfill looks for "holes"
+# (days whose rows were appended while a variable's compile lagged, leaving the
+# column NaN). Lag holes are a recent phenomenon by construction; all-null days
+# older than this are legitimate source gaps and are not rescanned every run.
+_BACKFILL_HOLE_LOOKBACK_DAYS = 400
+
 
 class Zarr2Parquet(BaseConverter):
     """
@@ -236,6 +242,16 @@ class Zarr2Parquet(BaseConverter):
         representative column is enough to date the whole group — no need to scan
         every column.
 
+        The last non-null date alone misses *holes*: when an append runs while a
+        variable's compile lags, rows land with the column NaN-padded; once a
+        later append happens to carry the column (compile caught up between
+        runs), the last non-null date jumps past the NaN stretch and an
+        end-based window strands it forever. Holes are therefore detected
+        explicitly — bounded by a lookback (older all-null days are legitimate
+        source gaps, not lag holes) — and only count when the Zarr actually has
+        data for them (a gap the source itself has cannot be filled, and
+        re-merging it every run would never converge).
+
         Only the portion of the gap *inside* the already-written date range is
         returned here; genuinely new trailing dates are handled by the append
         regime in :meth:`run`. var_keys sharing an identical window are merged
@@ -272,9 +288,28 @@ class Zarr2Parquet(BaseConverter):
         # store on every incremental run.
         parquet_var_end = self.indexer.get_var_coverage_end(list(reps.values()))
 
+        source_covs: dict[str, DateRange] = {}
+        for vkey in reps:
+            cov = get_store_coverage(vkey)
+            if cov is not None:
+                source_covs[vkey] = cov
+
+        # Hole detection floor: never before the var's source start, and never
+        # deeper than the lookback. Older all-null days are legitimate source
+        # gaps (e.g. days the raw product never published), and scanning them
+        # would walk the whole store on every incremental run.
+        lookback_floor = parquet_end - pd.Timedelta(days=_BACKFILL_HOLE_LOOKBACK_DAYS)
+        not_before = {
+            reps[vkey]: max(pd.Timestamp(cov.start), lookback_floor).to_pydatetime()
+            for vkey, cov in source_covs.items()
+        }
+        hole_starts = self.indexer.get_var_backfill_start(
+            [reps[vkey] for vkey in source_covs], not_before=not_before
+        )
+
         groups: dict[tuple[pd.Timestamp, pd.Timestamp], set[str]] = defaultdict(set)
         for vkey, rep in reps.items():
-            source_cov = get_store_coverage(vkey)
+            source_cov = source_covs.get(vkey)
             if source_cov is None:
                 continue
             # Backfill only within already-written dates; beyond parquet_end is
@@ -288,6 +323,19 @@ class Zarr2Parquet(BaseConverter):
                 else pd.Timestamp(source_cov.start)
             )
 
+            hole = hole_starts.get(rep)
+            if hole is not None and pd.Timestamp(hole) < window_start:
+                fillable = self._fillable_hole_dates(
+                    rep, DateRange(pd.Timestamp(hole), window_end)
+                )
+                if fillable:
+                    window_start = min(window_start, fillable[0])
+                else:
+                    logger.debug(
+                        f"{vkey}: null days from {pd.Timestamp(hole).date()} match "
+                        "source gaps in the Zarr — nothing to backfill there."
+                    )
+
             if window_start > window_end:
                 logger.debug(f"{vkey}: parquet up to date, no backfill.")
                 continue
@@ -299,6 +347,47 @@ class Zarr2Parquet(BaseConverter):
             )
 
         return [(DateRange(s, e), cols) for (s, e), cols in groups.items()]
+
+    def _fillable_hole_dates(
+        self, column: str, window: DateRange
+    ) -> list[pd.Timestamp]:
+        """
+        Dates in *window* where the Zarr has non-null data for *column* but the
+        Parquet store does not (rows missing entirely, or the column all-null).
+
+        Separates strandable lag holes (Zarr has the data → backfillable) from
+        legitimate source gaps (Zarr is null too → nothing to gain, and
+        re-merging the window every incremental run would never converge).
+        """
+        try:
+            ds = self.zarr_repo.open_dataset(
+                start_date=window.start, end_date=window.end, variables=[column]
+            )
+        except FileNotFoundError:
+            return []
+        try:
+            da = ds[column]
+            mask = da.notnull().any(dim=[d for d in da.dims if d != "time"]).compute()
+            times = pd.to_datetime(ds.time.values).normalize()
+            zarr_dates = set(times[mask.values])
+        finally:
+            ds.close()
+
+        if not zarr_dates:
+            return []
+
+        pq = (
+            self.indexer.scan(dates=(window.start, window.end), columns=[column])
+            .group_by(self.indexer.time_col)
+            .agg(pl.col(column).is_not_null().any().alias("has"))
+            .collect(engine="streaming")
+        )
+        pq_dates = {
+            pd.Timestamp(d)
+            for d, has in zip(pq[self.indexer.time_col], pq["has"])
+            if has
+        }
+        return sorted(zarr_dates - pq_dates)
 
     def sync_data(self, remote_root: Optional[Path] = None) -> None:
         """

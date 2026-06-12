@@ -1,7 +1,8 @@
 """Unit tests for ParquetStore — write-path and overlap-resolution logic."""
 
-from datetime import date
+from datetime import date, datetime
 
+import pandas as pd
 import polars as pl
 import pytest
 from conftest import make_grid_df
@@ -290,6 +291,76 @@ class TestGetTimeCoverage:
         cov = store.get_time_coverage()
         assert cov.start.date() == date(2021, 3, 1)
         assert cov.end.date() == date(2021, 3, 28)
+
+
+class TestGetVarBackfillStart:
+    def _store_with_holes(self, tmp_path, dates, hole_dates, extra=None):
+        """Store where 'sst' is null on hole_dates; 'other' is always populated."""
+        variables = {"sst": 20.0, "other": 1.0}
+        df = make_grid_df(dates, variables=variables)
+        df = df.with_columns(
+            pl.when(pl.col("time").is_in(hole_dates))
+            .then(None)
+            .otherwise(pl.col("sst"))
+            .alias("sst")
+        )
+        store = _store(tmp_path)
+        store.add_data(df)
+        return store
+
+    def test_detects_earliest_hole_in_partition(self, tmp_path):
+        dates = [date(2021, 1, d) for d in range(1, 6)]
+        store = self._store_with_holes(
+            tmp_path, dates, [date(2021, 1, 3), date(2021, 1, 4)]
+        )
+        out = store.get_var_backfill_start(["sst", "other"])
+        assert out == {"sst": pd.Timestamp("2021-01-03")}
+
+    def test_hole_spanning_partitions_returns_oldest(self, tmp_path):
+        # Jan fully covered; Feb and Mar have holes; the island in Mar must not
+        # mask the Feb hole.
+        dates = [
+            date(2021, 1, 10),
+            date(2021, 2, 10),
+            date(2021, 3, 10),
+            date(2021, 3, 20),
+        ]
+        store = self._store_with_holes(
+            tmp_path, dates, [date(2021, 2, 10), date(2021, 3, 10)]
+        )
+        out = store.get_var_backfill_start(["sst"])
+        assert out == {"sst": pd.Timestamp("2021-02-10")}
+
+    def test_no_holes_returns_empty(self, tmp_path):
+        store = self._store_with_holes(tmp_path, [date(2021, 1, 1)], [])
+        assert store.get_var_backfill_start(["sst"]) == {}
+
+    def test_hole_below_covered_partition_is_invisible(self, tmp_path):
+        # Jan has a hole but Feb is fully covered → scanning stops at Feb and
+        # the Jan gap is treated as sound (this is what bounds the scan and
+        # keeps deep legitimate source gaps from being rescanned every run).
+        dates = [date(2021, 1, 10), date(2021, 2, 10)]
+        store = self._store_with_holes(tmp_path, dates, [date(2021, 1, 10)])
+        assert store.get_var_backfill_start(["sst"]) == {}
+
+    def test_not_before_floor_skips_old_gaps(self, tmp_path):
+        # Holes in both Jan and Feb (no fully-covered partition above them);
+        # a floor at Feb 1 must hide the Jan gap.
+        dates = [date(2021, 1, 10), date(2021, 2, 10)]
+        store = self._store_with_holes(
+            tmp_path, dates, [date(2021, 1, 10), date(2021, 2, 10)]
+        )
+        assert store.get_var_backfill_start(
+            ["sst"], not_before={"sst": datetime(2021, 2, 1)}
+        ) == {"sst": pd.Timestamp("2021-02-10")}
+        # Without the floor the scan walks back to the Jan gap.
+        assert store.get_var_backfill_start(["sst"]) == {
+            "sst": pd.Timestamp("2021-01-10")
+        }
+
+    def test_empty_store_returns_empty(self, tmp_path):
+        store = _store(tmp_path)
+        assert store.get_var_backfill_start(["sst"]) == {}
 
 
 class TestGetVarCoverage:

@@ -163,6 +163,11 @@ class ParquetIndexer:
     def get_var_coverage_end(self, columns: list[str]) -> dict:
         return self._store.get_var_coverage_end(columns)
 
+    def get_var_backfill_start(
+        self, columns: list[str], not_before: dict | None = None
+    ) -> dict:
+        return self._store.get_var_backfill_start(columns, not_before=not_before)
+
     def get_geoextent(self) -> BBox | None:
         return self._store.get_geoextent()
 
