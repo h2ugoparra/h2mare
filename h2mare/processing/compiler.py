@@ -395,10 +395,15 @@ class Compiler:
         )
 
         is_system = var_key in SYSTEM_VAR_KEYS
+        # auto_refresh=False: the source store is stable during a compile (see
+        # _catalog_cache note in __init__), so skip the per-access change check
+        # that would otherwise re-stat the store directory on every df access.
         catalog = (
             None
             if is_system
-            else self._catalog_cache.setdefault(var_key, ZarrCatalog(var_key))
+            else self._catalog_cache.setdefault(
+                var_key, ZarrCatalog(var_key, auto_refresh=False)
+            )
         )
 
         if not is_system and not self._has_overlap(var_key, date_range, catalog):

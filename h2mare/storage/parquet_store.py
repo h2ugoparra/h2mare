@@ -80,15 +80,16 @@ class ParquetStore:
             logger.debug(f"No data in {self.parquet_root}. Creating directory.")
             self.parquet_root.mkdir(parents=True, exist_ok=True)
         else:
-            all_present = {self.time_col, self.lon_col, self.lat_col}.issubset(
-                set(self.get_schema().keys())
-            )
+            # Build the union schema once — each get_schema() call on a fresh
+            # store walks the tree and reads one parquet schema per partition.
+            schema = self.get_schema()
+            all_present = {self.time_col, self.lon_col, self.lat_col}.issubset(schema)
             if not all_present:
                 raise ValueError(
                     f"{self.time_col}, {self.lon_col} or {self.lat_col} not present in dataset."
                 )
-            self.physical_schema = self.get_schema()
-            self.physical_cols = set(self.physical_schema.keys())
+            self.physical_schema = schema
+            self.physical_cols = set(schema.keys())
 
     # ======================  METADATA ========================
 
