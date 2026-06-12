@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import calendar
 import shutil
-import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Iterator, Literal
+from uuid import uuid4
 
 import polars as pl
 import pyarrow as pa
@@ -44,16 +45,16 @@ class ParquetStore:
         lon_col: str = "lon",
         lat_col: str = "lat",
         target_file_mb: int = 256,
-        partition_by: list[str] = ["year", "month"],
+        partition_by: list[str] | None = None,
     ):
         self.parquet_root = Path(parquet_root)
         self.time_col = time_col
         self.lon_col = lon_col
         self.lat_col = lat_col
         self._target_file_mb = target_file_mb
-        self._partition_by = list(partition_by)
+        self._partition_by = list(partition_by) if partition_by else ["year", "month"]
 
-        self.partition_cols = set(partition_by)
+        self.partition_cols = set(self._partition_by)
         self.physical_schema = None
         self.physical_cols: set[str] = set()
         # Last "missing variables" set warned about, to avoid re-logging the same
@@ -65,30 +66,23 @@ class ParquetStore:
         if not self.parquet_root.exists() or not any(
             self.parquet_root.rglob("*.parquet")
         ):
-            if not self.parquet_root.exists() and sys.stdin.isatty():
-                answer = (
-                    input(
-                        f"Directory '{self.parquet_root}' does not exist. Create it? [y/N] "
-                    )
-                    .strip()
-                    .lower()
-                )
-                if answer != "y":
-                    raise FileNotFoundError(
-                        f"Aborted: '{self.parquet_root}' was not created."
-                    )
-            logger.debug(f"No data in {self.parquet_root}. Creating directory.")
+            # parquet_root is the configured store location — create it without
+            # asking. Prompting here (a library constructor) stalled pipeline
+            # runs whenever stdin happened to be a TTY.
+            if not self.parquet_root.exists():
+                logger.info(f"Creating parquet store directory: {self.parquet_root}")
             self.parquet_root.mkdir(parents=True, exist_ok=True)
         else:
-            all_present = {self.time_col, self.lon_col, self.lat_col}.issubset(
-                set(self.get_schema().keys())
-            )
+            # Build the union schema once — each get_schema() call on a fresh
+            # store walks the tree and reads one parquet schema per partition.
+            schema = self.get_schema()
+            all_present = {self.time_col, self.lon_col, self.lat_col}.issubset(schema)
             if not all_present:
                 raise ValueError(
                     f"{self.time_col}, {self.lon_col} or {self.lat_col} not present in dataset."
                 )
-            self.physical_schema = self.get_schema()
-            self.physical_cols = set(self.physical_schema.keys())
+            self.physical_schema = schema
+            self.physical_cols = set(schema.keys())
 
     # ======================  METADATA ========================
 
@@ -113,10 +107,6 @@ class ParquetStore:
         for col, val in zip(self._partition_by, partition):
             path = path / f"{col}={val}"
         return path
-
-    def _partition_glob(self) -> str:
-        parts = "/".join(f"{col}=*" for col in self._partition_by)
-        return str(self.parquet_root / parts / "*.parquet").replace("\\", "/")
 
     def _partition_filter_sql(self, pairs: list[tuple]) -> str:
         clauses = []
@@ -149,10 +139,12 @@ class ParquetStore:
                 )
             else:
                 first_dir, last_dir = y0_path, yn_path
-            first_file = sorted(first_dir.rglob("*.parquet"))[0]
-            last_file = sorted(last_dir.rglob("*.parquet"))[-1]
-            lf_min = pl.scan_parquet(first_file).select(pl.col(self.time_col).min())
-            lf_max = pl.scan_parquet(last_file).select(pl.col(self.time_col).max())
+            # Scan every file in the boundary partitions: a partition split across
+            # multiple files (row-count splits) can hold its min/max in any of them.
+            first_files = list(first_dir.rglob("*.parquet"))
+            last_files = list(last_dir.rglob("*.parquet"))
+            lf_min = pl.scan_parquet(first_files).select(pl.col(self.time_col).min())
+            lf_max = pl.scan_parquet(last_files).select(pl.col(self.time_col).max())
             dt_min, dt_max = (r.item() for r in pl.collect_all([lf_min, lf_max]))
         else:
             all_files = list(self.parquet_root.rglob("*.parquet"))
@@ -401,6 +393,12 @@ class ParquetStore:
                 self._build_partition_schema(df), flavor="hive"
             ),
             existing_data_behavior="overwrite_or_ignore",
+            # The default basename ("part-{i}.parquet") restarts at 0 on every
+            # write, so appending into a partition that already has files
+            # silently overwrites part-0 and destroys its rows (e.g. appending
+            # one new day into the current month's partition). A per-write
+            # unique prefix makes appends purely additive.
+            basename_template=f"part-{uuid4().hex[:8]}-{{i}}.parquet",
             max_rows_per_file=max_file,
             max_rows_per_group=max_group,
         )
@@ -481,74 +479,85 @@ class ParquetStore:
         if existing_pairs:
             conn = duckdb.connect()
 
-            conn.register("df_new", df.drop(time_part_cols) if time_part_cols else df)
-
-            parquet_glob = self._partition_glob()
-
-            # Detect new_cols that were partially written by a previous interrupted run.
-            # DuckDB schema-unifies the glob so any column present in *any* file appears here.
-            # Such columns must be excluded from the existing CTE to avoid a name clash in
-            # the FULL OUTER JOIN (both sides would have the column → Polars renames to _1).
-            partially_written: set[str] = set()
-            if new_cols:
-                try:
-                    file_col_rows = conn.execute(
-                        f"DESCRIBE SELECT * FROM read_parquet('{parquet_glob}', "
-                        f"hive_partitioning=true) LIMIT 0"
-                    ).fetchall()
-                    actual_file_cols = {row[0] for row in file_col_rows}
-                    # Exclude partition cols: DESCRIBE on a hive-partitioned parquet glob
-                    # includes virtual year/month columns that aren't physical data columns.
-                    partially_written = (
-                        new_cols & actual_file_cols
-                    ) - self.partition_cols
-                    if partially_written:
-                        logger.debug(
-                            f"Partially-written columns detected (excluded from existing CTE): {partially_written}"
-                        )
-                except Exception as e:
-                    logger.debug(f"Could not detect partially-written columns: {e}")
-
-            # Exclude time-derived partition cols from existing CTE (re-derived after JOIN);
-            # custom partition cols remain so they survive the FULL OUTER JOIN correctly.
-            # Also exclude partially_written cols to prevent name clashes in the JOIN.
-            exclude_cols = set(time_part_cols) | duplicated_cols | partially_written
-            exclude_sql = ", ".join(exclude_cols)
-
-            filter_sql = self._partition_filter_sql(existing_pairs)
             key_cols = ", ".join(
                 [self.time_col, self.lon_col, self.lat_col] + custom_part_cols
             )
 
-            merged = conn.execute(
-                f"""
-                WITH existing AS (
-                    SELECT * EXCLUDE ({exclude_sql})
-                    FROM read_parquet('{parquet_glob}', hive_partitioning = true)
-                    WHERE {filter_sql}
+            # Merge one partition at a time: a single JOIN over every affected
+            # partition materializes them all in memory at once — the peak-memory
+            # bottleneck on a backfill touching many months. Equality on the time
+            # join key confines each existing row's match to its own partition,
+            # so per-partition joins produce exactly the same rows as one big join.
+            # Reading each partition's own files (rather than the store glob with
+            # a WHERE) also keeps the bind schema stable while earlier partitions
+            # are rewritten with new columns.
+            for partition in existing_pairs:
+                part_glob = str(self._partition_path(partition) / "*.parquet").replace(
+                    "\\", "/"
                 )
-                SELECT * FROM existing
-                FULL OUTER JOIN df_new USING ({key_cols})
-            """
-            ).pl()
+                # Columns present in this partition: its physical file columns
+                # plus the hive virtuals derived from the path.
+                cols_here = {
+                    row[0]
+                    for row in conn.execute(
+                        f"DESCRIBE SELECT * FROM read_parquet('{part_glob}', "
+                        f"hive_partitioning=true) LIMIT 0"
+                    ).fetchall()
+                }
+                # Columns carried by BOTH sides (re-supplied duplicates, or new
+                # columns partially written by an interrupted run). df_new's
+                # value must win only where df_new actually has the row; rows
+                # outside df_new's date range keep their stored values. The old
+                # blanket EXCLUDE of these columns from the existing side
+                # nulled them for every row df_new didn't cover — a backfill
+                # window smaller than the partition wiped the column's earlier
+                # days (observed: chl May 1-26 erased by a May 27-31 backfill).
+                overlap_cols = sorted(
+                    ((duplicated_cols | new_cols) & cols_here) - self.partition_cols
+                )
+                # Exclude time-derived partition cols (the write is per
+                # partition, so they are never needed on the merged rows) and
+                # the overlapping data cols — the latter re-enter aliased so
+                # they can be reconciled row-by-row after the JOIN. EXCLUDE of
+                # a missing column is a binder error, hence the cols_here cap.
+                excl = (set(time_part_cols) & cols_here) | set(overlap_cols)
+                exclude_clause = f" EXCLUDE ({', '.join(excl)})" if excl else ""
+                alias_sql = "".join(f', "{c}" AS "{c}__h2m_old"' for c in overlap_cols)
+
+                df_part = df.filter(self._partition_filter_expr(partition))
+                if time_part_cols:
+                    df_part = df_part.drop(time_part_cols)
+                if overlap_cols:
+                    # Row marker: TRUE on rows df_new contributed, null on
+                    # rows that exist only in the stored partition.
+                    df_part = df_part.with_columns(pl.lit(True).alias("__h2m_from_new"))
+                conn.register("df_new", df_part)
+                merged = conn.execute(
+                    f"""
+                    WITH existing AS (
+                        SELECT *{exclude_clause}{alias_sql}
+                        FROM read_parquet('{part_glob}', hive_partitioning = true)
+                    )
+                    SELECT * FROM existing
+                    FULL OUTER JOIN df_new USING ({key_cols})
+                """
+                ).pl()
+
+                if overlap_cols:
+                    merged = merged.with_columns(
+                        [
+                            pl.when(pl.col("__h2m_from_new"))
+                            .then(pl.col(c))
+                            .otherwise(pl.col(f"{c}__h2m_old"))
+                            .alias(c)
+                            for c in overlap_cols
+                        ]
+                    ).drop(["__h2m_from_new"] + [f"{c}__h2m_old" for c in overlap_cols])
+
+                partition_data = self._align_to_schema(merged, include_partitions=False)
+                self.atomic_partition_write(partition_data, partition)
 
             conn.close()
-
-            _time_rederive: dict[str, pl.Expr] = {
-                "year": pl.col(self.time_col).dt.year().cast(pl.Int32),
-                "month": pl.col(self.time_col).dt.month().cast(pl.Int32),
-                "day": pl.col(self.time_col).dt.day().cast(pl.Int32),
-            }
-            rederive = [_time_rederive[c].alias(c) for c in time_part_cols]
-            if rederive:
-                merged = merged.with_columns(rederive)
-
-            for partition in existing_pairs:
-                partition_data = merged.filter(self._partition_filter_expr(partition))
-                partition_data = self._align_to_schema(
-                    partition_data, include_partitions=False
-                )
-                self.atomic_partition_write(partition_data, partition)
 
         for partition in new_pairs:
             df_write = self._align_to_schema(
@@ -733,6 +742,104 @@ class ParquetStore:
                     still.append(c)
                 else:
                     result[c] = to_datetime(v)
+            remaining = still
+        return result
+
+    def _leaf_partition_period_end(self, part_dir: Path) -> datetime:
+        """Last calendar date a leaf partition directory can contain."""
+        if "month" in self._partition_by:
+            y = int(part_dir.parent.name.split("=", 1)[1])
+            m = int(part_dir.name.split("=", 1)[1])
+            return datetime(y, m, calendar.monthrange(y, m)[1])
+        y = int(part_dir.name.split("=", 1)[1])
+        return datetime(y, 12, 31)
+
+    def get_var_backfill_start(
+        self,
+        columns: list[str],
+        not_before: dict[str, datetime] | None = None,
+    ) -> dict[str, datetime]:
+        """
+        Earliest "hole" date per column, scanning newest partitions first.
+
+        A hole is a date that has rows in the store but only null values for
+        the column — the signature left when rows were appended while the
+        column's source still lagged. :meth:`get_var_coverage_end` alone cannot
+        see holes: once a later append lands with the column populated, the
+        last non-null date jumps past the gap, and an end-based backfill window
+        strands it forever.
+
+        Scanning runs newest→oldest and stops, per column, at the first
+        partition where the column is fully populated (every date with rows has
+        a non-null value) — holes come from recent source lag, so anything
+        older than a fully-covered partition is taken as sound. In the common
+        all-current case only the newest partition is read. Columns absent from
+        a partition's files are skipped there, as in ``get_var_coverage_end``.
+
+        Args:
+            columns: Data columns to check.
+            not_before: Optional per-column floor (typically the column's
+                source coverage start). Partitions entirely older than the
+                floor are not scanned for that column — without this, a column
+                whose source begins mid-store (and is legitimately null before
+                that) would force a full-store walk on every incremental run.
+
+        Returns:
+            Mapping of column name to its earliest hole date. Columns with no
+            holes are omitted; empty when the store has no data or the
+            partition layout is not purely temporal.
+        """
+        if not self._dataset_meta_initialized:
+            return {}
+        if self._partition_by not in (["year"], ["year", "month"]):
+            return {}
+
+        coord_cols = {self.time_col, self.lon_col, self.lat_col}
+        schema_cols = set(self.get_schema())
+        remaining = [
+            c
+            for c in columns
+            if c in schema_cols and c not in coord_cols and c not in self.partition_cols
+        ]
+
+        result: dict[str, datetime] = {}
+        for part_dir in self._leaf_partition_dirs_newest_first():
+            if not remaining:
+                break
+            if not_before:
+                period_end = self._leaf_partition_period_end(part_dir)
+                remaining = [
+                    c
+                    for c in remaining
+                    if c not in not_before or period_end >= not_before[c]
+                ]
+                if not remaining:
+                    break
+            files = list(part_dir.rglob("*.parquet"))
+            if not files:
+                continue
+            present = set(pl.read_parquet_schema(files[0]))
+            cols_here = [c for c in remaining if c in present]
+            if not cols_here:
+                continue
+            # Per date: does the column hold any non-null value?
+            per_date = (
+                pl.scan_parquet(files)
+                .group_by(self.time_col)
+                .agg([pl.col(c).is_not_null().any().alias(c) for c in cols_here])
+                .collect(engine="streaming")
+            )
+            still: list[str] = []
+            for c in remaining:
+                if c not in cols_here:
+                    still.append(c)
+                    continue
+                holes = per_date.filter(~pl.col(c))[self.time_col]
+                if holes.is_empty():
+                    # Fully covered here — older partitions are taken as sound.
+                    continue
+                result[c] = to_datetime(holes.min())
+                still.append(c)  # an older hole may exist; keep scanning
             remaining = still
         return result
 

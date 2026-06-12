@@ -7,7 +7,6 @@ of processed zarr files, enabling efficient dataset discovery and metadata queri
 
 from __future__ import annotations
 
-import json
 from collections import defaultdict
 from pathlib import Path
 from typing import Any, Literal, Optional, Sequence, Union
@@ -23,6 +22,7 @@ from h2mare.types import BBox, DateLike, DateRange, TimeResolution
 from h2mare.utils.datetime_utils import normalize_date
 from h2mare.utils.labels import create_label_from_dataset
 from h2mare.utils.paths import resolve_store_path
+from h2mare.utils.spatial import sel_padded_bbox
 from h2mare.validators import validate_time_resolution, validate_var_key
 
 
@@ -314,8 +314,18 @@ class ZarrCatalog:
         result: dict[str, list[pd.Timestamp]] = defaultdict(list)
 
         date_list = [date_list] if isinstance(date_list, pd.Timestamp) else date_list
+
+        # Snapshot the catalog once: with auto_refresh=True every .df access
+        # re-stats the store directory, which per-date adds up to one directory
+        # sweep per extraction sample.
+        df = self.df
+        if df.empty:
+            self._log("warning", "Catalog is empty, no paths available")
+            return {}
+        df = df.sort_values("start_date")
+
         for ts in date_list:
-            matches = self._find_overlapping_files(ts, ts)
+            matches = df[(df["start_date"] <= ts) & (df["end_date"] >= ts)]
             if matches.empty:
                 self._log("debug", f"No zarr file contains date: {ts}")
                 continue
@@ -357,13 +367,7 @@ class ZarrCatalog:
         # Sort by start date and return unique paths (a file with rep+nrt rows
         # would otherwise appear twice and break xr.open_mfdataset)
         matches = matches.sort_values("start_date")
-        seen: set[str] = set()
-        unique: list[str] = []
-        for p in matches["path"]:
-            if p not in seen:
-                seen.add(p)
-                unique.append(p)
-        return unique
+        return list(dict.fromkeys(matches["path"]))
 
     def open_dataset(
         self,
@@ -699,26 +703,9 @@ class ZarrCatalog:
             )
             return ds
 
-        # Pad by one grid cell so a sub-cell bbox (e.g. a short geometry on a
-        # coarse 0.5° grid) still captures surrounding cells. Without this, a
-        # bbox falling between cell centers yields an empty slice downstream.
-        lat_res = (
-            float(abs(ds[lat_coord][1] - ds[lat_coord][0]))
-            if ds[lat_coord].size > 1
-            else 0.0
-        )
-        lon_res = (
-            float(abs(ds[lon_coord][1] - ds[lon_coord][0]))
-            if ds[lon_coord].size > 1
-            else 0.0
-        )
-
         try:
-            return ds.sel(
-                {
-                    lat_coord: slice(bbox.ymin - lat_res, bbox.ymax + lat_res),
-                    lon_coord: slice(bbox.xmin - lon_res, bbox.xmax + lon_res),
-                }
+            return sel_padded_bbox(
+                ds, bbox.to_tuple(), lat_coord=lat_coord, lon_coord=lon_coord
             )
         except Exception as e:
             logger.error(f"Failed to apply bbox: {e}")
@@ -855,6 +842,7 @@ class ZarrCatalog:
             return None
         if not isinstance(bbox, BBox):
             return BBox.from_tuple(bbox)
+        return bbox
 
     def summary(self) -> dict:
         """
@@ -903,137 +891,10 @@ class ZarrCatalog:
 
     def backfill_provenance(self, rep_end_date: DateLike) -> int:
         """
-        Retroactively write provenance sidecars for existing Zarr files that
-        pre-date automatic tracking by Netcdf2Zarr.
-
-        For each Zarr file in store_root that has no _prov.json sidecar:
-
-        * Entire file falls within rep period  -> single rep entry.
-        * Entire file falls after rep end date -> single nrt entry
-          (only written when dataset_id_nrt is configured).
-        * File spans the rep/nrt boundary    -> two entries split at
-          rep_end_date / rep_end_date + 1 day.
-
-        Call once after upgrading. The rep end date is obtainable without
-        re-downloading data via CMEMSDownloader(var_key).get_rep_availability().end.
-
-        Args:
-            rep_end_date: Last date covered by the reprocessed (rep) dataset.
-
-        Returns:
-            Number of sidecar files written.
-
-        Example::
-
-            from h2mare.storage.zarr_catalog import ZarrCatalog
-            from h2mare.downloader.cmems_downloader import CMEMSDownloader
-
-            rep_end = CMEMSDownloader("sst").get_rep_availability().end
-            n = ZarrCatalog("sst").backfill_provenance(rep_end)
-            print(f"Written {n} sidecars")
+        One-time migration: retroactively write provenance for Zarr files
+        that pre-date automatic tracking by Netcdf2Zarr. Returns the number
+        of files updated. See :func:`h2mare.storage.provenance.backfill_provenance`.
         """
-        rep_end = pd.to_datetime(rep_end_date).normalize()
-        nrt_start = rep_end + pd.Timedelta(days=1)
-        has_nrt = self.var_config.dataset_id_nrt is not None
+        from h2mare.storage.provenance import backfill_provenance
 
-        if not self.store_root.exists():
-            self._log("warning", f"Store root not found: {self.store_root}")
-            return 0
-
-        import zarr
-
-        written = 0
-        for zarr_path in sorted(self.store_root.glob("*.zarr")):
-            try:
-                ds = xr.open_zarr(zarr_path, consolidated=False)
-                already_set = ds.attrs.get("source_datasets") is not None
-                z_start = pd.to_datetime(ds.time.min().compute().item()).normalize()
-                z_end = pd.to_datetime(ds.time.max().compute().item()).normalize()
-                ds.close()
-            except Exception as e:
-                self._log("warning", f"Could not read {zarr_path.name}: {e}")
-                continue
-
-            if already_set:
-                self._log(
-                    "debug",
-                    f"Provenance already in zarr attrs, skipping: {zarr_path.name}",
-                )
-                continue
-
-            records = []
-
-            if z_end <= rep_end or not has_nrt:
-                records.append(
-                    {
-                        "dataset_id": self.var_config.dataset_id_rep,
-                        "dataset_type": "rep",
-                        "start_date": z_start.strftime("%Y-%m-%d"),
-                        "end_date": z_end.strftime("%Y-%m-%d"),
-                    }
-                )
-            elif z_start > rep_end:
-                records.append(
-                    {
-                        "dataset_id": self.var_config.dataset_id_nrt,
-                        "dataset_type": "nrt",
-                        "start_date": z_start.strftime("%Y-%m-%d"),
-                        "end_date": z_end.strftime("%Y-%m-%d"),
-                    }
-                )
-            else:
-                records.append(
-                    {
-                        "dataset_id": self.var_config.dataset_id_rep,
-                        "dataset_type": "rep",
-                        "start_date": z_start.strftime("%Y-%m-%d"),
-                        "end_date": rep_end.strftime("%Y-%m-%d"),
-                    }
-                )
-                records.append(
-                    {
-                        "dataset_id": self.var_config.dataset_id_nrt,
-                        "dataset_type": "nrt",
-                        "start_date": nrt_start.strftime("%Y-%m-%d"),
-                        "end_date": z_end.strftime("%Y-%m-%d"),
-                    }
-                )
-
-            root = zarr.open_group(str(zarr_path), mode="r+")
-            root.attrs["source_datasets"] = json.dumps(records)
-
-            # Remove any legacy sidecar now that provenance lives in zarr attrs
-            prov_file = zarr_path.parent / (zarr_path.stem + "_prov.json")
-            if prov_file.exists():
-                prov_file.unlink()
-
-            self._log(
-                "info",
-                f"Wrote backfilled provenance for {zarr_path.name} ({len(records)} source(s))",
-            )
-            written += 1
-
-        if written:
-            self.reload()
-            self._log(
-                "info",
-                f"Backfill complete: {written} zarr file(s) updated, catalog reloaded",
-            )
-        else:
-            self._log("info", "Backfill complete: no files needed provenance")
-
-        return written
-
-
-if __name__ == "__main__":
-    from h2mare.config import get_settings
-
-    var_list = get_settings().get_available_var_keys()
-    for var_key in var_list:
-        repo = ZarrCatalog(var_key)
-        print(repo)
-    # stats = repo.summary()
-    # print(stats)
-    # print(repo.open_dataset(
-    #    start_date="2020-01-01",
-    #    end_date="2022-12-31"))
+        return backfill_provenance(self, rep_end_date)

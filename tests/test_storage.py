@@ -95,7 +95,11 @@ class TestAtomicSwap:
         ds.close()
 
     def test_original_restored_when_final_move_fails(self, tmp_path):
-        """If renaming tmp → final fails, the original is restored from backup."""
+        """If renaming tmp → final fails, the original is restored from backup.
+
+        Uses overlapping dates so the rewrite (swap) path is exercised — a
+        clean trailing append now goes through the in-place fast path.
+        """
         path = tmp_path / "sst.zarr"
         _make_ds("2020-01-01", 5).to_zarr(path)
 
@@ -110,7 +114,7 @@ class TestAtomicSwap:
 
         with patch("h2mare.storage.storage.shutil.move", side_effect=failing_move):
             with pytest.raises(RuntimeError, match="original restored from backup"):
-                _append_data("sst", _make_ds("2020-01-06", 5), path)
+                _append_data("sst", _make_ds("2020-01-03", 5), path)
 
         # Original data still intact
         ds = xr.open_zarr(path)
@@ -133,9 +137,114 @@ class TestAtomicSwap:
 
         with patch("h2mare.storage.storage.shutil.move", side_effect=failing_move):
             with pytest.raises(RuntimeError):
-                _append_data("sst", _make_ds("2020-01-06", 5), path)
+                _append_data("sst", _make_ds("2020-01-03", 5), path)
 
         assert not path.with_name(path.name + ".bak").exists()
+
+
+# ---------------------------------------------------------------------------
+# _append_data — in-place append fast path
+# ---------------------------------------------------------------------------
+
+
+class TestFastAppend:
+    """A clean trailing append (same variables, same grid, strictly after the
+    stored dates) must extend the zarr in place instead of rewriting it."""
+
+    def test_fast_path_skips_rewrite(self, tmp_path):
+        path = tmp_path / "sst.zarr"
+        _make_ds("2020-01-01", 5).to_zarr(path)
+
+        # If the rewrite path were taken, this sentinel would raise.
+        with patch(
+            "h2mare.storage.storage._resolve_overlap",
+            side_effect=AssertionError("rewrite path used for a clean append"),
+        ):
+            _append_data("sst", _make_ds("2020-01-06", 3), path)
+
+        ds = xr.open_zarr(path, consolidated=False)
+        times = pd.DatetimeIndex(ds.time.values)
+        assert len(times) == 8
+        assert times.is_monotonic_increasing and times.is_unique
+        ds.close()
+
+    def test_appended_values_match_source(self, tmp_path):
+        path = tmp_path / "sst.zarr"
+        ds_old = _make_ds("2020-01-01", 5, seed=1)
+        ds_old.to_zarr(path)
+        ds_new = _make_ds("2020-01-06", 3, seed=2)
+        _append_data("sst", ds_new, path)
+
+        result = xr.open_zarr(path, consolidated=False)
+        np.testing.assert_allclose(
+            result.sst.sel(time="2020-01-02").values,
+            ds_old.sst.sel(time="2020-01-02").values,
+        )
+        np.testing.assert_allclose(
+            result.sst.sel(time="2020-01-08").values,
+            ds_new.sst.sel(time="2020-01-08").values,
+        )
+        result.close()
+
+    def test_unaligned_chunk_boundary(self, tmp_path):
+        """Appending onto a partially-filled boundary chunk must keep all values."""
+        path = tmp_path / "sst.zarr"
+        ds_old = _make_ds("2020-01-01", 7, seed=3)
+        ds_old.chunk({"time": 5}).to_zarr(path)  # last zarr chunk holds 2 of 5
+        ds_new = _make_ds("2020-01-08", 4, seed=4)
+        _append_data("sst", ds_new.chunk({"time": 3}), path)
+
+        result = xr.open_zarr(path, consolidated=False)
+        assert len(result.time) == 11
+        np.testing.assert_allclose(
+            result.sst.sel(time="2020-01-07").values,
+            ds_old.sst.sel(time="2020-01-07").values,
+        )
+        np.testing.assert_allclose(
+            result.sst.sel(time="2020-01-11").values,
+            ds_new.sst.sel(time="2020-01-11").values,
+        )
+        result.close()
+
+    def test_grid_mismatch_falls_back_to_rewrite(self, tmp_path):
+        from h2mare.storage import storage as storage_mod
+
+        path = tmp_path / "sst.zarr"
+        _make_ds("2020-01-01", 5).to_zarr(path)
+
+        times = pd.date_range("2020-01-06", periods=3, freq="D")
+        rng = np.random.default_rng(5)
+        ds_new = xr.Dataset(
+            {"sst": (["time", "lat", "lon"], rng.uniform(10, 30, (3, 3, 3)))},
+            coords={
+                "time": times,
+                "lat": [30.0, 36.0, 40.0],  # differs from stored grid
+                "lon": [-10.0, -5.0, 0.0],
+            },
+        )
+        with patch(
+            "h2mare.storage.storage._resolve_overlap",
+            wraps=storage_mod._resolve_overlap,
+        ) as spy:
+            _append_data("sst", ds_new, path)
+        spy.assert_called_once()
+
+    def test_overlapping_dates_fall_back_to_rewrite(self, tmp_path):
+        from h2mare.storage import storage as storage_mod
+
+        path = tmp_path / "sst.zarr"
+        _make_ds("2020-01-01", 5).to_zarr(path)
+
+        with patch(
+            "h2mare.storage.storage._resolve_overlap",
+            wraps=storage_mod._resolve_overlap,
+        ) as spy:
+            _append_data("sst", _make_ds("2020-01-04", 5), path)
+        spy.assert_called_once()
+
+        ds = xr.open_zarr(path, consolidated=False)
+        assert pd.DatetimeIndex(ds.time.values).is_unique
+        ds.close()
 
 
 # ---------------------------------------------------------------------------
@@ -223,6 +332,169 @@ class TestVariableAddition:
         assert "thetao_100" in ds.data_vars
         assert "thetao_500" in ds.data_vars
         ds.close()
+
+
+# ---------------------------------------------------------------------------
+# _append_data — partial variable set (subset compile)
+# ---------------------------------------------------------------------------
+
+
+def _make_two_var_ds(start: str, n_days: int, seed: int = 0) -> xr.Dataset:
+    times = pd.date_range(start, periods=n_days, freq="D")
+    rng = np.random.default_rng(seed)
+    return xr.Dataset(
+        {
+            "sst": (["time", "lat", "lon"], rng.uniform(10, 30, (n_days, 3, 3))),
+            "adt": (["time", "lat", "lon"], rng.uniform(-1, 1, (n_days, 3, 3))),
+        },
+        coords={
+            "time": times,
+            "lat": [30.0, 35.0, 40.0],
+            "lon": [-10.0, -5.0, 0.0],
+        },
+    )
+
+
+class TestPartialVariableAppend:
+    """A ds_new carrying only a subset of the stored variables (e.g. a
+    `run -v ssh` compile) must not NaN-wipe the other variables over its
+    window — regression for the h2ds corruption seen in production."""
+
+    def test_other_variables_survive_subset_extension(self, tmp_path):
+        path = tmp_path / "h2ds.zarr"
+        ds_orig = _make_two_var_ds("2020-01-01", 10)
+        ds_orig.to_zarr(path)
+
+        # adt-only update overlapping Jan 8-10 and extending to Jan 12
+        ds_new = _make_two_var_ds("2020-01-08", 5, seed=1)[["adt"]]
+        _append_data("h2ds", ds_new, path)
+
+        out = xr.open_zarr(path, consolidated=False)
+        assert len(out.time) == 12
+        # sst preserved over the overlap window (was NaN-wiped before the fix)
+        np.testing.assert_allclose(
+            out.sst.sel(time="2020-01-09").values,
+            ds_orig.sst.sel(time="2020-01-09").values,
+        )
+        # sst NaN only at genuinely new dates
+        assert np.isnan(out.sst.sel(time="2020-01-12").values).all()
+        # adt over the window comes from ds_new
+        np.testing.assert_allclose(
+            out.adt.sel(time="2020-01-09").values,
+            ds_new.adt.sel(time="2020-01-09").values,
+        )
+        out.close()
+
+    def test_static_variable_recompute_difference_does_not_conflict(self, tmp_path):
+        """Time-less variables (e.g. bathy) are merged by xr.concat, not
+        concatenated, and merging demands exact equality — a float-level
+        recompute difference between the stored and freshly compiled copy
+        raised MergeError. The fresh copy in ds_new must win instead."""
+        path = tmp_path / "h2ds.zarr"
+        ds_orig = _make_two_var_ds("2020-01-01", 5)
+        ds_orig["bathy"] = (["lat", "lon"], np.full((3, 3), 100.0))
+        ds_orig.to_zarr(path)
+
+        ds_new = _make_two_var_ds("2020-01-04", 4, seed=3)
+        ds_new["bathy"] = (["lat", "lon"], np.full((3, 3), 100.0001))
+        _append_data("h2ds", ds_new, path)
+
+        out = xr.open_zarr(path, consolidated=False)
+        assert len(out.time) == 7  # Jan 1-7 (old 1-5 ∪ new 4-7)
+        np.testing.assert_allclose(out.bathy.values, 100.0001)
+        out.close()
+
+    def test_subset_full_overlap_preserves_other_variables(self, tmp_path):
+        """Full-overlap replace with a subset ds_new keeps the absent variables."""
+        path = tmp_path / "h2ds.zarr"
+        ds_orig = _make_two_var_ds("2020-01-01", 5)
+        ds_orig.to_zarr(path)
+
+        ds_new = _make_two_var_ds("2020-01-01", 5, seed=2)[["adt"]]
+        _append_data("h2ds", ds_new, path)
+
+        out = xr.open_zarr(path, consolidated=False)
+        assert len(out.time) == 5
+        np.testing.assert_allclose(out.sst.values, ds_orig.sst.values)
+        np.testing.assert_allclose(out.adt.values, ds_new.adt.values)
+        out.close()
+
+
+# ---------------------------------------------------------------------------
+# _append_data — middle-window rewrite (tail preservation)
+# ---------------------------------------------------------------------------
+
+
+class TestMiddleWindowAppend:
+    """A ds_new covering a window in the middle of the stored range (explicit
+    --start/--end compile) must preserve the existing dates after the window —
+    the old head+new concat silently dropped them."""
+
+    def test_tail_dates_survive_middle_window(self, tmp_path):
+        path = tmp_path / "sst.zarr"
+        ds_orig = _make_ds("2020-01-01", 20)
+        ds_orig.to_zarr(path)
+
+        ds_new = _make_ds("2020-01-05", 6, seed=7)  # Jan 5-10
+        _append_data("sst", ds_new, path)
+
+        out = xr.open_zarr(path, consolidated=False)
+        assert len(out.time) == 20
+        # head and tail keep the stored values; the window comes from ds_new
+        np.testing.assert_allclose(
+            out.sst.sel(time="2020-01-03").values,
+            ds_orig.sst.sel(time="2020-01-03").values,
+        )
+        np.testing.assert_allclose(
+            out.sst.sel(time="2020-01-07").values,
+            ds_new.sst.sel(time="2020-01-07").values,
+        )
+        np.testing.assert_allclose(
+            out.sst.sel(time="2020-01-15").values,
+            ds_orig.sst.sel(time="2020-01-15").values,
+        )
+        out.close()
+
+    def test_tail_survives_when_window_starts_at_file_start(self, tmp_path):
+        """Head empty (window starts at the stored start) — the tail alone
+        must still be retained."""
+        path = tmp_path / "sst.zarr"
+        ds_orig = _make_ds("2020-01-01", 20)
+        ds_orig.to_zarr(path)
+
+        ds_new = _make_ds("2020-01-01", 5, seed=8)  # Jan 1-5
+        _append_data("sst", ds_new, path)
+
+        out = xr.open_zarr(path, consolidated=False)
+        assert len(out.time) == 20
+        np.testing.assert_allclose(
+            out.sst.sel(time="2020-01-12").values,
+            ds_orig.sst.sel(time="2020-01-12").values,
+        )
+        out.close()
+
+    def test_subset_middle_window_preserves_everything_around_it(self, tmp_path):
+        """Subset vars + middle window combined: the absent variable keeps its
+        full span, the updated one keeps head and tail."""
+        path = tmp_path / "h2ds.zarr"
+        ds_orig = _make_two_var_ds("2020-01-01", 20)
+        ds_orig.to_zarr(path)
+
+        ds_new = _make_two_var_ds("2020-01-05", 6, seed=9)[["adt"]]
+        _append_data("h2ds", ds_new, path)
+
+        out = xr.open_zarr(path, consolidated=False)
+        assert len(out.time) == 20
+        np.testing.assert_allclose(out.sst.values, ds_orig.sst.values)
+        np.testing.assert_allclose(
+            out.adt.sel(time="2020-01-07").values,
+            ds_new.adt.sel(time="2020-01-07").values,
+        )
+        np.testing.assert_allclose(
+            out.adt.sel(time="2020-01-15").values,
+            ds_orig.adt.sel(time="2020-01-15").values,
+        )
+        out.close()
 
 
 # ---------------------------------------------------------------------------

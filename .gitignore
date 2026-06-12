@@ -3,7 +3,8 @@ __pycache__/
 
 # Data and logs (large / generated)
 data/
-logs/
+logs/*
+!logs/.gitignore
 notebooks/
 
 # Virtual environment
@@ -32,3 +33,6 @@ site/
 
 # Scripts (work in progress)
 scripts/masked_spatial_maps.py
+
+# Local-only Task Scheduler wrapper (machine-specific)
+scripts/run_pipeline.bat

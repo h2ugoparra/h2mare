@@ -11,6 +11,7 @@ from loguru import logger
 from tenacity import Retrying, stop_after_attempt, wait_exponential
 
 from h2mare.config import AppConfig, get_settings
+from h2mare.utils.files_io import prune_empty_dirs
 from h2mare.utils.paths import resolve_store_path
 from h2mare.validators import validate_var_key
 
@@ -131,7 +132,12 @@ class BaseDownloader(ABC):
                 return fn(*args, **kwargs)
 
     def _cleanup_empty_download_dir(self) -> None:
-        """Remove the per-variable download subdirectory if it is empty after a run."""
+        """
+        Remove the per-variable download directory if it holds no files after
+        a run. Empty subfolders (e.g. eddies' rep/nrt staging dirs) are pruned
+        first so they cannot keep the directory alive.
+        """
+        prune_empty_dirs(self.download_dir)
         if self.download_dir.exists() and not any(self.download_dir.iterdir()):
             self.download_dir.rmdir()
 

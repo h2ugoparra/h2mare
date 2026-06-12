@@ -5,8 +5,6 @@ Extract data based on csv or shapefile format files from datasets in zarr format
 from __future__ import annotations
 
 import json
-import random
-import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Optional, Union, overload
@@ -25,6 +23,7 @@ from h2mare.storage.zarr_catalog import ZarrCatalog
 from h2mare.types import BBox
 from h2mare.utils.logging import log_time
 from h2mare.utils.paths import resolve_store_path
+from h2mare.utils.spatial import sel_padded_bbox
 
 _AUTO_INDEX_SENTINEL = "__row_id__"
 
@@ -60,20 +59,20 @@ def _extract_geometry(
 ) -> dict:
     """
     Extract data and return as dictionary for a single geometry row.
-    Retries up to 5 times in case of error (e.g ISError, Zarr chunk issues).
+
+    The dataset is already loaded in memory by the caller, so a clip failure
+    (e.g. geometry outside the grid) is deterministic — log it and return
+    NaNs for the row rather than retrying.
 
     Args:
         id (str): index value of the geometry row.
         date (): date value of the geometry row.
         geom (): geometry of the geometry row.
-        ds (xr.DataArray | xr.Dataset): xarray object with dask arrays.
+        ds (xr.DataArray | xr.Dataset): in-memory xarray object.
 
     Returns:
         dict: dictionary with index, variable names and extracted values.
     """
-    max_attempts = 5
-    base_wait = 1.0  # seconds
-
     is_dataset = isinstance(ds, xr.Dataset)
     data_vars: list[str] = [str(v) for v in ds.data_vars] if is_dataset else []
     single_var_name: str = str(ds.name) if (not is_dataset and ds.name) else "value"
@@ -81,37 +80,24 @@ def _extract_geometry(
     if date is not None:
         ds = ds.sel(time=date, method="nearest")
 
-    for attempt in range(1, max_attempts + 1):
-        try:
-            clipped = ds.rio.clip([geom], drop=True, all_touched=True).mean()
+    try:
+        clipped = ds.rio.clip([geom], drop=True, all_touched=True).mean()
 
-            result: dict = {index_col: id}
+        result: dict = {index_col: id}
 
-            if not is_dataset:
-                # Single variable
-                result[single_var_name] = clipped.item()
-            else:
-                # Dataset: extract each variables
-                for var in clipped.data_vars:
-                    # Ensure scalar
-                    result[var] = clipped[var].item()
+        if not is_dataset:
+            # Single variable
+            result[single_var_name] = clipped.item()
+        else:
+            # Dataset: extract each variables
+            for var in clipped.data_vars:
+                # Ensure scalar
+                result[var] = clipped[var].item()
 
-            return result
+        return result
 
-        except (OSError, ValueError, RuntimeError) as e:
-            wait = base_wait * (2 ** (attempt - 1)) + random.uniform(0, 1)
-
-            if attempt < max_attempts:
-                logger.warning(
-                    f"[Attempt {attempt}/{max_attempts}] id={id}, date={date}: {e}. "
-                    f"Retrying in {wait:.1f}s."
-                )
-                time.sleep(wait)
-            else:
-                logger.error(
-                    f"Extraction permanently failed for id={id}, date={date} "
-                    f"after {max_attempts} attempts: {e}"
-                )
+    except (OSError, ValueError, RuntimeError) as e:
+        logger.error(f"Extraction failed for id={id}, date={date}: {e}")
 
     # --- Return NaNs for failed geometry to preserve structure ---
     nan_result: dict = {index_col: id}
@@ -127,56 +113,41 @@ def _extract_geometry_bathy(
     id: str, geom, ds: xr.DataArray | xr.Dataset, index_col: str
 ) -> dict:
     """
-    Extract bathymetry data and return as dictionary for a single geometry row.
-    Retries up to 5 times in case of error (e.g ISError, Zarr chunk issues).
+    Extract bathymetry data (mean and std over the clipped geometry) and
+    return as dictionary for a single geometry row. As in
+    :func:`_extract_geometry`, failures return NaNs without retrying.
 
     Args:
         id (str): index value of the geometry row.
         geom (): geometry of the geometry row.
-        ds (xr.DataArray | xr.Dataset): xarray object.
+        ds (xr.DataArray | xr.Dataset): in-memory xarray object.
 
     Returns:
         dict: dictionary with index, variable names and extracted values.
     """
-    max_attempts = 5
-    base_wait = 1.0  # seconds
-
     is_dataset = isinstance(ds, xr.Dataset)
     data_vars: list[str] = [str(v) for v in ds.data_vars] if is_dataset else []
     single_var_name: str = str(ds.name) if (not is_dataset and ds.name) else "value"
 
-    for attempt in range(1, max_attempts + 1):
-        try:
-            clipped = ds.rio.clip([geom], drop=True, all_touched=True)
-            mean_ds = clipped.mean(dim=None)
-            std_ds = clipped.std(dim=None)
+    try:
+        clipped = ds.rio.clip([geom], drop=True, all_touched=True)
+        mean_ds = clipped.mean(dim=None)
+        std_ds = clipped.std(dim=None)
 
-            result: dict = {index_col: id}
+        result: dict = {index_col: id}
 
-            if is_dataset:
-                for var in clipped.data_vars:
-                    result[f"{var}"] = mean_ds[var].item()
-                    result[f"{var}_std"] = std_ds[var].item()
-            else:
-                result[single_var_name] = mean_ds.item()
-                result[f"{single_var_name}_std"] = std_ds.item()
+        if is_dataset:
+            for var in clipped.data_vars:
+                result[f"{var}"] = mean_ds[var].item()
+                result[f"{var}_std"] = std_ds[var].item()
+        else:
+            result[single_var_name] = mean_ds.item()
+            result[f"{single_var_name}_std"] = std_ds.item()
 
-            return result
+        return result
 
-        except (OSError, ValueError, RuntimeError) as e:
-            wait = base_wait * (2 ** (attempt - 1)) + random.uniform(0, 1)
-
-            if attempt < max_attempts:
-                logger.warning(
-                    f"[Attempt {attempt}/{max_attempts}] id={id}: {e}. "
-                    f"Retrying in {wait:.1f}s."
-                )
-                time.sleep(wait)
-            else:
-                logger.error(
-                    f"Extraction permanently failed for id={id} "
-                    f"after {max_attempts} attempts: {e}"
-                )
+    except (OSError, ValueError, RuntimeError) as e:
+        logger.error(f"Extraction failed for id={id}: {e}")
 
     # --- Return NaNs for failed geometry to preserve structure ---
     nan_result: dict = {index_col: id}
@@ -447,11 +418,9 @@ class Extractor:
         self, data: gpd.GeoDataFrame | pd.DataFrame
     ) -> pd.DatetimeIndex:
         """Extract unique dates from the GeoDataFrame's time column."""
-        if "time" in data.columns:
-            data["time"] = pd.to_datetime(data["time"])
-            return pd.DatetimeIndex(data["time"]).drop_duplicates()
-        else:
+        if "time" not in data.columns:
             raise ValueError("Time column 'time' not found in shapefile attributes.")
+        return pd.DatetimeIndex(pd.to_datetime(data["time"])).drop_duplicates()
 
     # ===================  PROCESS DATA ===================
 
@@ -576,7 +545,12 @@ class Extractor:
             >>> extractor = Extractor(file_path=input_path, time_col='ls_date', index_col='idlance')
             >>> results = extractor.run(output_path, var_dict=var_dict, n_workers=12)
         """
-        logger.info(f"Starting extraction process with {n_workers} workers.")
+        # n_workers only drives the ThreadPoolExecutor in shp (geometry) extraction;
+        # csv (point) extraction is vectorized and ignores it — so don't advertise it there.
+        if self.input_type == "shp":
+            logger.info(f"Starting extraction process with {n_workers} workers.")
+        else:
+            logger.info("Starting extraction process.")
 
         var_dict = self._normalize_var_dict(var_dict)
 
@@ -767,30 +741,14 @@ class Extractor:
         """
 
         # Clip to the combined spatial envelope of all geometries before pulling
-        # data into memory — reduces what gets computed from the dask graph
-        xmin, ymin, xmax, ymax = data.total_bounds
+        # data into memory — reduces what gets computed from the dask graph.
+        # Padding (sel_padded_bbox) keeps a sub-cell bbox from yielding an empty
+        # slice, where clip fails with "Unable to determine bounds".
         lat_coord = "lat" if "lat" in ds.coords else "y"
         lon_coord = "lon" if "lon" in ds.coords else "x"
         if lat_coord in ds.coords and lon_coord in ds.coords:
-            # Pad by one grid cell so a sub-cell bbox (e.g. a short geometry on a
-            # coarse 0.5° grid) still captures surrounding cells. Without this, a
-            # bbox falling between cell centers yields an empty slice and clip
-            # fails with "Unable to determine bounds from coordinates".
-            lat_res = (
-                float(abs(ds[lat_coord][1] - ds[lat_coord][0]))
-                if ds[lat_coord].size > 1
-                else 0.0
-            )
-            lon_res = (
-                float(abs(ds[lon_coord][1] - ds[lon_coord][0]))
-                if ds[lon_coord].size > 1
-                else 0.0
-            )
-            ds = ds.sel(
-                {
-                    lat_coord: slice(ymin - lat_res, ymax + lat_res),
-                    lon_coord: slice(xmin - lon_res, xmax + lon_res),
-                }
+            ds = sel_padded_bbox(
+                ds, tuple(data.total_bounds), lat_coord=lat_coord, lon_coord=lon_coord
             )
 
         ds_computed = load_dataset_to_memory(ds)
@@ -849,7 +807,13 @@ class Extractor:
             f"Extracting {vkey.upper()} data | {self.data.shape[0]} rows | {bounds}"
         )
 
-        ds = xr.open_dataset(data_path)
+        # The hi-res layer (shp path) is a spatially-tiled Zarr store; the 0.25°
+        # layer (csv path) stays netCDF. Open by suffix so the bbox .sel() below
+        # reads only the overlapping tiles instead of the full grid.
+        if data_path.suffix == ".zarr":
+            ds = xr.open_zarr(data_path)
+        else:
+            ds = xr.open_dataset(data_path)
         ds_bbox = BBox.from_dataset(ds)
 
         if not bounds.overlaps(ds_bbox):

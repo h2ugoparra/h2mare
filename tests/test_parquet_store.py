@@ -1,7 +1,8 @@
 """Unit tests for ParquetStore — write-path and overlap-resolution logic."""
 
-from datetime import date
+from datetime import date, datetime
 
+import pandas as pd
 import polars as pl
 import pytest
 from conftest import make_grid_df
@@ -72,13 +73,6 @@ class TestPartitionHelpers:
         p = store._partition_path((2021, 6))
         assert p == store.parquet_root / "year=2021" / "month=6"
 
-    def test_partition_glob_format(self, tmp_path):
-        store = _store(tmp_path)
-        g = store._partition_glob()
-        assert "year=*" in g
-        assert "month=*" in g
-        assert g.endswith("*.parquet")
-
     def test_partition_filter_sql_single(self, tmp_path):
         store = _store(tmp_path)
         sql = store._partition_filter_sql([(2021, 6)])
@@ -137,6 +131,21 @@ class TestAtomicPartitionWrite:
         )
         store.atomic_partition_write(df_physical, (2021, 6))
         assert not tmp.exists()
+
+    def test_append_into_existing_partition_keeps_old_rows(self, tmp_path):
+        """Regression: appending non-overlapping dates into a partition that
+        already has files used to overwrite part-0.parquet (pyarrow restarts
+        the default basename at 0 each write), silently destroying its rows —
+        e.g. appending one new day into the current month's partition."""
+        store = _store(tmp_path)
+        store.add_data(make_grid_df([date(2021, 6, 1), date(2021, 6, 2)]))
+        # Non-overlapping date in the same month → plain append path
+        store.add_data(make_grid_df([date(2021, 6, 3)]))
+
+        files = list((store.parquet_root / "year=2021" / "month=6").rglob("*.parquet"))
+        loaded = pl.concat([pl.read_parquet(f) for f in files])
+        days = set(loaded["time"].cast(pl.Utf8).to_list())
+        assert days == {"2021-06-01", "2021-06-02", "2021-06-03"}
 
     def test_second_write_replaces_partition(self, tmp_path):
         store = _store(tmp_path)
@@ -215,6 +224,77 @@ class TestResolveDimsOverlap:
         result = store.resolve_dims_overlap(df_prep)
         assert result is True
 
+    def test_partial_window_backfill_preserves_earlier_column_values(self, tmp_path):
+        """Regression: a backfill window smaller than the partition used to
+        null the backfilled column for every row outside the window — the
+        existing side EXCLUDEd the column wholesale, so rows df_new did not
+        cover got null from the JOIN (observed: chl May 1-26 erased by a
+        May 27-31 backfill)."""
+        store = _store(tmp_path)
+        df = make_grid_df(
+            [date(2021, 5, d) for d in (1, 2, 27, 28)],
+            variables={"sst": 20.0, "chl": 0.5},
+        )
+        # chl lags: rows exist for May 27-28 but chl is still null there
+        df = df.with_columns(
+            pl.when(pl.col("time") >= date(2021, 5, 27))
+            .then(None)
+            .otherwise(pl.col("chl"))
+            .alias("chl")
+        )
+        store.add_data(df)
+
+        # Backfill chl for May 27-28 only (window smaller than the partition)
+        store.add_data(
+            make_grid_df([date(2021, 5, 27), date(2021, 5, 28)], variables={"chl": 0.9})
+        )
+
+        files = list(store.parquet_root.rglob("*.parquet"))
+        out = pl.concat([pl.read_parquet(f) for f in files])
+        early = out.filter(pl.col("time") < date(2021, 5, 27))
+        late = out.filter(pl.col("time") >= date(2021, 5, 27))
+        assert early["chl"].null_count() == 0, "earlier chl values were wiped"
+        assert late["chl"].null_count() == 0, "backfill window not applied"
+        assert float(late["chl"].mean()) == pytest.approx(0.9, abs=0.2)
+        assert out["sst"].null_count() == 0, "unrelated column affected"
+
+    def test_df_new_null_wins_inside_its_window(self, tmp_path):
+        """Within rows df_new covers, the fresh value takes precedence even
+        when it is null — re-supplied data is authoritative for its range."""
+        store = self._setup(tmp_path, [date(2021, 1, 1)], variables={"sst": 5.0})
+        df_new = make_grid_df([date(2021, 1, 1)], variables={"sst": 1.0}).with_columns(
+            pl.lit(None, dtype=pl.Float64).alias("sst")
+        )
+        store.add_data(df_new)
+
+        files = list(store.parquet_root.rglob("*.parquet"))
+        out = pl.concat([pl.read_parquet(f) for f in files])
+        assert out["sst"].null_count() == len(out)
+
+    def test_merge_spanning_multiple_partitions(self, tmp_path):
+        """Each affected partition is merged independently — a new column
+        spanning several month partitions must land in all of them, with
+        existing values preserved."""
+        store = self._setup(
+            tmp_path,
+            [date(2021, 1, 10), date(2021, 2, 10), date(2021, 3, 10)],
+            variables={"sst": 20.0},
+        )
+        df_chl = make_grid_df(
+            [date(2021, 1, 10), date(2021, 2, 10), date(2021, 3, 10)],
+            variables={"chl": 0.5},
+        )
+        store.add_data(df_chl)
+
+        for month in (1, 2, 3):
+            files = list(
+                (store.parquet_root / "year=2021" / f"month={month}").rglob("*.parquet")
+            )
+            assert files, f"partition month={month} missing"
+            part = pl.concat([pl.read_parquet(f) for f in files])
+            assert part["sst"].null_count() == 0, f"sst lost in month={month}"
+            assert part["chl"].null_count() == 0, f"chl missing in month={month}"
+
     def test_raises_on_no_spatial_overlap(self, tmp_path):
         store = self._setup(tmp_path, [date(2021, 1, 1)], variables={"sst": 5.0})
         # New data at completely different coordinates
@@ -254,6 +334,95 @@ class TestGetTimeCoverage:
         cov = store.get_time_coverage()
         assert cov.start.date() == date(2021, 3, 1)
         assert cov.end.date() == date(2022, 9, 1)
+
+    def test_min_max_found_across_split_partition_files(self, tmp_path):
+        # Regression: when a boundary partition is split across several files
+        # (row-count splits), only the alphabetically first/last file used to be
+        # scanned — here the true min lives in b.parquet and the true max in
+        # a.parquet, so the old shortcut reported 3/10 → 3/20.
+        part = tmp_path / "store" / "year=2021" / "month=3"
+        part.mkdir(parents=True)
+        make_grid_df([date(2021, 3, 10), date(2021, 3, 28)]).write_parquet(
+            part / "a.parquet"
+        )
+        make_grid_df([date(2021, 3, 1), date(2021, 3, 20)]).write_parquet(
+            part / "b.parquet"
+        )
+
+        store = ParquetStore(tmp_path / "store")
+        cov = store.get_time_coverage()
+        assert cov.start.date() == date(2021, 3, 1)
+        assert cov.end.date() == date(2021, 3, 28)
+
+
+class TestGetVarBackfillStart:
+    def _store_with_holes(self, tmp_path, dates, hole_dates, extra=None):
+        """Store where 'sst' is null on hole_dates; 'other' is always populated."""
+        variables = {"sst": 20.0, "other": 1.0}
+        df = make_grid_df(dates, variables=variables)
+        df = df.with_columns(
+            pl.when(pl.col("time").is_in(hole_dates))
+            .then(None)
+            .otherwise(pl.col("sst"))
+            .alias("sst")
+        )
+        store = _store(tmp_path)
+        store.add_data(df)
+        return store
+
+    def test_detects_earliest_hole_in_partition(self, tmp_path):
+        dates = [date(2021, 1, d) for d in range(1, 6)]
+        store = self._store_with_holes(
+            tmp_path, dates, [date(2021, 1, 3), date(2021, 1, 4)]
+        )
+        out = store.get_var_backfill_start(["sst", "other"])
+        assert out == {"sst": pd.Timestamp("2021-01-03")}
+
+    def test_hole_spanning_partitions_returns_oldest(self, tmp_path):
+        # Jan fully covered; Feb and Mar have holes; the island in Mar must not
+        # mask the Feb hole.
+        dates = [
+            date(2021, 1, 10),
+            date(2021, 2, 10),
+            date(2021, 3, 10),
+            date(2021, 3, 20),
+        ]
+        store = self._store_with_holes(
+            tmp_path, dates, [date(2021, 2, 10), date(2021, 3, 10)]
+        )
+        out = store.get_var_backfill_start(["sst"])
+        assert out == {"sst": pd.Timestamp("2021-02-10")}
+
+    def test_no_holes_returns_empty(self, tmp_path):
+        store = self._store_with_holes(tmp_path, [date(2021, 1, 1)], [])
+        assert store.get_var_backfill_start(["sst"]) == {}
+
+    def test_hole_below_covered_partition_is_invisible(self, tmp_path):
+        # Jan has a hole but Feb is fully covered → scanning stops at Feb and
+        # the Jan gap is treated as sound (this is what bounds the scan and
+        # keeps deep legitimate source gaps from being rescanned every run).
+        dates = [date(2021, 1, 10), date(2021, 2, 10)]
+        store = self._store_with_holes(tmp_path, dates, [date(2021, 1, 10)])
+        assert store.get_var_backfill_start(["sst"]) == {}
+
+    def test_not_before_floor_skips_old_gaps(self, tmp_path):
+        # Holes in both Jan and Feb (no fully-covered partition above them);
+        # a floor at Feb 1 must hide the Jan gap.
+        dates = [date(2021, 1, 10), date(2021, 2, 10)]
+        store = self._store_with_holes(
+            tmp_path, dates, [date(2021, 1, 10), date(2021, 2, 10)]
+        )
+        assert store.get_var_backfill_start(
+            ["sst"], not_before={"sst": datetime(2021, 2, 1)}
+        ) == {"sst": pd.Timestamp("2021-02-10")}
+        # Without the floor the scan walks back to the Jan gap.
+        assert store.get_var_backfill_start(["sst"]) == {
+            "sst": pd.Timestamp("2021-01-10")
+        }
+
+    def test_empty_store_returns_empty(self, tmp_path):
+        store = _store(tmp_path)
+        assert store.get_var_backfill_start(["sst"]) == {}
 
 
 class TestGetVarCoverage:

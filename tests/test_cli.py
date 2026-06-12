@@ -70,6 +70,22 @@ class TestRunCLI:
             )
         assert result.exit_code == 1
 
+    def test_single_day_range_is_accepted(self, tmp_path):
+        # Regression: start == end used to be rejected, making a one-day
+        # download impossible even though DateRange allows it.
+        with (
+            patch(
+                "h2mare.cli.main.get_settings", return_value=_mock_settings(tmp_path)
+            ),
+            patch("h2mare.cli.main.PipelineManager") as mock_pm,
+        ):
+            mock_pm.return_value.run.return_value = True
+            result = _runner.invoke(
+                main_app,
+                ["-v", "sst", "--start-date", "2021-06-01", "--end-date", "2021-06-01"],
+            )
+        assert result.exit_code == 0
+
     def test_unknown_var_key_exits_with_code_1(self, tmp_path):
         with patch(
             "h2mare.cli.main.get_settings", return_value=_mock_settings(tmp_path)
@@ -143,6 +159,21 @@ class TestCompileCLI:
         ):
             result = _runner.invoke(compile_app, ["-v", "nonexistent"])
         assert result.exit_code == 1
+
+    def test_single_day_range_is_accepted(self, tmp_path):
+        # Regression: start == end used to be rejected (see TestRunCLI).
+        with (
+            patch(
+                "h2mare.cli.compile.get_settings", return_value=_mock_settings(tmp_path)
+            ),
+            patch("h2mare.processing.compiler.Compiler") as mock_compiler,
+        ):
+            result = _runner.invoke(
+                compile_app,
+                ["-v", "sst", "--start-date", "2021-06-01", "--end-date", "2021-06-01"],
+            )
+        assert result.exit_code == 0
+        mock_compiler.return_value.run.assert_called_once()
 
     def test_valid_call_invokes_compiler(self, tmp_path):
         with (

@@ -197,8 +197,8 @@ variables:
     pattern: ()
     subset: true
     bbox: [-80, 0, 10, 70]
-    data_file: etopo_0.25deg_80W-10E-0-70N_mean-std_surface.nc
-    data_file_hires: etopo_15s_80W-10E-0-70N_surface.nc
+    data_file: etopo_0.25deg_80W-10E-0N-70N_mean-std_surface.nc
+    data_file_hires: etopo_15s_80W-10E-0N-70N_surface.zarr
 
   moon:
     local_folder: MOON_Phases
