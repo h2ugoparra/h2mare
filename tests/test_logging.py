@@ -29,6 +29,28 @@ class TestVarContextColumn:
         assert "| sst" in inside
 
 
+class TestConfigureExtractionLogging:
+    def test_routes_only_extract_scoped_records(self, tmp_path):
+        from h2mare.utils import logging as hlog
+
+        hlog._extract_configured = False
+        sink_id = hlog.configure_extraction_logging(log_path=tmp_path / "extractor.log")
+        assert sink_id is not None
+        assert hlog.configure_extraction_logging() is None  # idempotent
+        try:
+            logger.info("outside extract scope")
+            with logger.contextualize(job="extract"):
+                logger.info("inside extract scope")
+            logger.complete()
+            text = (tmp_path / "extractor.log").read_text(encoding="utf-8")
+        finally:
+            logger.remove(sink_id)
+            hlog._extract_configured = False
+
+        assert "inside extract scope" in text
+        assert "outside extract scope" not in text
+
+
 class TestInterceptHandler:
     """Stdlib logging records (cdsapi, copernicusmarine, …) must flow into
     loguru so they land in the same pipeline.log file sink."""

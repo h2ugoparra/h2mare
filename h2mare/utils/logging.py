@@ -71,6 +71,7 @@ def add_file_logger(
     *,
     rotation: str = "20 MB",
     retention: str = "180 days",
+    filter=None,
 ) -> int:
     """
     Attach the persistent file sink with the project's file log format.
@@ -99,6 +100,7 @@ def add_file_logger(
         enqueue=True,
         backtrace=True,
         diagnose=False,
+        filter=filter,
     )
 
 
@@ -169,6 +171,58 @@ def configure_logging(
         _stdlib_logging.getLogger(name).setLevel(_stdlib_logging.ERROR)
 
     _configured = True
+
+
+_extract_configured = False
+
+
+def configure_extraction_logging(
+    level: Optional[str] = None,
+    *,
+    log_path: Optional[str | Path] = None,
+) -> Optional[int]:
+    """
+    Attach the extraction file sink once per process (idempotent).
+
+    Extractor runs are interactive analysis sessions, not scheduled pipeline
+    runs, so they get their own file — ``LOGS_DIR/extractor.log`` by default,
+    or *log_path* for a project-specific file (e.g. one per study dataset).
+    The sink only receives records logged inside
+    ``logger.contextualize(job="extract")`` (``Extractor.run`` wraps itself),
+    so pipeline modules used from the same process keep logging to their own
+    sinks untouched.
+
+    Returns:
+        The loguru handler id on first call, ``None`` when already configured
+        or the file could not be opened.
+    """
+    global _extract_configured
+    if _extract_configured:
+        return None
+
+    from h2mare.config import get_settings
+
+    level = level or os.getenv("H2MARE_LOG_LEVEL", "INFO")
+    path = Path(log_path) if log_path else get_settings().LOGS_DIR / "extractor.log"
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Default for the file format's `var` column (configure_logging may not
+    # have run in an analysis session).
+    logger.configure(extra={"var": "-"})
+
+    try:
+        sink_id = add_file_logger(
+            path,
+            level=level,
+            filter=lambda record: record["extra"].get("job") == "extract",
+        )
+    except OSError as e:
+        logger.warning(f"{path.name} unavailable ({e}) — console only.")
+        _extract_configured = True
+        return None
+
+    _extract_configured = True
+    return sink_id
 
 
 def log_time(func):
