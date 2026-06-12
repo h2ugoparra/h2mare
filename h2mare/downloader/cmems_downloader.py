@@ -388,7 +388,13 @@ class CMEMSDownloader(BaseDownloader):
             logger.info(f"'{self.var_key}' is already up to date — skipping.")
             return False
 
-        logger.debug(f"Created {len(tasks)} download task(s)")
+        # A task spans a whole dataset/date-range (one per rep/nrt source), not
+        # one per file — log each task's range so the plan is readable.
+        for task in tasks:
+            logger.debug(
+                f"Download task ({task.dataset_type}): {task.dataset_id} "
+                f"covering {task.date_range}"
+            )
 
         self._warn_if_rep_updated(pd.Timestamp(self.get_rep_availability().end))
 
