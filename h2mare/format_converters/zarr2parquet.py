@@ -129,9 +129,9 @@ class Zarr2Parquet(BaseConverter):
             variables: Subset of variable names to read from the Zarr and merge
                 into the existing Parquet store (add-var mode).
         """
-        logger.info(
-            f"Initializing Zarr->Parquet conversion for variable key: {self.var_key.upper()}"
-        )
+        # The per-window header in _convert_window announces var_key, range and
+        # chunk count, so no separate "initializing" line is logged here.
+
         # Mode 1 — add-var: reprocess the full Zarr range so the overlap resolver
         # can JOIN the new columns into every partition.
         if variables is not None and start_date is None and end_date is None:
@@ -139,7 +139,7 @@ class Zarr2Parquet(BaseConverter):
                 f"add-var mode: merging {variables} into all existing partitions "
                 f"({self.repo_start.date()} → {self.repo_end.date()})"
             )
-            return self._convert_window(
+            ok = self._convert_window(
                 DateRange(self.repo_start, self.repo_end),
                 time_resolution,
                 depth,
@@ -147,35 +147,43 @@ class Zarr2Parquet(BaseConverter):
             )
 
         # Mode 2 — explicit dates (or partial override).
-        if start_date is not None or end_date is not None:
+        elif start_date is not None or end_date is not None:
             start, end = self._resolve_date_range(start_date, end_date)
-            return self._convert_window(
+            ok = self._convert_window(
                 DateRange(start, end), time_resolution, depth, variables
             )
 
         # Mode 3 — incremental: append new dates, then backfill lagging columns.
         # Backfill groups are resolved up-front from the pre-append store metadata;
         # the append and backfill windows are disjoint, so execution order is free.
-        ok = True
-        backfill_groups = self._resolve_backfill_groups()
+        else:
+            ok = True
+            backfill_groups = self._resolve_backfill_groups()
 
-        try:
-            start, end = self._resolve_date_range(None, None)
-            # The per-window header in _convert_window already announces the
-            # range and chunk count, so don't repeat it here.
-            ok &= self._convert_window(
-                DateRange(start, end), time_resolution, depth, None
+            try:
+                start, end = self._resolve_date_range(None, None)
+                ok &= self._convert_window(
+                    DateRange(start, end), time_resolution, depth, None
+                )
+            except ValueError as e:
+                logger.info(f"No new dates to append: {e}")
+
+            for window, cols in backfill_groups:
+                logger.info(
+                    f"Backfilling {sorted(cols)} into existing partitions: "
+                    f"{window.start.date()} → {window.end.date()}"
+                )
+                ok &= self._convert_window(window, time_resolution, depth, sorted(cols))
+
+        if ok:
+            logger.success(
+                f"Zarr → Parquet conversion for '{self.var_key.upper()}' complete."
             )
-        except ValueError as e:
-            logger.info(f"No new dates to append: {e}")
-
-        for window, cols in backfill_groups:
-            logger.info(
-                f"Backfilling {sorted(cols)} into existing partitions: "
-                f"{window.start.date()} → {window.end.date()}"
+        else:
+            logger.warning(
+                f"Zarr → Parquet conversion for '{self.var_key.upper()}' finished "
+                "with errors — see messages above."
             )
-            ok &= self._convert_window(window, time_resolution, depth, sorted(cols))
-
         return ok
 
     def _convert_window(
@@ -203,7 +211,10 @@ class Zarr2Parquet(BaseConverter):
         _failed = False
         for period in periods:
             dt_ini, dt_end = period.start, period.end
-            logger.debug(f"  chunk {dt_ini.date()} → {dt_end.date()}")
+            # The window header above already states the range; a per-chunk
+            # line only adds information when the window has several chunks.
+            if len(periods) > 1:
+                logger.debug(f"  chunk {dt_ini.date()} → {dt_end.date()}")
             ddf_new: pl.DataFrame | None = None
             try:
                 ds = self.zarr_repo.open_dataset(

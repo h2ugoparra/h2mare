@@ -40,7 +40,8 @@ def write_append_zarr(
     ds = snap_grid_coords(ds)
 
     if path.exists():
-        logger.debug(f"{path.name} exists — appending.")
+        # No log here: each append path announces itself (in-place append,
+        # variable-addition, or overlap merge).
         _append_data(var_key, ds, path)
 
     else:
