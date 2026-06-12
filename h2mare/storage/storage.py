@@ -122,32 +122,45 @@ def _append_data(var_key: str, ds_new: xr.Dataset, path: Path) -> None:
 
         ds_resolved = _resolve_overlap(ds_new, path)
 
-        if ds_resolved is not None:
-            # ds_new is already snapped (write_append_zarr); snap the retained
-            # head of the existing store so concat aligns instead of unioning a
-            # legacy noise-drifted grid against the rounded one.
-            # The head contributes only variables that ds_new carries AND that
-            # have a time dimension. Variables ds_new lacks are re-merged in
-            # full below (concatenating them here would NaN-fill them over
-            # ds_new's window); time-less statics (e.g. bathy) are not
-            # concatenated by xr.concat but merged with an exact-equality
-            # check, so a float-level recompute difference raises MergeError —
-            # the freshly compiled copy in ds_new wins instead.
-            head = snap_grid_coords(ds_resolved)
-            head = head[
-                [
-                    v
-                    for v in head.data_vars
-                    if v in ds_new_vars and "time" in head[v].dims
-                ]
+        # ds_new is already snapped (write_append_zarr); snap the retained
+        # pieces of the existing store so concat aligns instead of unioning a
+        # legacy noise-drifted grid against the rounded one.
+        # Head and tail contribute only variables that ds_new carries AND that
+        # have a time dimension. Variables ds_new lacks are re-merged in full
+        # below (concatenating them here would NaN-fill them over ds_new's
+        # window); time-less statics (e.g. bathy) are not concatenated by
+        # xr.concat but merged with an exact-equality check, so a float-level
+        # recompute difference raises MergeError — the freshly compiled copy
+        # in ds_new wins instead.
+        def _shared_time_vars(d: xr.Dataset) -> xr.Dataset:
+            return d[
+                [v for v in d.data_vars if v in ds_new_vars and "time" in d[v].dims]
             ]
-            ds_out = xr.concat([head, ds_new], dim="time", data_vars="minimal")
-            # Rechunk to match the existing zarr layout and avoid dask chunk-alignment errors.
-            chunk_sizes = {
-                dim: sizes[0] for dim, sizes in ds_resolved.chunksizes.items()
-            }
-            ds_out = ds_out.chunk(chunk_sizes)
+
+        parts = [ds_new]
+        if ds_resolved is not None:
+            parts.insert(0, _shared_time_vars(snap_grid_coords(ds_resolved)))
             src_to_close.append(ds_resolved)
+
+        # Retain the existing tail beyond ds_new's window: an explicit
+        # middle-window compile (e.g. --start/--end covering March against a
+        # file that extends through June) would otherwise drop April-June.
+        new_end = pd.Timestamp(ds_new.time.values[-1])
+        ds_old_tail = xr.open_zarr(path, consolidated=False)
+        tail = ds_old_tail.sel(time=slice(new_end + pd.Timedelta(days=1), None))
+        if tail.sizes.get("time", 0):
+            parts.append(_shared_time_vars(snap_grid_coords(tail)))
+            src_to_close.append(ds_old_tail)
+        else:
+            ds_old_tail.close()
+
+        if len(parts) > 1:
+            ds_out = xr.concat(parts, dim="time", data_vars="minimal")
+            # Rechunk to match the existing zarr layout and avoid dask
+            # chunk-alignment errors.
+            ds_out = ds_out.chunk(
+                {d: c for d, c in old_chunk_sizes.items() if d in ds_out.dims}
+            )
         else:
             ds_out = ds_new
 
