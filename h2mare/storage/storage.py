@@ -109,6 +109,8 @@ def _append_data(var_key: str, ds_new: xr.Dataset, path: Path) -> None:
         # then concatenate along the time dimension.
         # ds_old is reopened inside _resolve_overlap; closing here avoids a
         # redundant open handle (zarr stores are lazy so this is safe).
+        missing_vars = sorted(ds_old_vars - ds_new_vars)
+        old_chunk_sizes = {dim: sizes[0] for dim, sizes in ds_old.chunksizes.items()}
         ds_old.close()
 
         # Clean trailing append (same vars, same grid, strictly after the
@@ -123,9 +125,12 @@ def _append_data(var_key: str, ds_new: xr.Dataset, path: Path) -> None:
             # ds_new is already snapped (write_append_zarr); snap the retained
             # head of the existing store so concat aligns instead of unioning a
             # legacy noise-drifted grid against the rounded one.
-            ds_out = xr.concat(
-                [snap_grid_coords(ds_resolved), ds_new], dim="time", data_vars="minimal"
-            )
+            # Concat only the variables ds_new carries: variables it lacks are
+            # re-merged in full below, and concatenating them here would
+            # NaN-fill them over ds_new's window.
+            head = snap_grid_coords(ds_resolved)
+            head = head[[v for v in head.data_vars if v in ds_new_vars]]
+            ds_out = xr.concat([head, ds_new], dim="time", data_vars="minimal")
             # Rechunk to match the existing zarr layout and avoid dask chunk-alignment errors.
             chunk_sizes = {
                 dim: sizes[0] for dim, sizes in ds_resolved.chunksizes.items()
@@ -134,6 +139,18 @@ def _append_data(var_key: str, ds_new: xr.Dataset, path: Path) -> None:
             src_to_close.append(ds_resolved)
         else:
             ds_out = ds_new
+
+        if missing_vars:
+            # Variables absent from ds_new keep their stored values over the
+            # full existing span — including ds_new's window. Without this, a
+            # subset compile (e.g. `run -v ssh` appending only ssh columns)
+            # NaN-wiped every other variable across the appended range.
+            ds_old_keep = xr.open_zarr(path, consolidated=False)[missing_vars]
+            ds_out = xr.merge([ds_out, snap_grid_coords(ds_old_keep)], join="outer")
+            ds_out = ds_out.chunk(
+                {d: c for d, c in old_chunk_sizes.items() if d in ds_out.dims}
+            )
+            src_to_close.append(ds_old_keep)
 
     # Drop chunk encodings inherited from the on-disk store: when the retained
     # head is shorter than one zarr chunk, the stale encoding conflicts with

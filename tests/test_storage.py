@@ -335,6 +335,73 @@ class TestVariableAddition:
 
 
 # ---------------------------------------------------------------------------
+# _append_data — partial variable set (subset compile)
+# ---------------------------------------------------------------------------
+
+
+def _make_two_var_ds(start: str, n_days: int, seed: int = 0) -> xr.Dataset:
+    times = pd.date_range(start, periods=n_days, freq="D")
+    rng = np.random.default_rng(seed)
+    return xr.Dataset(
+        {
+            "sst": (["time", "lat", "lon"], rng.uniform(10, 30, (n_days, 3, 3))),
+            "adt": (["time", "lat", "lon"], rng.uniform(-1, 1, (n_days, 3, 3))),
+        },
+        coords={
+            "time": times,
+            "lat": [30.0, 35.0, 40.0],
+            "lon": [-10.0, -5.0, 0.0],
+        },
+    )
+
+
+class TestPartialVariableAppend:
+    """A ds_new carrying only a subset of the stored variables (e.g. a
+    `run -v ssh` compile) must not NaN-wipe the other variables over its
+    window — regression for the h2ds corruption seen in production."""
+
+    def test_other_variables_survive_subset_extension(self, tmp_path):
+        path = tmp_path / "h2ds.zarr"
+        ds_orig = _make_two_var_ds("2020-01-01", 10)
+        ds_orig.to_zarr(path)
+
+        # adt-only update overlapping Jan 8-10 and extending to Jan 12
+        ds_new = _make_two_var_ds("2020-01-08", 5, seed=1)[["adt"]]
+        _append_data("h2ds", ds_new, path)
+
+        out = xr.open_zarr(path, consolidated=False)
+        assert len(out.time) == 12
+        # sst preserved over the overlap window (was NaN-wiped before the fix)
+        np.testing.assert_allclose(
+            out.sst.sel(time="2020-01-09").values,
+            ds_orig.sst.sel(time="2020-01-09").values,
+        )
+        # sst NaN only at genuinely new dates
+        assert np.isnan(out.sst.sel(time="2020-01-12").values).all()
+        # adt over the window comes from ds_new
+        np.testing.assert_allclose(
+            out.adt.sel(time="2020-01-09").values,
+            ds_new.adt.sel(time="2020-01-09").values,
+        )
+        out.close()
+
+    def test_subset_full_overlap_preserves_other_variables(self, tmp_path):
+        """Full-overlap replace with a subset ds_new keeps the absent variables."""
+        path = tmp_path / "h2ds.zarr"
+        ds_orig = _make_two_var_ds("2020-01-01", 5)
+        ds_orig.to_zarr(path)
+
+        ds_new = _make_two_var_ds("2020-01-01", 5, seed=2)[["adt"]]
+        _append_data("h2ds", ds_new, path)
+
+        out = xr.open_zarr(path, consolidated=False)
+        assert len(out.time) == 5
+        np.testing.assert_allclose(out.sst.values, ds_orig.sst.values)
+        np.testing.assert_allclose(out.adt.values, ds_new.adt.values)
+        out.close()
+
+
+# ---------------------------------------------------------------------------
 # _append_data — overlap resolution
 # ---------------------------------------------------------------------------
 
