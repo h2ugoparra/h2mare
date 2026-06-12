@@ -385,6 +385,25 @@ class TestPartialVariableAppend:
         )
         out.close()
 
+    def test_static_variable_recompute_difference_does_not_conflict(self, tmp_path):
+        """Time-less variables (e.g. bathy) are merged by xr.concat, not
+        concatenated, and merging demands exact equality — a float-level
+        recompute difference between the stored and freshly compiled copy
+        raised MergeError. The fresh copy in ds_new must win instead."""
+        path = tmp_path / "h2ds.zarr"
+        ds_orig = _make_two_var_ds("2020-01-01", 5)
+        ds_orig["bathy"] = (["lat", "lon"], np.full((3, 3), 100.0))
+        ds_orig.to_zarr(path)
+
+        ds_new = _make_two_var_ds("2020-01-04", 4, seed=3)
+        ds_new["bathy"] = (["lat", "lon"], np.full((3, 3), 100.0001))
+        _append_data("h2ds", ds_new, path)
+
+        out = xr.open_zarr(path, consolidated=False)
+        assert len(out.time) == 7  # Jan 1-7 (old 1-5 ∪ new 4-7)
+        np.testing.assert_allclose(out.bathy.values, 100.0001)
+        out.close()
+
     def test_subset_full_overlap_preserves_other_variables(self, tmp_path):
         """Full-overlap replace with a subset ds_new keeps the absent variables."""
         path = tmp_path / "h2ds.zarr"
