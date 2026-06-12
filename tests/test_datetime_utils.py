@@ -9,6 +9,7 @@ from h2mare.utils.datetime_utils import (
     date_to_standard_string,
     more_than_one_year,
     normalize_date,
+    normalize_dates,
     to_datetime,
 )
 
@@ -47,14 +48,23 @@ class TestNormalizeDate:
         result = normalize_date(pd.Timestamp("2020-03-15 12:30"))
         assert result.hour == 0
 
+
+class TestNormalizeDates:
     def test_list_of_strings(self):
-        result = normalize_date(["2020-01-01", "2020-06-30"])
+        result = normalize_dates(["2020-01-01", "2020-06-30"])
         assert len(result) == 2
         assert all(ts.hour == 0 for ts in result)
 
     def test_tuple_of_dates(self):
-        result = normalize_date((date(2020, 1, 1), date(2020, 6, 30)))
+        result = normalize_dates((date(2020, 1, 1), date(2020, 6, 30)))
         assert len(result) == 2
+
+    def test_scalar_returns_single_element_list(self):
+        result = normalize_dates("2020-03-15")
+        assert result == [pd.Timestamp("2020-03-15")]
+
+    def test_empty_list_returns_empty_list(self):
+        assert normalize_dates([]) == []
 
 
 class TestMoreThanOneYear:

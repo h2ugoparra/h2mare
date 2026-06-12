@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import TYPE_CHECKING, Sequence, cast, overload
+from typing import TYPE_CHECKING, Sequence, cast
 
 import pandas as pd
 
@@ -14,19 +14,22 @@ if TYPE_CHECKING:
     from h2mare.types import DateLike
 
 
-@overload
-def normalize_date(date: DateLike) -> pd.Timestamp: ...
-@overload
-def normalize_date(date: Sequence[DateLike]) -> list[pd.Timestamp]: ...
+def normalize_date(date: DateLike) -> pd.Timestamp:
+    """Normalize a single date to a Timestamp at midnight."""
+    return pd.Timestamp(date).normalize()
 
 
-def normalize_date(
-    date: DateLike | Sequence[DateLike],
-) -> pd.Timestamp | list[pd.Timestamp]:
-    """Normalize date(s) to Timestamp(s) at midnight."""
-    if isinstance(date, (list, tuple)):
-        return [pd.to_datetime(d).normalize() for d in date]
-    return pd.Timestamp(cast("DateLike", date)).normalize()
+def normalize_dates(dates: DateLike | Sequence[DateLike]) -> list[pd.Timestamp]:
+    """
+    Normalize one date or a sequence of dates to a list of midnight Timestamps.
+
+    Always returns a list, so callers accepting "date or dates" don't need to
+    re-check what came back (the old scalar-or-list return forced isinstance
+    guards at every such call site).
+    """
+    if isinstance(dates, (list, tuple)):
+        return [pd.Timestamp(d).normalize() for d in dates]
+    return [normalize_date(cast("DateLike", dates))]
 
 
 def more_than_one_year(a: pd.Timestamp, b: pd.Timestamp) -> bool:
