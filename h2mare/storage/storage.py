@@ -10,6 +10,7 @@ import time
 from pathlib import Path
 from typing import Optional
 
+import numpy as np
 import pandas as pd
 import xarray as xr
 from loguru import logger
@@ -109,6 +110,13 @@ def _append_data(var_key: str, ds_new: xr.Dataset, path: Path) -> None:
         # ds_old is reopened inside _resolve_overlap; closing here avoids a
         # redundant open handle (zarr stores are lazy so this is safe).
         ds_old.close()
+
+        # Clean trailing append (same vars, same grid, strictly after the
+        # stored dates) extends the zarr in place — by year's end the rewrite
+        # path would otherwise copy ~a full year of data per incremental run.
+        if _try_append_fast_path(ds_new, path):
+            return None
+
         ds_resolved = _resolve_overlap(ds_new, path)
 
         if ds_resolved is not None:
@@ -126,6 +134,13 @@ def _append_data(var_key: str, ds_new: xr.Dataset, path: Path) -> None:
             src_to_close.append(ds_resolved)
         else:
             ds_out = ds_new
+
+    # Drop chunk encodings inherited from the on-disk store: when the retained
+    # head is shorter than one zarr chunk, the stale encoding conflicts with
+    # the rechunked concat and to_zarr rejects the write as unsafe.
+    for var in ds_out.variables:
+        ds_out[var].encoding.pop("chunks", None)
+        ds_out[var].encoding.pop("preferred_chunks", None)
 
     # Co-locate tmp with destination so rename stays on the same drive (atomic on Windows/NTFS)
     tmp_path = path.with_name(path.name + ".tmp")
@@ -171,6 +186,97 @@ def _append_data(var_key: str, ds_new: xr.Dataset, path: Path) -> None:
         ) from e
     logger.success(f"Saved in {time.perf_counter() - t0:.1f}s")
     return None
+
+
+def _try_append_fast_path(ds_new: xr.Dataset, path: Path) -> bool:
+    """
+    Extend the zarr at *path* in place via ``to_zarr(append_dim="time")``.
+
+    Only attempted when provably safe: identical variable set, identical
+    non-time coordinates, matching per-variable dims, and ds_new strictly
+    after the stored dates. Returns False otherwise — or when the append or
+    its post-write verification fails — and the caller falls back to the
+    rewrite path. That fallback also self-heals a partially appended store:
+    the overlap resolver discards everything from ds_new's start onward and
+    rewrites it from ds_new.
+    """
+    ds_old = xr.open_zarr(path, consolidated=False)
+    try:
+        if set(ds_new.data_vars) != set(ds_old.data_vars):
+            return False
+        if "time" not in ds_new.dims or "time" not in ds_old.dims:
+            return False
+        for coord in set(ds_old.coords) | set(ds_new.coords):
+            if coord == "time":
+                continue
+            if coord not in ds_old.coords or coord not in ds_new.coords:
+                return False
+            if not np.array_equal(ds_old[coord].values, ds_new[coord].values):
+                return False
+        for var in ds_old.data_vars:
+            if ds_old[var].dims != ds_new[var].dims:
+                return False
+
+        old_end = pd.Timestamp(ds_old.time.values[-1])
+        new_start = pd.Timestamp(ds_new.time.values[0])
+        if new_start <= old_end:
+            return False
+
+        old_n = ds_old.sizes["time"]
+        chunk_sizes = {dim: sizes[0] for dim, sizes in ds_old.chunksizes.items()}
+    finally:
+        ds_old.close()
+
+    # Align dask chunks to the stored zarr chunk grid: the first new chunk
+    # exactly fills the partially-written boundary chunk, so no two dask
+    # chunks write into the same zarr chunk (which to_zarr rejects as unsafe).
+    new_n = ds_new.sizes["time"]
+    tchunk = chunk_sizes.get("time") or old_n
+    time_chunks: list[int] = []
+    boundary = (-old_n) % tchunk
+    if boundary:
+        time_chunks.append(min(boundary, new_n))
+    remaining = new_n - sum(time_chunks)
+    while remaining > 0:
+        time_chunks.append(min(tchunk, remaining))
+        remaining -= time_chunks[-1]
+
+    target = {d: c for d, c in chunk_sizes.items() if d != "time" and d in ds_new.dims}
+    target["time"] = tuple(time_chunks)
+    ds_append = ds_new.chunk(target)
+    # Stale chunk encodings from whatever store ds_new was read from would
+    # conflict with the destination's layout — the append uses the store's.
+    for var in ds_append.variables:
+        ds_append[var].encoding.pop("chunks", None)
+        ds_append[var].encoding.pop("preferred_chunks", None)
+
+    logger.info(f"Appending {new_n} timestep(s) to {path.name} in place.")
+    t0 = time.perf_counter()
+    try:
+        ds_append.to_zarr(path, append_dim="time")
+    except Exception as e:
+        logger.warning(
+            f"In-place append to {path.name} failed ({e}) — falling back to rewrite."
+        )
+        return False
+
+    # Verify the time axis grew as expected and stayed strictly increasing.
+    check = xr.open_zarr(path, consolidated=False)
+    try:
+        times = pd.DatetimeIndex(check.time.values)
+        ok = (
+            len(times) == old_n + new_n
+            and times.is_monotonic_increasing
+            and times.is_unique
+        )
+    finally:
+        check.close()
+    if not ok:
+        logger.warning(f"Post-append verification failed for {path.name} — rewriting.")
+        return False
+
+    logger.success(f"Appended in {time.perf_counter() - t0:.1f}s")
+    return True
 
 
 def _resolve_overlap(ds_new: xr.Dataset, path: Path) -> Optional[xr.Dataset]:
