@@ -5,21 +5,13 @@ from typing import TYPE_CHECKING, Sequence, cast, overload
 
 import pandas as pd
 
+# Re-exported for callers that import it from here; the single definition
+# lives in h2mare.types (this module is imported by h2mare.utils.__init__,
+# which types.py cannot depend on without a cycle).
+from h2mare.types import to_datetime as to_datetime
+
 if TYPE_CHECKING:
     from h2mare.types import DateLike
-
-
-def to_datetime(value) -> datetime:
-    """Coerce date, pd.Timestamp, str, or datetime to stdlib datetime."""
-    if isinstance(value, datetime):
-        return value
-    if isinstance(value, date):
-        return datetime(value.year, value.month, value.day)
-    if isinstance(value, str):
-        return datetime.fromisoformat(value)
-    if hasattr(value, "to_pydatetime"):  # pd.Timestamp, without hard import
-        return value.to_pydatetime()
-    raise TypeError(f"Cannot convert {type(value)} to datetime")
 
 
 @overload

@@ -44,16 +44,16 @@ class ParquetStore:
         lon_col: str = "lon",
         lat_col: str = "lat",
         target_file_mb: int = 256,
-        partition_by: list[str] = ["year", "month"],
+        partition_by: list[str] | None = None,
     ):
         self.parquet_root = Path(parquet_root)
         self.time_col = time_col
         self.lon_col = lon_col
         self.lat_col = lat_col
         self._target_file_mb = target_file_mb
-        self._partition_by = list(partition_by)
+        self._partition_by = list(partition_by) if partition_by else ["year", "month"]
 
-        self.partition_cols = set(partition_by)
+        self.partition_cols = set(self._partition_by)
         self.physical_schema = None
         self.physical_cols: set[str] = set()
         # Last "missing variables" set warned about, to avoid re-logging the same

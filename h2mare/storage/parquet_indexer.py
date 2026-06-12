@@ -36,7 +36,7 @@ class ParquetIndexer:
         lon_col: str = "lon",
         lat_col: str = "lat",
         target_file_mb: int = 256,
-        partition_by: list[str] = ["year", "month"],
+        partition_by: list[str] | None = None,
     ):
         """
         Parquet data indexer.
@@ -47,9 +47,10 @@ class ParquetIndexer:
             lon_col (str, optional): Longitude column name. Defaults to "lon".
             lat_col (str, optional): Latitude column name. Defaults to "lat".
             target_file_mb (int, optional): Target size per Parquet file in MB. Defaults to 256.
-            partition_by (list[str], optional): Hive partition column names. Temporal components
-                ("year", "month", "day") are auto-derived from the time column; all other columns
-                must be present in the DataFrame passed to add_data(). Defaults to ["year", "month"].
+            partition_by (list[str] | None, optional): Hive partition column names. Temporal
+                components ("year", "month", "day") are auto-derived from the time column; all
+                other columns must be present in the DataFrame passed to add_data().
+                None means ["year", "month"].
 
         Raises:
             ValueError: If time, lat, lon cols not in data.
