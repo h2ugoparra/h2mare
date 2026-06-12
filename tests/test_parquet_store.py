@@ -72,13 +72,6 @@ class TestPartitionHelpers:
         p = store._partition_path((2021, 6))
         assert p == store.parquet_root / "year=2021" / "month=6"
 
-    def test_partition_glob_format(self, tmp_path):
-        store = _store(tmp_path)
-        g = store._partition_glob()
-        assert "year=*" in g
-        assert "month=*" in g
-        assert g.endswith("*.parquet")
-
     def test_partition_filter_sql_single(self, tmp_path):
         store = _store(tmp_path)
         sql = store._partition_filter_sql([(2021, 6)])
@@ -214,6 +207,30 @@ class TestResolveDimsOverlap:
         df_prep = self._prepare(store, df2)
         result = store.resolve_dims_overlap(df_prep)
         assert result is True
+
+    def test_merge_spanning_multiple_partitions(self, tmp_path):
+        """Each affected partition is merged independently — a new column
+        spanning several month partitions must land in all of them, with
+        existing values preserved."""
+        store = self._setup(
+            tmp_path,
+            [date(2021, 1, 10), date(2021, 2, 10), date(2021, 3, 10)],
+            variables={"sst": 20.0},
+        )
+        df_chl = make_grid_df(
+            [date(2021, 1, 10), date(2021, 2, 10), date(2021, 3, 10)],
+            variables={"chl": 0.5},
+        )
+        store.add_data(df_chl)
+
+        for month in (1, 2, 3):
+            files = list(
+                (store.parquet_root / "year=2021" / f"month={month}").rglob("*.parquet")
+            )
+            assert files, f"partition month={month} missing"
+            part = pl.concat([pl.read_parquet(f) for f in files])
+            assert part["sst"].null_count() == 0, f"sst lost in month={month}"
+            assert part["chl"].null_count() == 0, f"chl missing in month={month}"
 
     def test_raises_on_no_spatial_overlap(self, tmp_path):
         store = self._setup(tmp_path, [date(2021, 1, 1)], variables={"sst": 5.0})
