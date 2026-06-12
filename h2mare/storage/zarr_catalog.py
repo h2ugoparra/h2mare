@@ -855,6 +855,7 @@ class ZarrCatalog:
             return None
         if not isinstance(bbox, BBox):
             return BBox.from_tuple(bbox)
+        return bbox
 
     def summary(self) -> dict:
         """

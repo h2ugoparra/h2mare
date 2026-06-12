@@ -129,9 +129,9 @@ def run(
     if start_date and end_date:
         start_ts = pd.Timestamp(start_date)
         end_ts = pd.Timestamp(end_date)
-        if start_ts >= end_ts:
+        if start_ts > end_ts:
             typer.echo(
-                f"Error: --start-date ({start_date}) must be before --end-date ({end_date}).",
+                f"Error: --start-date ({start_date}) must not be after --end-date ({end_date}).",
                 err=True,
             )
             raise typer.Exit(code=1)

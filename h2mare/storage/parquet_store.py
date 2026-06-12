@@ -149,10 +149,12 @@ class ParquetStore:
                 )
             else:
                 first_dir, last_dir = y0_path, yn_path
-            first_file = sorted(first_dir.rglob("*.parquet"))[0]
-            last_file = sorted(last_dir.rglob("*.parquet"))[-1]
-            lf_min = pl.scan_parquet(first_file).select(pl.col(self.time_col).min())
-            lf_max = pl.scan_parquet(last_file).select(pl.col(self.time_col).max())
+            # Scan every file in the boundary partitions: a partition split across
+            # multiple files (row-count splits) can hold its min/max in any of them.
+            first_files = list(first_dir.rglob("*.parquet"))
+            last_files = list(last_dir.rglob("*.parquet"))
+            lf_min = pl.scan_parquet(first_files).select(pl.col(self.time_col).min())
+            lf_max = pl.scan_parquet(last_files).select(pl.col(self.time_col).max())
             dt_min, dt_max = (r.item() for r in pl.collect_all([lf_min, lf_max]))
         else:
             all_files = list(self.parquet_root.rglob("*.parquet"))
