@@ -94,15 +94,18 @@ def compile(
             )
             raise typer.Exit(code=1)
 
+    from loguru import logger
+
     from h2mare.processing.compiler import Compiler
 
-    Compiler(remote_store_root=store_path or get_settings().STORE_ROOT).run(
-        start_date=start_date,
-        end_date=end_date,
-        var_keys=list(vars) if vars else None,
-        zarr_backup=zarr_backup,
-        zarr_backup_dir=zarr_backup_dir,
-    )
+    with logger.contextualize(var="h2ds"):
+        Compiler(remote_store_root=store_path or get_settings().STORE_ROOT).run(
+            start_date=start_date,
+            end_date=end_date,
+            var_keys=list(vars) if vars else None,
+            zarr_backup=zarr_backup,
+            zarr_backup_dir=zarr_backup_dir,
+        )
 
 
 app.command()(compile)

@@ -5,7 +5,28 @@ from unittest.mock import patch
 
 from loguru import logger
 
-from h2mare.utils.logging import _InterceptHandler, log_time
+from h2mare.utils.logging import LOG_FILE_FORMAT, _InterceptHandler, log_time
+
+
+class TestVarContextColumn:
+    """The file format carries a `var` column filled by logger.contextualize;
+    messages outside any variable scope show '-'."""
+
+    def test_contextualize_fills_var_column(self):
+        captured: list[str] = []
+        logger.configure(extra={"var": "-"})  # mirrors configure_logging
+        sink_id = logger.add(captured.append, format=LOG_FILE_FORMAT)
+        try:
+            logger.info("outside any scope")
+            with logger.contextualize(var="sst"):
+                logger.info("inside sst scope")
+        finally:
+            logger.remove(sink_id)
+
+        outside = next(line for line in captured if "outside any scope" in line)
+        inside = next(line for line in captured if "inside sst scope" in line)
+        assert "| -" in outside
+        assert "| sst" in inside
 
 
 class TestInterceptHandler:

@@ -25,9 +25,14 @@ from typing import Optional
 
 from loguru import logger
 
-# File format keeps only time, level, and message. The source location
-# ({name}:{function}:{line}) stays on the console handler only.
-LOG_FILE_FORMAT = "{time:YYYY-MM-DD HH:mm:ss.SSS} | {level: <8} | {message}"
+# File format keeps time, level, the variable context, and the message. The
+# source location ({name}:{function}:{line}) stays on the console handler only.
+# The `var` column is filled by `logger.contextualize(var=...)` around each
+# per-variable unit of work (pipeline loop, compiler, converters), so one
+# variable's full story greps out of the file; "-" means no variable scope.
+LOG_FILE_FORMAT = (
+    "{time:YYYY-MM-DD HH:mm:ss.SSS} | {level: <8} | {extra[var]: <13} | {message}"
+)
 
 # Third-party loggers that flood the logs at INFO.
 _NOISY_LOGGERS = ("urllib3.connectionpool",)
@@ -125,6 +130,10 @@ def configure_logging(
     level = level or os.getenv("H2MARE_LOG_LEVEL", "INFO")
     log_dir = log_dir or get_settings().LOGS_DIR
     log_dir.mkdir(parents=True, exist_ok=True)
+
+    # Default for the file format's `var` column when no contextualize() scope
+    # is active.
+    logger.configure(extra={"var": "-"})
 
     try:
         add_file_logger(log_dir / "pipeline.log", level=level)

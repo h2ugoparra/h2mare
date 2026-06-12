@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 import warnings
 from pathlib import Path
 from typing import Literal, Optional
@@ -64,7 +65,7 @@ class Netcdf2Zarr(BaseConverter):
         self.store_root = self.catalog.store_root
 
     def run(self) -> bool:
-
+        t0 = time.perf_counter()
         logger.info(
             f"Initializing Netcdf -> Zarr conversion for variable key: {self.var_key.upper()}"
         )
@@ -74,6 +75,9 @@ class Netcdf2Zarr(BaseConverter):
         if self.var_config.trajectory_format:
             self._process_eddies()
             self.catalog.refresh(force=True)
+            logger.success(
+                f"Conversion complete (trajectory) in {time.perf_counter() - t0:.1f}s"
+            )
             return True
 
         file_groups = self._group_map(groupby=self.time_resolution)
@@ -83,6 +87,10 @@ class Netcdf2Zarr(BaseConverter):
 
         self.catalog.refresh(force=True)
         self._cleanup_downloads()
+        logger.success(
+            f"Conversion complete: {len(file_groups)} period(s) "
+            f"in {time.perf_counter() - t0:.1f}s"
+        )
         return True
 
     # ========= DATA PREPARATION FUNCTIONS =========

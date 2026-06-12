@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import time
 import warnings
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from ftplib import FTP
@@ -400,6 +401,7 @@ class AVISODownloader(BaseDownloader):
             return False
 
         base_dir = output_dir or self.download_dir
+        t0 = time.perf_counter()
 
         rep_paths = [t.filepath for t in tasks if t.source == "rep"]
         nrt_paths = [t.filepath for t in tasks if t.source == "nrt"]
@@ -446,6 +448,9 @@ class AVISODownloader(BaseDownloader):
 
         # Disconnect FTP
         # self.ftp.quit()
-        logger.success(f"Key-Variable: {self.var_key.upper()} processed!")
+        logger.success(
+            f"Download complete: {len(rep_paths)} REP + {len(nrt_paths)} NRT file(s) "
+            f"in {time.perf_counter() - t0:.1f}s"
+        )
         self._cleanup_empty_download_dir()
         return True
