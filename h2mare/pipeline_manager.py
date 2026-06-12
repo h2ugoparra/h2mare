@@ -44,7 +44,7 @@ class PipelineManager:
         self.zarr_backup_dir = zarr_backup_dir
         self.parquet_backup_dir = parquet_backup_dir
 
-    def run(self, variables: Optional[List[str] | None] = None) -> bool:
+    def run(self, variables: Optional[List[str]] = None) -> bool:
         """Run the full pipeline. Returns True if all steps succeeded, False if any failed."""
         if variables is None:
             variables = list(self.app_config.variables.keys())
@@ -135,7 +135,6 @@ class PipelineManager:
             self.no_parquet or self.no_compile or self.no_convert or self.dry_run
         )
         if not _skip_parquet:
-            from h2mare.config import get_settings
             from h2mare.format_converters.zarr2parquet import Zarr2Parquet
 
             try:

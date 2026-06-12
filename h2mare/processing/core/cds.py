@@ -80,7 +80,7 @@ def merge_time_step(
 
 def drop_dims(
     ds: xr.Dataset,
-    dims_to_drop: list[str] = ["step", "number", "surface", "number", "meanSea"],
+    dims_to_drop: list[str] = ["step", "number", "surface", "meanSea"],
 ) -> xr.Dataset:
     """
     Drop coordinates/dimensions from dataset"
@@ -565,19 +565,12 @@ def process_atm_accum_avg(
     var_key: str | None = None,
 ) -> xr.Dataset:
     """A first preprocessing is done in processor.py because data overlap at adjacent days in monthly grib files"""
-    datasets = []
-    datasets.append(compute_curl_and_ekman(ds))
-    datasets.append(
-        add_engineered_ekman(
-            *[
-                ds_tmp["ekman_pumping"]
-                for ds_tmp in datasets
-                if "ekman_pumping" in ds_tmp.data_vars
-            ],
-            var_key=var_key,
-        )
-    )
-    datasets.append(daily_total_rain(ds))
+    ds_ekman = compute_curl_and_ekman(ds)
+    datasets = [
+        ds_ekman,
+        add_engineered_ekman(ds_ekman["ekman_pumping"], var_key=var_key),
+        daily_total_rain(ds),
+    ]
     # isel to reverse lat values order
     merged = xr.merge(datasets, compat="override", join="outer")
     assert isinstance(merged, xr.Dataset)

@@ -261,7 +261,7 @@ class CMEMSDownloader(BaseDownloader):
             raise
 
     def get_rep_availability(self) -> DateRange:
-        """Get REP dataset availability (cached by decorator)."""
+        """Get REP dataset availability (cached after the first API call)."""
         if self._rep_availability is None:
             self._rep_availability = self._get_dataset_availability(
                 self.var_config.dataset_id_rep

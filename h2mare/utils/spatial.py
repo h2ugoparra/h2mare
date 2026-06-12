@@ -93,6 +93,44 @@ class GridBuilder:
         return grid
 
 
+def sel_padded_bbox(
+    ds: xr.Dataset | xr.DataArray,
+    bounds: tuple[float, float, float, float],
+    lat_coord: str = "lat",
+    lon_coord: str = "lon",
+) -> xr.Dataset | xr.DataArray:
+    """
+    Select a bounding box padded by one grid cell on each side.
+
+    A sub-cell bbox (e.g. a short geometry on a coarse 0.5° grid) can fall
+    between cell centers and yield an empty slice; padding by one cell keeps
+    the surrounding cells in the selection.
+
+    Args:
+        ds: Dataset with monotonically increasing lat/lon coordinates.
+        bounds: (xmin, ymin, xmax, ymax) in coordinate units.
+        lat_coord: Latitude coordinate name. Defaults to "lat".
+        lon_coord: Longitude coordinate name. Defaults to "lon".
+    """
+    xmin, ymin, xmax, ymax = bounds
+    lat_res = (
+        float(abs(ds[lat_coord][1] - ds[lat_coord][0]))
+        if ds[lat_coord].size > 1
+        else 0.0
+    )
+    lon_res = (
+        float(abs(ds[lon_coord][1] - ds[lon_coord][0]))
+        if ds[lon_coord].size > 1
+        else 0.0
+    )
+    return ds.sel(
+        {
+            lat_coord: slice(ymin - lat_res, ymax + lat_res),
+            lon_coord: slice(xmin - lon_res, xmax + lon_res),
+        }
+    )
+
+
 def clip_land_data(ds: xr.Dataset) -> xr.Dataset:
     """Clip land values from a dataset
 
