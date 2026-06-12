@@ -5,6 +5,7 @@ CMEMS data downloader using Copernicus Marine Toolbox API.
 from __future__ import annotations
 
 import json
+import sys
 import time
 import warnings
 from datetime import timedelta
@@ -80,6 +81,9 @@ def download_subset(
         minimum_depth=depth_range[0] if depth_range else None,
         maximum_depth=depth_range[1] if depth_range else None,
         output_directory=output_dir,
+        # The progress bar redraws via carriage returns; redirected to a file
+        # (scheduled runs) every refresh persists as its own line.
+        disable_progress_bar=not sys.stderr.isatty(),
     )
     logger.debug(f"Downloaded to {output_dir}")
 
@@ -214,6 +218,7 @@ def download_original(
             filter=pattern,
             output_directory=output_dir,
             no_directories=True,
+            disable_progress_bar=not sys.stderr.isatty(),
         )
     logger.debug(f"Downloaded to {output_dir}")
 

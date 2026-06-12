@@ -6,6 +6,7 @@ Go to https://cds.climate.copernicus.eu/datasets to check API request code
 
 from __future__ import annotations
 
+import sys
 import time
 import warnings
 from pathlib import Path
@@ -202,7 +203,9 @@ class CDSDownloader(BaseDownloader):
                 f"{d:02d}" for d in range(date_range.start.day, date_range.end.day + 1)
             ]
 
-        client = cdsapi.Client()
+        # The progress bar redraws via carriage returns; redirected to a file
+        # (scheduled runs) every refresh persists as its own line.
+        client = cdsapi.Client(progress=sys.stderr.isatty())
 
         bbox = (
             BBox.from_tuple(self.var_config.bbox)
