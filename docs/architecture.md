@@ -87,6 +87,11 @@ Special variables handled outside the general path:
 
 `BaseConverter` (`format_converters/base.py`) is the shared ABC for `Netcdf2Zarr` and `Zarr2Parquet`. It enforces an abstract `run() -> bool` method and a default no-op `validate()` hook, providing a stable contract for any future converter (e.g. `GRIB2Zarr`).
 
+For files that are **not** registered in `config.yaml`, two config-free module
+functions — `convert_netcdf_to_zarr` and `convert_zarr_to_parquet` — run the same
+engine (generic transform + overlap-resolving write) driven by arguments instead
+of a `var_key`. See [Ad-hoc converters](api/adhoc_converters.md).
+
 ---
 
 ## Extractor
