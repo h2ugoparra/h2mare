@@ -24,6 +24,7 @@ from h2mare.storage import ZarrCatalog
 from h2mare.storage.coverage import get_store_coverage, split_time_range
 from h2mare.storage.parquet_indexer import ParquetIndexer
 from h2mare.types import DateLike, DateRange, TimeResolution
+from h2mare.validators import validate_time_resolution
 
 # How far behind the parquet end the incremental backfill looks for "holes"
 # (days whose rows were appended while a variable's compile lagged, leaving the
@@ -38,7 +39,7 @@ def convert_zarr_to_parquet(
     *,
     start_date: DateLike | None = None,
     end_date: DateLike | None = None,
-    time_resolution: TimeResolution = TimeResolution.MONTH,
+    time_resolution: TimeResolution | str = TimeResolution.MONTH,
     depth: float | None = None,
     variables: list[str] | None = None,
     indexer_kwargs: Optional[dict] = None,
@@ -85,6 +86,8 @@ def convert_zarr_to_parquet(
         ValueError: If the store has a ``depth`` dim but ``depth`` is not given,
             or if ``start_date`` is after ``end_date``.
     """
+    time_resolution = validate_time_resolution(time_resolution)
+
     if isinstance(zarr_path, (str, Path)):
         ds = xr.open_zarr(zarr_path, **(open_kwargs or {}))
     else:

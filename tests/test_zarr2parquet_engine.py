@@ -200,3 +200,27 @@ def test_list_of_stores(tmp_path):
     cov = ParquetIndexer(out).get_time_coverage()
     assert pd.Timestamp(cov.start) == pd.Timestamp("2020-01-01")
     assert pd.Timestamp(cov.end) == pd.Timestamp("2020-01-10")
+
+
+# ---------------------------------------------------------------------------
+# time_resolution accepts a plain string
+# ---------------------------------------------------------------------------
+
+
+def test_time_resolution_accepts_plain_string(tmp_path):
+    src = tmp_path / "store.zarr"
+    _write_zarr(_make_ds(n_days=40), src)
+    out = tmp_path / "parquet"
+
+    # "year" instead of TimeResolution.YEAR — no enum import needed by the caller.
+    convert_zarr_to_parquet(src, out, time_resolution="year")
+
+    assert ParquetIndexer(out).load().height == 40 * 2 * 2
+
+
+def test_invalid_time_resolution_raises(tmp_path):
+    src = tmp_path / "store.zarr"
+    _write_zarr(_make_ds(n_days=5), src)
+
+    with pytest.raises(ValueError, match="(?i)period|month|year"):
+        convert_zarr_to_parquet(src, tmp_path / "parquet", time_resolution="monthly")
