@@ -8,6 +8,7 @@ import json
 import re
 import time
 import warnings
+from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Literal, Optional
 
@@ -27,6 +28,85 @@ from h2mare.utils.paths import resolve_download_path
 from h2mare.validators import validate_time_resolution, validate_var_key
 
 warnings.filterwarnings("ignore")
+
+
+def convert_netcdf_to_zarr(
+    paths: Path | str | Iterable[Path | str],
+    out_path: Path | str,
+    *,
+    name: str = "data",
+    processor: Callable[[xr.Dataset], xr.Dataset] | None = None,
+    apply_rename: bool = True,
+    open_kwargs: Optional[dict] = None,
+) -> Path:
+    """
+    Convert one or more NetCDF/GRIB files to a single Zarr store, without a
+    configured ``var_key``.
+
+    This is the config-free counterpart to :class:`Netcdf2Zarr`. It applies the
+    same generic Zarr-prep the pipeline uses — open → (optional ``rename_dims``)
+    → (optional ``processor``) → ``snap_grid_coords`` → ``chunk_dataset`` →
+    ``write_append_zarr`` — but driven entirely by arguments instead of
+    ``config.yaml``. Use it to convert arbitrary files (a single path or a list)
+    that are not registered as a variable.
+
+    Args:
+        paths: One path, or an iterable of paths, to ``.nc``/``.grib`` files.
+            NetCDF and GRIB may be mixed; the engine is auto-detected from the
+            first file.
+        out_path: Destination ``.zarr`` path. If it already exists, the data is
+            appended using the store's standard overlap semantics.
+        name: Identity label used in the write/append logs and overlap
+            resolution. It need **not** exist in config.
+        processor: Optional callable applied after rename and before snap/chunk —
+            the same slot a registry processor occupies in
+            ``Netcdf2Zarr.process_dataset``. To reuse a registered processor,
+            wrap it: ``processor=lambda ds: PROCESSORS["sst"](ds, cfg, "sst")``.
+        apply_rename: Apply ``rename_dims`` (``longitude/latitude/valid_time`` →
+            ``lon/lat/time``). Set ``False`` when the files already use canonical
+            dim names.
+        open_kwargs: Extra keyword arguments forwarded to ``xr.open_mfdataset``.
+
+    Returns:
+        The ``out_path`` that was written.
+
+    Raises:
+        FileNotFoundError: If no input paths are given.
+    """
+    if isinstance(paths, (str, Path)):
+        paths = [paths]
+    files = sorted(Path(p) for p in paths)
+    if not files:
+        raise FileNotFoundError("convert_netcdf_to_zarr: no input files given")
+
+    out_path = Path(out_path)
+    engine = "cfgrib" if files[0].suffix.lower() in {".grib", ".grb"} else "netcdf4"
+
+    logger.info(
+        f"Converting {len(files)} file(s) → {out_path.name} "
+        f"(engine={engine}, name={name!r})"
+    )
+
+    ds = xr.open_mfdataset(
+        files,
+        combine="by_coords",
+        engine=engine,
+        decode_timedelta=True,
+        chunks={"time": 1, "depth": 1},
+        **(open_kwargs or {}),
+    )
+    try:
+        if apply_rename:
+            ds = rename_dims(ds)
+        if processor is not None:
+            ds = processor(ds)
+        ds = snap_grid_coords(ds)
+        ds = chunk_dataset(ds)
+        write_append_zarr(name, ds, out_path)
+    finally:
+        ds.close()
+
+    return out_path
 
 
 class Netcdf2Zarr(BaseConverter):
