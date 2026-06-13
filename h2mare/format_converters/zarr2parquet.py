@@ -8,11 +8,13 @@ import gc
 import re
 import shutil
 from collections import defaultdict
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Optional
 
 import pandas as pd
 import polars as pl
+import xarray as xr
 from loguru import logger
 
 from h2mare.config import get_settings
@@ -21,13 +23,113 @@ from h2mare.models import SYSTEM_VAR_KEYS
 from h2mare.storage import ZarrCatalog
 from h2mare.storage.coverage import get_store_coverage, split_time_range
 from h2mare.storage.parquet_indexer import ParquetIndexer
-from h2mare.types import DateRange, TimeResolution
+from h2mare.types import DateLike, DateRange, TimeResolution
 
 # How far behind the parquet end the incremental backfill looks for "holes"
 # (days whose rows were appended while a variable's compile lagged, leaving the
 # column NaN). Lag holes are a recent phenomenon by construction; all-null days
 # older than this are legitimate source gaps and are not rescanned every run.
 _BACKFILL_HOLE_LOOKBACK_DAYS = 400
+
+
+def convert_zarr_to_parquet(
+    zarr_path: Path | str | Iterable[Path | str],
+    parquet_root: Path | str,
+    *,
+    start_date: DateLike | None = None,
+    end_date: DateLike | None = None,
+    time_resolution: TimeResolution = TimeResolution.MONTH,
+    depth: float | None = None,
+    variables: list[str] | None = None,
+    indexer_kwargs: Optional[dict] = None,
+    open_kwargs: Optional[dict] = None,
+) -> Path:
+    """
+    Convert an arbitrary Zarr store to a Hive-partitioned Parquet store, without
+    a configured ``var_key``.
+
+    This is the config-free counterpart to :class:`Zarr2Parquet`. It opens the
+    store directly (instead of locating it through a ``ZarrCatalog`` keyed by a
+    registered variable), splits the requested window into memory-sized chunks,
+    and writes each chunk via :meth:`ParquetIndexer.add_data` — the same
+    overlap-resolving write path the class uses. The incremental backfill mode
+    (which is inherently config-driven) is intentionally not replicated.
+
+    Args:
+        zarr_path: One Zarr store path, or an iterable of them (opened together
+            via ``xr.open_mfdataset(engine="zarr")``).
+        parquet_root: Destination directory for the Parquet store. Unlike the
+            class, no dataset sub-folder is derived — data is written here
+            directly. If the store already exists, partitions are appended or
+            JOINed via the indexer's standard overlap semantics.
+        start_date: Start of the conversion window. Defaults to the store's
+            first time step.
+        end_date: End of the conversion window. Defaults to the store's last
+            time step.
+        time_resolution: Granularity of each write batch. Defaults to
+            ``TimeResolution.MONTH`` so each chunk fits comfortably in memory.
+        depth: Depth level (in metres) to select for stores with a ``depth``
+            dimension; the nearest level is chosen. Required when the store has
+            a ``depth`` dim (otherwise the time/lon/lat Parquet schema would get
+            a depth cross-product).
+        variables: Subset of data variables to read. ``None`` reads all.
+        indexer_kwargs: Extra keyword arguments forwarded to
+            :class:`ParquetIndexer` (e.g. ``time_col``/``lon_col``/``lat_col``
+            for non-canonical coordinate names, or ``partition_by``).
+        open_kwargs: Extra keyword arguments forwarded to the xarray open call.
+
+    Returns:
+        The ``parquet_root`` that was written.
+
+    Raises:
+        ValueError: If the store has a ``depth`` dim but ``depth`` is not given,
+            or if ``start_date`` is after ``end_date``.
+    """
+    if isinstance(zarr_path, (str, Path)):
+        ds = xr.open_zarr(zarr_path, **(open_kwargs or {}))
+    else:
+        stores = [str(p) for p in zarr_path]
+        ds = xr.open_mfdataset(stores, engine="zarr", **(open_kwargs or {}))
+
+    indexer = ParquetIndexer(Path(parquet_root), **(indexer_kwargs or {}))
+
+    try:
+        if variables is not None:
+            ds = ds[variables]
+
+        if "depth" in ds.dims and depth is None:
+            raise ValueError(
+                "Zarr store has a 'depth' dimension. Pass depth=<metres> to "
+                "select a level before writing to the time/lon/lat Parquet store."
+            )
+
+        times = pd.to_datetime(ds.time.values)
+        window = DateRange(
+            start=pd.Timestamp(start_date) if start_date is not None else times.min(),
+            end=pd.Timestamp(end_date) if end_date is not None else times.max(),
+        )
+
+        periods = split_time_range(window, time_resolution)
+        logger.info(
+            f"Zarr → Parquet conversion: {window.start.date()} → {window.end.date()} "
+            f"({len(periods)} chunk(s)) → {Path(parquet_root)}"
+        )
+
+        for period in periods:
+            df: pl.DataFrame | None = None
+            try:
+                sub = ds.sel(time=slice(period.start, period.end))
+                if depth is not None and "depth" in sub.dims:
+                    sub = sub.sel(depth=depth, method="nearest")
+                df = pl.from_pandas(sub.to_dataframe().reset_index())
+                indexer.add_data(df)
+            finally:
+                del df
+                gc.collect()
+    finally:
+        ds.close()
+
+    return Path(parquet_root)
 
 
 class Zarr2Parquet(BaseConverter):
