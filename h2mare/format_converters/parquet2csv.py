@@ -1,3 +1,5 @@
+"""Export a date-filtered slice of the Parquet store to per-period CSV files."""
+
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
@@ -12,36 +14,38 @@ from loguru import logger
 def parquet2csv(
     parquet_root: Path | str,
     csv_root: Path | str,
-    start_date: pd.Timestamp | str,
-    end_date: pd.Timestamp | str,
-    freq: Literal["daily", "monthly", "yearly"] = "daily",
+    start_date: str,
+    end_date: str,
+    freq: Literal["day", "month", "year"] = "day",
     n_workers: int = 8,
-) -> None:
+) -> Path:
     """
-    Convert parquet data into daily, monthly, or yearly CSV files.
+    Convert Parquet data into per-day, per-month, or per-year CSV files.
 
-    Parameters
-    ----------
-    parquet_root : Path or str
-        Directory or file containing Parquet data.
-    csv_root : Path or str
-        Output directory for CSVs.
-    start_date, end_date : str or pd.Timestamp
-        Time range to extract.
-    freq : str
-        Aggregation level: "daily", "monthly", or "yearly".
-    n_workers : int
-        Number of threads for parallel writing.
+    Args:
+        parquet_root: Directory or file containing Parquet data.
+        csv_root: Output directory for CSV files; year subdirectories are
+            created automatically.
+        start_date: Start of the export period.
+        end_date: End of the export period.
+        freq: Aggregation level — "day", "month", or "year".
+        n_workers: Number of threads for parallel CSV writes.
+
+    Returns:
+        The ``csv_root`` directory that was written.
+
+    Raises:
+        ValueError: If ``freq`` is not "day", "month", or "year".
     """
-    if freq not in ("daily", "monthly", "yearly"):
-        raise ValueError("freq must be 'daily', 'monthly', or 'yearly'")
+    if freq not in ("day", "month", "year"):
+        raise ValueError("freq must be 'day', 'month', or 'year'")
 
     parquet_root = Path(parquet_root)
     csv_root = Path(csv_root)
     start_dt = pd.Timestamp(start_date).to_pydatetime()
     end_dt = pd.Timestamp(end_date).to_pydatetime()
 
-    fmt = {"daily": "%Y-%m-%d", "monthly": "%Y-%m", "yearly": "%Y"}[freq]
+    fmt = {"day": "%Y-%m-%d", "month": "%Y-%m", "year": "%Y"}[freq]
 
     logger.info(f"Converting parquet to {freq} CSV files: {start_date} -> {end_date}")
 
@@ -56,7 +60,13 @@ def parquet2csv(
     )
 
     df = lf.collect(engine="streaming")
-    df = df.filter(~pl.all_horizontal(pl.exclude(["time", "lat", "lon"]).is_nan()))
+    # Drop rows whose every variable column is empty. The store backfills absent
+    # columns with nulls and source gaps surface as NaN, so both count as empty;
+    # fill_nan(None) folds NaN into null before the all-empty check. time/lat/lon
+    # are coordinate columns and always present.
+    df = df.filter(
+        ~pl.all_horizontal(pl.exclude(["time", "lat", "lon"]).fill_nan(None).is_null())
+    )
     df = df.with_columns(pl.col("time").dt.strftime(fmt).alias("date_key"))
 
     date_keys = df["date_key"].unique().to_list()
@@ -71,9 +81,12 @@ def parquet2csv(
             .write_csv(year_dir / f"{date_key}.csv")
         )
 
+    # list() drains the lazy map so exceptions raised inside write_group surface
+    # here instead of being silently swallowed when the iterator is discarded.
     with ThreadPoolExecutor(max_workers=n_workers) as executor:
-        executor.map(write_group, date_keys)
+        list(executor.map(write_group, date_keys))
 
     logger.success(
         f"Finished exporting {len(date_keys)} {freq} CSV files to {csv_root}"
     )
+    return csv_root

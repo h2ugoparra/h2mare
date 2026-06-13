@@ -30,7 +30,7 @@ def test_invalid_freq_raises(parquet_root, tmp_path):
 
 def test_daily_creates_one_file_per_day(parquet_root, tmp_path):
     out = tmp_path / "out"
-    parquet2csv(parquet_root, out, "2021-01-01", "2021-01-02", freq="daily")
+    parquet2csv(parquet_root, out, "2021-01-01", "2021-01-02", freq="day")
     files = list(out.rglob("*.csv"))
     assert len(files) == 2
     names = {f.stem for f in files}
@@ -39,7 +39,7 @@ def test_daily_creates_one_file_per_day(parquet_root, tmp_path):
 
 def test_monthly_creates_one_file_per_month(parquet_root, tmp_path):
     out = tmp_path / "out"
-    parquet2csv(parquet_root, out, "2021-01-01", "2021-02-28", freq="monthly")
+    parquet2csv(parquet_root, out, "2021-01-01", "2021-02-28", freq="month")
     files = list(out.rglob("*.csv"))
     assert len(files) == 2
     names = {f.stem for f in files}
@@ -48,7 +48,7 @@ def test_monthly_creates_one_file_per_month(parquet_root, tmp_path):
 
 def test_yearly_creates_one_file_per_year(parquet_root, tmp_path):
     out = tmp_path / "out"
-    parquet2csv(parquet_root, out, "2021-01-01", "2022-12-31", freq="yearly")
+    parquet2csv(parquet_root, out, "2021-01-01", "2022-12-31", freq="year")
     files = list(out.rglob("*.csv"))
     assert len(files) == 2
     names = {f.stem for f in files}
@@ -57,13 +57,13 @@ def test_yearly_creates_one_file_per_year(parquet_root, tmp_path):
 
 def test_files_organised_under_year_subdir(parquet_root, tmp_path):
     out = tmp_path / "out"
-    parquet2csv(parquet_root, out, "2021-01-01", "2021-01-01", freq="daily")
+    parquet2csv(parquet_root, out, "2021-01-01", "2021-01-01", freq="day")
     assert (out / "2021" / "2021-01-01.csv").exists()
 
 
 def test_date_range_filters_data(parquet_root, tmp_path):
     out = tmp_path / "out"
-    parquet2csv(parquet_root, out, "2021-01-01", "2021-01-01", freq="daily")
+    parquet2csv(parquet_root, out, "2021-01-01", "2021-01-01", freq="day")
     files = list(out.rglob("*.csv"))
     assert len(files) == 1
     assert files[0].stem == "2021-01-01"
@@ -84,7 +84,7 @@ def test_year_month_partition_cols_absent(parquet_root, tmp_path):
     df.write_parquet(p / "data.parquet")
 
     out = tmp_path / "out"
-    parquet2csv(p, out, "2021-01-01", "2021-01-31", freq="daily")
+    parquet2csv(p, out, "2021-01-01", "2021-01-31", freq="day")
     result = pl.read_csv(out / "2021" / "2021-01-01.csv")
     assert "year" not in result.columns
     assert "month" not in result.columns
@@ -104,15 +104,43 @@ def test_all_nan_rows_dropped(tmp_path):
     df.write_parquet(p / "data.parquet")
 
     out = tmp_path / "out"
-    parquet2csv(p, out, "2021-01-01", "2021-01-31", freq="daily")
+    parquet2csv(p, out, "2021-01-01", "2021-01-31", freq="day")
     result = pl.read_csv(out / "2021" / "2021-01-02.csv")
     assert len(result) == 1
     assert (out / "2021" / "2021-01-01.csv").exists() is False
 
 
+def test_all_null_rows_dropped(tmp_path):
+    """Rows where every variable column is null (not NaN) are also dropped —
+    the store backfills absent columns with nulls, so this is the common case."""
+    df = pl.DataFrame(
+        {
+            "time": [datetime(2021, 1, 1), datetime(2021, 1, 2)],
+            "lat": [30.0, 35.0],
+            "lon": [-10.0, -5.0],
+            "sst": pl.Series([None, 20.0], dtype=pl.Float64),
+        }
+    )
+    p = tmp_path / "parquet"
+    p.mkdir()
+    df.write_parquet(p / "data.parquet")
+
+    out = tmp_path / "out"
+    parquet2csv(p, out, "2021-01-01", "2021-01-31", freq="day")
+    result = pl.read_csv(out / "2021" / "2021-01-02.csv")
+    assert len(result) == 1
+    assert (out / "2021" / "2021-01-01.csv").exists() is False
+
+
+def test_returns_csv_root(parquet_root, tmp_path):
+    out = tmp_path / "out"
+    result = parquet2csv(parquet_root, out, "2021-01-01", "2021-01-01", freq="day")
+    assert result == out
+
+
 def test_csv_contains_expected_columns(parquet_root, tmp_path):
     out = tmp_path / "out"
-    parquet2csv(parquet_root, out, "2021-01-01", "2021-01-01", freq="daily")
+    parquet2csv(parquet_root, out, "2021-01-01", "2021-01-01", freq="day")
     result = pl.read_csv(out / "2021" / "2021-01-01.csv")
     assert set(result.columns) >= {"time", "lat", "lon", "sst", "ssh"}
     assert "date_key" not in result.columns
@@ -132,7 +160,7 @@ def test_float64_downcast_to_float32(tmp_path):
     df.write_parquet(p / "data.parquet")
 
     out = tmp_path / "out"
-    parquet2csv(p, out, "2021-01-01", "2021-01-31", freq="daily")
+    parquet2csv(p, out, "2021-01-01", "2021-01-31", freq="day")
     result = pl.read_csv(out / "2021" / "2021-01-01.csv")
     # float32 precision: ~7 significant digits
     assert abs(result["sst"][0] - 20.123456789) < 1e-4
