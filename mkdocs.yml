@@ -47,3 +47,4 @@ nav:
     - ParquetIndexer: api/parquet_indexer.md
     - ParquetPlotter: api/parquet_plotter.md
     - parquet2csv: api/parquet2csv.md
+    - Ad-hoc converters: api/adhoc_converters.md
