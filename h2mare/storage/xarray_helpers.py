@@ -33,6 +33,23 @@ ds_float64_to_float32 = xr_float64_to_float32
 _INT16_HEADROOM = 1.6
 
 
+def int16_scale(lo: float, hi: float) -> dict | None:
+    """
+    ``scale_factor``/``add_offset`` packing [lo, hi] into int16, widened by
+    :data:`_INT16_HEADROOM`.
+
+    None for a degenerate or all-NaN range: the scale would be zero or
+    non-finite, so there is nothing to pack.
+    """
+    span = hi - lo
+    if not np.isfinite(span) or span == 0:
+        return None
+    return {
+        "scale_factor": span * _INT16_HEADROOM / 65000.0,
+        "add_offset": (hi + lo) / 2.0,
+    }
+
+
 def int16_encoding(ds: xr.Dataset, level: int = 9) -> dict:
     """
     Scale/offset int16 encoding, one scale per data variable.
@@ -74,15 +91,14 @@ def int16_encoding(ds: xr.Dataset, level: int = 9) -> dict:
     for name in ds.data_vars:
         lo = float(computed[(str(name), "lo")])
         hi = float(computed[(str(name), "hi")])
-        span = hi - lo
-        if not np.isfinite(span) or span == 0:
-            # Degenerate or all-NaN: packing buys nothing and the scale would be
-            # zero or non-finite, so leave this variable on the default encoding.
+        scale = int16_scale(lo, hi)
+        if scale is None:
+            # Degenerate or all-NaN: packing buys nothing, so leave this
+            # variable on the default encoding.
             continue
         encoding[name] = {
             "dtype": "int16",
-            "scale_factor": span * _INT16_HEADROOM / 65000.0,
-            "add_offset": (hi + lo) / 2.0,
+            **scale,
             "_FillValue": -32767,
             "compressors": [zarr.codecs.ZstdCodec(level=level)],
         }

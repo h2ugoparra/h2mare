@@ -116,14 +116,19 @@ wider than 65,000 (`ac_track`: `[176122, 242079]`, giving a step of 1.01;
     Two things guard against this. The scale is widened past the observed
     range (`_INT16_HEADROOM`, currently 1.6×, leaving ~60% headroom on each
     side at 1.6× coarser resolution — `msl` ~0.24 Pa, still far inside ERA5's
-    own precision). Anything outside even that is **refused** by
-    `storage._check_packed_range`, which names the variable and both windows
-    rather than writing. The fix when it fires is to re-convert the store, so
-    the scale is re-derived over the full range.
+    own precision). An append that falls outside even that is caught by
+    `storage._check_packed_range` before anything is written, and the store is
+    **repacked**: rewritten with that variable's scale re-derived over the
+    stored data and the incoming range together, then appended to. Existing
+    values move by at most half a quantisation step. Variables that still fit
+    keep their scale.
 
-    This is why the first conversion of a packed store matters more than the
-    ones after it: a store first built from a single calm month carries that
-    month's range forever. Prefer to create one from a representative span.
+    A repack rewrites the whole yearly file, which is expected for zero-bounded,
+    heavy-tailed fields: a store first built from January–July carries `tp`'s
+    range from those months, and the August–October storm season routinely
+    exceeds it. Only a variable with no range to scale over (for example an
+    all-NaN store receiving a constant) is still refused, with a pointer to
+    re-convert.
 
 Reasonable candidates are the bounded, already-packed fields: `sst`, `thetao`,
 `o2`, `mld`, `adt`. Leave `chl`, `gke` and the other derived variables on
