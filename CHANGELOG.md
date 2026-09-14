@@ -5,6 +5,29 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.1] - 2026-09-14
+
+### Fixed
+
+- An append to an `int16` store whose values fall outside the store's frozen
+  scale no longer fails the run. The store is **repacked** first: rewritten
+  with that variable's `scale_factor`/`add_offset` re-derived over the stored
+  data and the incoming range together, then appended to. Previously the
+  append was refused with an instruction to delete the store and re-convert —
+  which, with `archive_raw: false`, meant re-downloading months of hourly ERA5.
+  This is routine for zero-bounded, heavy-tailed fields: a yearly store built
+  from January–July carries `tp`'s range from those months, and August's storm
+  season exceeds it (hit on `atm-accum-avg` 2026).
+  - The new scale spans the stored data's *actual* range, not the old
+    representable window, so the headroom is not compounded on every repack.
+  - Variables that still fit keep their encoding and round-trip exactly;
+    existing values of a repacked variable move by at most half a quantisation
+    step.
+  - The rewrite is atomic (tmp → backup-swap), and costs one rewrite of the
+    yearly file, logged as a warning.
+  - A variable that cannot be repacked (not `int16`, or with no range to scale
+    over) is still refused before anything is written.
+
 ## [0.8.0] - 2026-09-03
 
 ### Breaking
@@ -441,6 +464,7 @@ anyone running 0.3.x or earlier should upgrade.
 - Numerous correctness fixes in the fronts processor, FSLE processing
   (bbox handling), extraction (NaN coordinates), and Parquet schema unioning.
 
+[0.8.1]: https://github.com/h2ugoparra/h2mare/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/h2ugoparra/h2mare/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/h2ugoparra/h2mare/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/h2ugoparra/h2mare/compare/v0.5.0...v0.6.0
