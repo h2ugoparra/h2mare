@@ -930,7 +930,8 @@ class TestPackedRangeGuard:
     A packed store's scale is fixed at creation and inherited by every append,
     so data outside it has no encoding. It does not clip — it overflows int16
     and wraps back into the middle of the range, which reads as ordinary data.
-    The append must be refused instead.
+    The store must be repacked over the wider range before the append, or —
+    where no scale can be derived — the append refused.
     """
 
     @staticmethod
@@ -961,42 +962,123 @@ class TestPackedRangeGuard:
         write_append_zarr("sst", ds, path, encoding=self._tight_encoding(lo, hi))
         return ds
 
-    def test_append_outside_the_frozen_scale_is_refused(self, tmp_path):
+    @staticmethod
+    def _far(value: float = 200.0) -> xr.Dataset:
+        """An append strictly after the store, well outside its scale."""
+        far = _make_ds("2020-01-06", 5, seed=1)
+        far["sst"] = far["sst"] * 0 + value
+        return far
+
+    def _unrepackable_store(self, path):
+        """
+        A packed store holding no data at all: with a constant increment the
+        union range is a single value, so there is no span to scale over.
+        """
+        ds = _make_ds("2020-01-01", 5)
+        ds["sst"] = ds["sst"] * np.nan
+        write_append_zarr("sst", ds, path, encoding=self._tight_encoding(10.0, 20.0))
+
+    def test_append_outside_the_frozen_scale_repacks_the_store(self, tmp_path):
         path = tmp_path / "sst.zarr"
-        self._store_scaled_for(path, 10.0, 20.0)
+        stored = self._store_scaled_for(path, 10.0, 20.0)
 
         # Well outside: the stored scale cannot reach 200.
-        far = _make_ds("2020-01-06", 5, seed=1)
-        far["sst"] = far["sst"] * 0 + 200.0
+        far = self._far()
+        write_append_zarr("sst", far, path)
 
-        with pytest.raises(ValueError, match="cannot represent the incoming data"):
-            write_append_zarr("sst", far, path)
+        back = xr.open_zarr(path, consolidated=False)
+        try:
+            assert back.sizes["time"] == 10
+            assert back.sst.encoding["dtype"] == np.dtype("int16")
+            head = back.sst.sel(time=stored.time).values
+            tail = back.sst.sel(time=far.time).values
+            assert np.abs(head - stored.sst.values).max() < 0.01, (
+                "stored values did not survive the repack"
+            )
+            assert np.abs(tail - 200.0).max() < 0.01, "the append wrapped"
+        finally:
+            back.close()
 
-    def test_refusal_names_the_variable_and_both_windows(self, tmp_path):
+    def test_repacked_scale_spans_the_data_not_the_old_window(self, tmp_path):
+        """
+        Re-deriving from the old *representable* window would widen the scale
+        by the headroom again on every repack, losing resolution each time.
+        """
+        from h2mare.storage.xarray_helpers import _INT16_HEADROOM
+
         path = tmp_path / "sst.zarr"
         self._store_scaled_for(path, 10.0, 20.0)
-        far = _make_ds("2020-01-06", 5, seed=1)
-        far["sst"] = far["sst"] * 0 + 200.0
+        write_append_zarr("sst", self._far(), path)
+
+        back = xr.open_zarr(path, consolidated=False)
+        try:
+            enc = back.sst.encoding
+            assert enc["scale_factor"] == pytest.approx(
+                (200.0 - 10.0) * _INT16_HEADROOM / 65000.0
+            )
+            assert enc["add_offset"] == pytest.approx((200.0 + 10.0) / 2.0)
+        finally:
+            back.close()
+
+    def test_variable_that_fits_keeps_its_scale(self, tmp_path):
+        """Only the overflowing variable is rescaled; the rest lose nothing."""
+        path = tmp_path / "sst.zarr"
+        ds = _make_ds("2020-01-01", 5)
+        ds["sst"] = ds["sst"] * 0 + np.linspace(10.0, 20.0, ds["sst"].size).reshape(
+            ds["sst"].shape
+        )
+        ds["t2m"] = ds["sst"]
+        encoding = self._tight_encoding(10.0, 20.0)
+        encoding["t2m"] = dict(encoding["sst"])
+        write_append_zarr("sst", ds, path, encoding=encoding)
+
+        far = self._far()
+        far["t2m"] = far["sst"] * 0 + 15.0
+        write_append_zarr("sst", far, path)
+
+        back = xr.open_zarr(path, consolidated=False)
+        try:
+            assert back.t2m.encoding["scale_factor"] == pytest.approx(10.0 / 65000.0)
+            assert back.sst.encoding["scale_factor"] != pytest.approx(10.0 / 65000.0)
+        finally:
+            back.close()
+
+    def test_repack_leaves_no_temp_or_backup(self, tmp_path):
+        path = tmp_path / "sst.zarr"
+        self._store_scaled_for(path, 10.0, 20.0)
+        write_append_zarr("sst", self._far(), path)
+
+        assert not list(path.parent.glob("*.tmp")), "a temp store was left behind"
+        assert not list(path.parent.glob("*.bak")), "a backup was left behind"
+
+    def test_unrepackable_append_is_refused(self, tmp_path):
+        path = tmp_path / "sst.zarr"
+        self._unrepackable_store(path)
+
+        with pytest.raises(ValueError, match="cannot represent the incoming data"):
+            write_append_zarr("sst", self._far(), path)
+
+    def test_refusal_names_the_variable_and_the_incoming_range(self, tmp_path):
+        path = tmp_path / "sst.zarr"
+        self._unrepackable_store(path)
 
         with pytest.raises(ValueError) as excinfo:
-            write_append_zarr("sst", far, path)
+            write_append_zarr("sst", self._far(), path)
         msg = str(excinfo.value)
         assert "sst" in msg and "int16" in msg
         assert "200" in msg, "the offending incoming range is not reported"
         assert "Re-convert" in msg, "the message gives no way forward"
 
     def test_the_store_is_untouched_when_the_append_is_refused(self, tmp_path):
-        """The guard runs before any write, so a refusal leaves no damage."""
+        """The refusal comes before any write, so it leaves no damage."""
         path = tmp_path / "sst.zarr"
-        self._store_scaled_for(path, 10.0, 20.0)
+        self._unrepackable_store(path)
         before = xr.open_zarr(path, consolidated=False)
         n_before = before.sizes["time"]
         before.close()
 
-        far = _make_ds("2020-01-06", 5, seed=1)
-        far["sst"] = far["sst"] * 0 + 200.0
         with pytest.raises(ValueError):
-            write_append_zarr("sst", far, path)
+            write_append_zarr("sst", self._far(), path)
 
         after = xr.open_zarr(path, consolidated=False)
         try:

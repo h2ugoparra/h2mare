@@ -15,7 +15,7 @@ import pandas as pd
 import xarray as xr
 from loguru import logger
 
-from h2mare.storage.xarray_helpers import snap_grid_coords
+from h2mare.storage.xarray_helpers import int16_scale, snap_grid_coords
 from h2mare.types import BBox
 
 
@@ -100,8 +100,11 @@ def write_append_zarr(
 
         # Before anything is written: a packed store's scale was fixed at
         # creation and an append inherits it, so data outside that range has no
-        # encoding and would wrap rather than clip. No-op for float32 stores.
-        _check_packed_range(ds, path)
+        # encoding and would wrap rather than clip. Widen the scale first by
+        # repacking the store. No-op for float32 stores.
+        overflow = _check_packed_range(ds, path)
+        if overflow:
+            _repack_store(path, overflow)
 
         preserved = _read_root_attrs(path)
         _append_data(var_key, ds, path)
@@ -159,23 +162,22 @@ def _time_bounds(ds: xr.Dataset) -> tuple[pd.Timestamp, pd.Timestamp]:
     return pd.Timestamp(times[0]), pd.Timestamp(times[-1])
 
 
-def _check_packed_range(ds_new: xr.Dataset, path: Path) -> None:
+def _check_packed_range(
+    ds_new: xr.Dataset, path: Path
+) -> dict[str, tuple[float, float]]:
     """
-    Refuse an append whose values the store's frozen packing cannot represent.
+    Find the variables whose values the store's frozen packing cannot represent.
 
     A scale/offset store fixes ``scale_factor`` and ``add_offset`` when it is
     *created*, from the range of whatever batch was written first, and every
     later append inherits them (see :func:`write_append_zarr`'s ``encoding``
-    argument). Nothing re-derives them, so a value outside that first batch's
-    range has no encoding — and it does not clip, it overflows the integer
-    dtype and wraps back into the middle of the range. A store scaled for msl
-    99000-102000 Pa, appended with a storm year reaching 92000 Pa, read back
-    with a 9074 Pa error and no warning: the wrapped values land *inside* the
-    plausible band, so there are no outliers to notice and no NaNs to count.
-
-    Failing loudly here turns that into an ordinary operational error. The fix
-    when it fires is to re-convert the store, which re-derives the scale over
-    the full range.
+    argument). A value outside that range has no encoding — and it does not
+    clip, it overflows the integer dtype and wraps back into the middle of the
+    range. A store scaled for msl 99000-102000 Pa, appended with a storm year
+    reaching 92000 Pa, read back with a 9074 Pa error and no warning: the
+    wrapped values land *inside* the plausible band, so there are no outliers
+    to notice and no NaNs to count. The caller repacks the store over the wider
+    range (:func:`_repack_store`) before appending.
 
     Costs one pass over *ds_new* to find its bounds, and only for stores that
     are actually packed — a float32 store returns before reading anything.
@@ -186,9 +188,9 @@ def _check_packed_range(ds_new: xr.Dataset, path: Path) -> None:
     encode exactly onto ``_FillValue`` still reads back as NaN; that is a far
     rarer single-value collision, not the systematic wraparound above.
 
-    Raises:
-        ValueError: If any variable in *ds_new* falls outside what the store's
-            packing can represent, naming the variable and both windows.
+    Returns:
+        The incoming ``(min, max)`` of each variable that falls outside the
+        store's packing; empty when everything fits.
     """
     import dask
 
@@ -208,7 +210,7 @@ def _check_packed_range(ds_new: xr.Dataset, path: Path) -> None:
         ds_old.close()
 
     if not packed:
-        return
+        return {}
 
     logger.info(
         f"Checking {len(packed)} packed variable(s) against {path.name}'s stored "
@@ -220,7 +222,7 @@ def _check_packed_range(ds_new: xr.Dataset, path: Path) -> None:
         bounds[(str(name), "hi")] = ds_new[name].max()
     (computed,) = dask.compute(bounds)
 
-    problems: list[str] = []
+    overflow: dict[str, tuple[float, float]] = {}
     for name, (scale, offset, dtype) in packed.items():
         lo = float(computed[(str(name), "lo")])
         hi = float(computed[(str(name), "hi")])
@@ -231,20 +233,90 @@ def _check_packed_range(ds_new: xr.Dataset, path: Path) -> None:
         repr_lo = offset + info.min * scale
         repr_hi = offset + info.max * scale
         if lo < repr_lo or hi > repr_hi:
-            problems.append(
-                f"  {name} ({dtype.name}): incoming [{lo:.6g}, {hi:.6g}] is "
-                f"outside the representable [{repr_lo:.6g}, {repr_hi:.6g}]"
+            logger.warning(
+                f"{name} ({dtype.name}): incoming [{lo:.6g}, {hi:.6g}] is outside "
+                f"{path.name}'s representable [{repr_lo:.6g}, {repr_hi:.6g}]"
+            )
+            overflow[str(name)] = (lo, hi)
+    return overflow
+
+
+def _repack_store(path: Path, overflow: dict[str, tuple[float, float]]) -> None:
+    """
+    Rewrite *path* with each overflowing variable's scale widened to fit.
+
+    The new scale spans the stored data's actual range joined with the
+    incoming one, through :func:`int16_scale` — so the usual headroom is
+    applied once. Deriving it from the old *representable* window instead would
+    compound that headroom on every repack. Variables that already fit keep
+    their encoding untouched, so their values round-trip exactly.
+
+    Costs a pass over the overflowing variables and a rewrite of the whole
+    store: a yearly file, and only when its range is exceeded. Existing values
+    move by at most half a quantisation step of the old and new scales. The
+    write goes to a sibling tmp and is swapped in as :func:`_append_data` does,
+    so a failure leaves the store as it was.
+
+    Raises:
+        ValueError: If a variable cannot be repacked — not int16, or a range
+            with no span to derive a scale from. Nothing is written.
+    """
+    import dask
+
+    ds_old = xr.open_zarr(path, consolidated=False)
+    try:
+        bounds: dict[tuple[str, str], xr.DataArray] = {}
+        for name in overflow:
+            bounds[(name, "lo")] = ds_old[name].min()
+            bounds[(name, "hi")] = ds_old[name].max()
+        (computed,) = dask.compute(bounds)
+
+        problems: list[str] = []
+        for name, (in_lo, in_hi) in overflow.items():
+            var = ds_old.variables[name]
+            dtype = np.dtype(var.encoding["dtype"])
+            lo = float(np.nanmin([float(computed[(name, "lo")]), in_lo]))
+            hi = float(np.nanmax([float(computed[(name, "hi")]), in_hi]))
+            scale = int16_scale(lo, hi) if dtype == np.int16 else None
+            if scale is None:
+                problems.append(
+                    f"  {name} ({dtype.name}): incoming [{in_lo:.6g}, {in_hi:.6g}] "
+                    f"cannot be repacked (only int16 with a non-degenerate range)"
+                )
+                continue
+            logger.warning(
+                f"Repacking {name} in {path.name} over [{lo:.6g}, {hi:.6g}] "
+                f"(rewrites the whole store)"
+            )
+            var.encoding = {**var.encoding, **scale}
+
+        if problems:
+            raise ValueError(
+                f"{path.name} is scale/offset-packed with a scale fixed when it "
+                f"was created, and cannot represent the incoming data:\n"
+                + "\n".join(problems)
+                + f"\nAppending would silently wrap these values back into range. "
+                f"Re-convert this store so the scale is re-derived over the full "
+                f"range (delete {path.name} and re-run the convert step for it)."
             )
 
-    if problems:
-        raise ValueError(
-            f"{path.name} is scale/offset-packed with a scale fixed when it was "
-            f"created, and cannot represent the incoming data:\n"
-            + "\n".join(problems)
-            + f"\nAppending would silently wrap these values back into range. "
-            f"Re-convert this store so the scale is re-derived over the full "
-            f"range (delete {path.name} and re-run the convert step for it)."
-        )
+        tmp_path = path.with_name(path.name + ".tmp")
+        shutil.rmtree(tmp_path, ignore_errors=True)
+        t0 = time.perf_counter()
+        try:
+            ds_old.to_zarr(tmp_path)
+            xr.open_zarr(tmp_path, consolidated=False).close()
+        except Exception as e:
+            shutil.rmtree(tmp_path, ignore_errors=True)
+            raise RuntimeError(f"Repack of {path.name} failed") from e
+    finally:
+        # Release the handles on path before the swap ([WinError 32]).
+        ds_old.close()
+        del ds_old
+        gc.collect()
+
+    _swap_into_place(tmp_path, path)
+    logger.success(f"Repacked {path.name} in {time.perf_counter() - t0:.1f}s")
 
 
 def _append_data(var_key: str, ds_new: xr.Dataset, path: Path) -> None:
@@ -407,6 +479,13 @@ def _append_data(var_key: str, ds_new: xr.Dataset, path: Path) -> None:
     del ds_out, src_to_close
     gc.collect()
 
+    _swap_into_place(tmp_path, path)
+    logger.success(f"Saved in {time.perf_counter() - t0:.1f}s")
+    return None
+
+
+def _swap_into_place(tmp_path: Path, path: Path) -> None:
+    """Replace *path* with *tmp_path*, restoring the original on failure."""
     # Backup-swap: keep original until new file is confirmed in place
     backup_path = path.with_name(path.name + ".bak")
     logger.debug(f"Atomic swap: {path.name}")
@@ -434,8 +513,6 @@ def _append_data(var_key: str, ds_new: xr.Dataset, path: Path) -> None:
         raise RuntimeError(
             f"Failed to swap {tmp_path} → {path}; original restored from backup"
         ) from e
-    logger.success(f"Saved in {time.perf_counter() - t0:.1f}s")
-    return None
 
 
 def _try_append_fast_path(ds_new: xr.Dataset, path: Path) -> bool:
