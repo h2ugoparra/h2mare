@@ -1099,6 +1099,28 @@ class TestStoreRootReachesTheReads:
 
         assert roots["atm-accum-avg"] == own / "CDS_AtmAccumAvg"
 
+    def test_native_read_uses_the_given_app_config(self, monkeypatch, tmp_path):
+        """
+        Regression: the native read built its catalog without ``app_config``, so
+        ZarrCatalog validated the var_key against the *process* config. An
+        Extractor handed another project's config failed on any var_key that
+        project has and this one lacks.
+        """
+        self._patch_recording_roots(monkeypatch)
+        recording = extractor_module.ZarrCatalog
+        configs: dict = {}
+
+        def _factory(var_key, **kw):
+            configs[var_key] = kw.get("app_config")
+            return recording(var_key, **kw)
+
+        monkeypatch.setattr(extractor_module, "ZarrCatalog", _factory)
+        ext = self._extractor_for(self._daily_cfg(), store_root=tmp_path)
+
+        ext.process_single_varkey("atm-accum-avg")
+
+        assert configs["atm-accum-avg"] is ext.app_config
+
 
 class TestPinnedReadFrom:
     """read_from overrides the inference, in both directions."""
