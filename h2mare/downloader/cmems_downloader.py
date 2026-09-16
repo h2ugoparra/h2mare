@@ -456,7 +456,14 @@ class CMEMSDownloader(BaseDownloader):
         tasks = self._create_download_tasks(requested_range)
 
         if not tasks:
-            logger.info(f"'{self.var_key}' is already up to date — skipping.")
+            # Without an NRT dataset, get_nrt_availability re-logs "not available"
+            # on every call; _create_download_tasks has already said so once.
+            nrt_avail = (
+                self.get_nrt_availability() if self.var_config.dataset_id_nrt else None
+            )
+            self._log_nothing_to_download(
+                requested_range, self.get_rep_availability(), nrt_avail
+            )
             return False
 
         # A task spans a whole dataset/date-range (one per rep/nrt source), not

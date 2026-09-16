@@ -78,6 +78,27 @@ def dl_no_nrt(tmp_path):
 # ---------------------------------------------------------------------------
 
 
+class TestNothingToDownloadMessage:
+    def test_before_coverage_warns_instead_of_up_to_date(self, dl_no_nrt):
+        from loguru import logger
+
+        rep = DateRange("2010-01-01", "2023-12-31")
+        messages: list[str] = []
+        sink = logger.add(messages.append, level="INFO", format="{level}|{message}")
+        try:
+            with (
+                patch.object(dl_no_nrt, "_create_download_tasks", return_value=[]),
+                patch.object(dl_no_nrt, "get_rep_availability", return_value=rep),
+            ):
+                assert dl_no_nrt.run("1994-01-01", "1994-01-31") is False
+        finally:
+            logger.remove(sink)
+
+        text = "".join(messages)
+        assert "up to date" not in text
+        assert "WARNING|'fsle': requested 1994-01-01 to 1994-01-31" in text
+
+
 class TestGetRepAvailability:
     def test_calls_get_dataset_files_with_rep_id(self, dl):
         fake_files = ["rep/file1.nc", "rep/file2.nc"]

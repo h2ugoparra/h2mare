@@ -543,7 +543,11 @@ class AVISODownloader(BaseDownloader):
         tasks = self._create_download_tasks(requested_range)
 
         if not tasks:
-            logger.info(f"'{self.var_key}' is already up to date — skipping.")
+            self._log_nothing_to_download(
+                requested_range,
+                self.get_rep_availability(),
+                self.get_nrt_availability(),
+            )
             return False
 
         logger.debug(f"Created {len(tasks)} download task(s)")
