@@ -976,7 +976,9 @@ class Extractor:
             # publishes live in the compiled store, not in its own.
             return self._extract_compiled(var_key, vars, var_cfg, n_workers)
 
-        vr_catalog = ZarrCatalog(var_key, store_root=self._store_dir(var_cfg))
+        vr_catalog = ZarrCatalog(
+            var_key, app_config=self.app_config, store_root=self._store_dir(var_cfg)
+        )
         dates_resolved = self._resolve_coverage(vr_catalog)
         data_resolved = self._subset_to_coverage(dates_resolved)
         bounds = self._define_bbox(data_resolved)
