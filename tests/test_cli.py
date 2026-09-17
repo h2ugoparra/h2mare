@@ -293,7 +293,7 @@ class TestConsoleEncoding:
             ),
             "variables": {"sst"},
             "total_timesteps": 10444,
-            "store_root": "D:/GlobalData/CMEMS_SST",
+            "store_root": "D:/data/CMEMS_SST",
             "catalog_path": "sst_zarr_catalog.parquet",
             "last_scanned": pd.Timestamp("2026-08-10"),
         }

@@ -34,7 +34,7 @@ Write to a custom output directory:
 
 Read from a custom Zarr store root:
 
-    uv run h2mare parquet --store-path D:/GlobalData
+    uv run h2mare parquet --store-path /data/h2mare
 """
 
 from pathlib import Path

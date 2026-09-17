@@ -88,7 +88,7 @@ uv run h2mare compile
 uv run h2mare compile -v sst -v ssh -v mld --start-date 2024-01-01 --end-date 2024-12-31
 
 # Use a custom store path
-uv run h2mare compile --store-path D:/GlobalData
+uv run h2mare compile --store-path /data/h2mare
 
 # Compile and back up to local store (off by default)
 uv run h2mare compile --zarr-backup
