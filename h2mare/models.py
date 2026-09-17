@@ -353,15 +353,41 @@ class AppConfig(msgspec.Struct):
     def __post_init__(self):
         # compiled_vars is written by hand and read by Parquet, routing and the
         # CF checks, so a depth column compile produces but compiled_vars omits
-        # would be silently left out of all of them. Only checked where
-        # compiled_vars is declared at all.
+        # would be silently left out of all of them. The reverse slip matters as
+        # much: a sliced variable listed bare (thetao) names a column h2ds never
+        # holds. Only checked where compiled_vars is declared at all.
         for var_key, var_config in self.variables.items():
-            if var_config.compiled_vars is None:
+            declared = var_config.compiled_vars
+            levels = depth_levels_for(var_key, var_config)
+            if declared is None or not levels:
                 continue
-            produced = depth_column_names(depth_levels_for(var_key, var_config))
-            missing = [c for c in produced if c not in var_config.compiled_vars]
-            if missing:
-                raise ValueError(
-                    f"'{var_key}': its depth levels produce {missing}, which "
-                    f"compiled_vars does not list. Add them to compiled_vars."
+
+            missing = [c for c in depth_column_names(levels) if c not in declared]
+            unsliced = [v for v in levels if v in declared]
+            if not (missing or unsliced):
+                continue
+
+            # The list to write: each bare name replaced in place by its level
+            # columns, then anything still missing, so the order the author
+            # chose survives.
+            suggested: list[str] = []
+            for name in declared:
+                if name in unsliced:
+                    suggested.extend(depth_column_names({name: levels[name]}))
+                else:
+                    suggested.append(name)
+            suggested = list(dict.fromkeys([*suggested, *missing]))
+
+            problems = []
+            if unsliced:
+                problems.append(
+                    f"{unsliced} are sliced by depth, so h2ds never holds a "
+                    f"column by that name"
                 )
+            if missing:
+                problems.append(f"the depth columns {missing} are not listed")
+            raise ValueError(
+                f"'{var_key}': compiled_vars must name the columns compile "
+                f"writes, but {'; and '.join(problems)}. Replace it with: "
+                f"compiled_vars: [{', '.join(suggested)}]"
+            )
