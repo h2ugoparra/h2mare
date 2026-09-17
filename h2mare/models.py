@@ -53,7 +53,14 @@ def step_freq(var_config) -> str:
     return "h" if getattr(var_config, "time_step", None) is TimeStep.HOURLY else "D"
 
 
-def _check_levels(key: str, levels: list[int]) -> None:
+def check_depth_levels(key: str, levels: list[int]) -> None:
+    """Refuse an empty, negative, non-integer or duplicated level list."""
+    # bool is an int subclass; msgspec already rejects it from config, but a
+    # list built in Python reaches here unchecked.
+    if not all(
+        isinstance(level, int) and not isinstance(level, bool) for level in levels
+    ):
+        raise ValueError(f"{key} levels must be whole metres; got {levels}")
     if not levels:
         raise ValueError(f"{key} has an empty level list; omit the entry instead")
     if any(level < 0 for level in levels):
@@ -78,9 +85,9 @@ def _validate_depth_keys(
         if not new:
             raise ValueError(f"{new_key} is empty; omit the key instead")
         for var, levels in new.items():
-            _check_levels(f"{new_key}.{var}", levels)
+            check_depth_levels(f"{new_key}.{var}", levels)
     if old is not None:
-        _check_levels(old_key, old)
+        check_depth_levels(old_key, old)
 
 
 def depth_levels_for(

@@ -30,7 +30,7 @@ is to register it, not to branch inside the pipeline:
 - `downloader/registry.py` (`DOWNLOADER_REGISTRY`) — source key → downloader class.
 - `processing/registry.py` — `var_key` → **convert-time** processor (NetCDF→Zarr step). Unregistered variables pass through unchanged.
 - `processing/compiler_registry.py` (`COMPILE_PROCESSORS`) — `var_key` → **compile-time** processor. Unregistered variables use `_compile_depth_var` when their config declares depth levels, else `compile_default` (open catalog, interpolate to base grid; refuses a store that still has a depth axis).
-- Depth levels are per store variable (`depth_levels: {thetao: [0, 50]}` → `thetao_0`, `thetao_50`), read only through `models.depth_levels_for`, and sliced by `xarray_helpers.select_depth_levels`. `depth_range` is the unrelated continuous download band. The older `compile_depth_slices`/`extract_depth_slices` lists mean `{var_key: [...]}`.
+- Depth levels are per store variable (`depth_levels: {thetao: [0, 50]}` → `thetao_0`, `thetao_50`), read only through `models.depth_levels_for`, and sliced by `xarray_helpers.select_depth_levels`. `depth_range` is the unrelated continuous download band. The older `compile_depth_slices`/`extract_depth_slices` lists mean `{var_key: [...]}`. Extraction slices only the variables requested, and a run may choose levels itself (`var_dict={"dyn_rep": {"thetao": [0, 50]}}`) — native stores only; see `docs/api/extractor.md#depth-levels`.
 
 `Extractor` (`processing/extractor.py`) is a standalone analysis tool, not part of the run/convert/compile flow.
 

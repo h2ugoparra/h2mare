@@ -8,6 +8,7 @@ import hashlib
 import json
 import time
 import warnings
+from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import cached_property
 from pathlib import Path
@@ -24,8 +25,9 @@ from rasterio.errors import NotGeoreferencedWarning
 from scipy.spatial import KDTree
 
 from h2mare import AppConfig, get_settings
-from h2mare.models import step_freq
+from h2mare.models import check_depth_levels, depth_levels_for, step_freq
 from h2mare.storage.var_routing import compiled_var_key
+from h2mare.storage.xarray_helpers import select_depth_levels
 from h2mare.storage.zarr_catalog import ZarrCatalog
 from h2mare.types import BBox, DateRange, ReadFrom
 from h2mare.utils.datetime_utils import end_of_day
@@ -37,6 +39,11 @@ from h2mare.utils.spatial import sel_padded_bbox
 #: ``daily`` and ``hourly`` state it outright. Purely about parsing ``time_col``
 #: — which store answers is :data:`~h2mare.types.ReadFrom`.
 TimeCadence = Literal["auto", "daily", "hourly"]
+
+#: What ``run()`` accepts per var_key: one variable, a list of them, ``None``
+#: for everything, or ``{variable: depths | None}`` to also choose the depth
+#: levels (metres) of 3-D variables for this request only.
+VarSelection = Union[str, list[str], Mapping[str, Optional[Sequence[int]]], None]
 
 #: Coordinate columns that ride out of ``to_dataframe()`` alongside the real
 #: values. Carried by every engine result, so they are stripped before a join
@@ -381,6 +388,34 @@ def warn_on_subdaily_store(var_key: str, var_config, ds: xr.Dataset) -> None:
     )
 
 
+def split_depth_request(
+    var_key: str, vars: VarSelection
+) -> tuple[str | list[str] | None, dict[str, list[int]]]:
+    """
+    Separate a ``{variable: depths | None}`` selection into names and levels.
+
+    The dict's keys are the variables requested, exactly as a list would name
+    them; a non-``None`` value chooses that variable's depth levels for this
+    request, over whatever config declares. Any other selection passes through
+    with no levels.
+    """
+    if vars is None or isinstance(vars, (str, list)):
+        return vars, {}
+
+    override: dict[str, list[int]] = {}
+    for name, levels in vars.items():
+        if levels is None:
+            continue
+        if not isinstance(levels, (list, tuple)):
+            raise TypeError(
+                f"var_dict[{var_key!r}][{name!r}] must be a list of depths in "
+                f"metres or None; got {levels!r}"
+            )
+        check_depth_levels(f"var_dict[{var_key!r}][{name!r}]", list(levels))
+        override[name] = list(levels)
+    return list(vars), override
+
+
 def split_vars_by_source(
     requested: list[str] | None,
     stored: list[str],
@@ -411,13 +446,13 @@ def split_vars_by_source(
 
     ``has_depth`` disables the reconciliation entirely, because for a 3-D
     variable ``compiled_vars`` and the store are not comparable: the store holds
-    one variable on a ``depth`` axis (``thetao``) while ``compiled_vars`` names
-    the columns it becomes after slicing (``thetao_100``, …). Nor can the check
-    simply be deferred until after the expansion — extraction slices at
-    ``extract_depth_slices`` while ``compiled_vars`` follows
-    ``compile_depth_slices``, and config explicitly allows the two to differ
-    (``o2`` extracts 3 levels and compiles 4). There is nothing to reconcile;
-    :meth:`Extractor._preprocess_depth_slices` owns which levels appear.
+    variables on a ``depth`` axis (``thetao``) while ``compiled_vars`` names
+    the columns they become after slicing (``thetao_100``, …). Nor can the check
+    simply be deferred until after the expansion — extraction slices at its own
+    levels (``extract_depth_levels``, or levels chosen in the request) while
+    ``compiled_vars`` follows ``depth_levels``, and the two may differ. There is
+    nothing to reconcile; :meth:`Extractor._slice_depth` owns which levels
+    appear.
 
     Returns:
         ``(from_native, from_compiled)``. For a daily store ``from_compiled`` is
@@ -931,7 +966,7 @@ class Extractor:
     # ===================  PROCESS DATA ===================
 
     def process_single_varkey(
-        self, var_key: str, vars: str | list[str] | None = None, n_workers: int = 8
+        self, var_key: str, vars: VarSelection = None, n_workers: int = 8
     ) -> pd.DataFrame:
         """
         Run extraction process for a single var_key.
@@ -939,14 +974,18 @@ class Extractor:
         Parameters:
             var_key : str
                 Key to identify variable in config.
-            vars : str, list[str], None
+            vars : str, list[str], dict[str, list[int] | None], None
                 Specific variables for extraction associated with the specified var_key. This avoids extracting all vars inside the var_key.
+                A dict names the variables as its keys and, where a value is given,
+                the depth levels (metres) to slice that 3-D variable at for this
+                request, instead of the ones in config.
             n_workers : int, optional
                 Number of parallel workers for geometries (shp) extraction, by default 8.
 
         Returns:
             pd.DataFrame with extracted values.
         """
+        vars, depth_override = split_depth_request(var_key, vars)
         vars = [vars] if isinstance(vars, str) else vars
 
         # An empty list is the documented way to say "everything this var_key
@@ -956,6 +995,12 @@ class Extractor:
         # to remember there are two.
         if not vars:
             vars = None
+
+        if depth_override and var_key in ("moon", "bathy"):
+            raise ValueError(
+                f"[{var_key}] has no depth axis; depth levels cannot be chosen "
+                f"for it ({depth_override})."
+            )
 
         # Moon and bathy first since they do not need data from ZarCatalog
         if var_key == "moon":
@@ -970,6 +1015,15 @@ class Extractor:
             read_from=self.read_from,
             subdaily_input=self.input_is_subdaily,
         )
+
+        if source == "compiled" and depth_override:
+            raise ValueError(
+                f"[{var_key}] depth levels {depth_override} can only be chosen "
+                f"when reading its own store, and this request is answered from "
+                f"the compiled store, which holds the fixed columns compile "
+                f"published. Name those columns instead, or pass "
+                f"read_from='native'."
+            )
 
         if source == "compiled":
             # Date-only query against an hourly var_key: the daily numbers it
@@ -994,6 +1048,11 @@ class Extractor:
 
         warn_on_subdaily_store(var_key, var_cfg, ds)
         has_depth = "depth" in ds.dims
+        if depth_override and not has_depth:
+            raise ValueError(
+                f"[{var_key}] depth levels were given for "
+                f"{sorted(depth_override)}, but its store has no depth axis."
+            )
         from_native, from_compiled = split_vars_by_source(
             vars,
             [str(v) for v in ds.data_vars],
@@ -1006,9 +1065,9 @@ class Extractor:
         # axis left in place is not an error, it is silently averaged away by
         # the geometry engine's dimensionless .mean().
         if has_depth:
-            ds = self._preprocess_depth_slices(ds, var_key, var_cfg)
-            if from_native:
-                ds = self._select_depth_columns(ds, from_native, var_key)
+            ds = self._slice_depth(
+                ds, var_key, var_cfg, from_native or None, depth_override
+            )
         elif from_native:
             ds = ds[from_native]
 
@@ -1304,9 +1363,7 @@ class Extractor:
     @overload
     def run(
         self,
-        var_dict: Optional[
-            Union[str, list[str], dict[str, str | list[str] | None]]
-        ] = ...,
+        var_dict: Optional[Union[str, list[str], Mapping[str, VarSelection]]] = ...,
         output_path: None = ...,
         n_workers: int = ...,
     ) -> pd.DataFrame: ...
@@ -1314,18 +1371,14 @@ class Extractor:
     @overload
     def run(
         self,
-        var_dict: Optional[
-            Union[str, list[str], dict[str, str | list[str] | None]]
-        ] = ...,
+        var_dict: Optional[Union[str, list[str], Mapping[str, VarSelection]]] = ...,
         output_path: str | Path = ...,
         n_workers: int = ...,
     ) -> None: ...
 
     def run(
         self,
-        var_dict: Optional[
-            Union[str, list[str], dict[str, str | list[str] | None]]
-        ] = None,
+        var_dict: Optional[Union[str, list[str], Mapping[str, VarSelection]]] = None,
         output_path: Optional[str | Path] = None,
         n_workers: int = 8,
     ) -> pd.DataFrame | None:
@@ -1333,8 +1386,10 @@ class Extractor:
         Extract all or specified var_key and respective variables, and save dataframe with extracted data.
 
         Args:
-            var_dict (str | list[str] | dict[str, str  |  list[str]  |  None] | None, optional: Var_key str or list of strings or dict specifiying vars in var_key.
+            var_dict (str | list[str] | Mapping[str, VarSelection] | None, optional: Var_key str or list of strings or dict specifiying vars in var_key.
                 Defaults to None, extracting all available var_keys and respective variables.
+                A ``{variable: depths | None}`` value also chooses the depth levels
+                (metres) of 3-D variables for this run, over those in config.
             output_path (str | Path | None): Path to save file. If None, it returns a dataframe with all results.
             n_workers (int, optional): Workers for shp parallel processing. Defaults to 8.
 
@@ -1342,6 +1397,7 @@ class Extractor:
             >>> var_dict = {
             >>>     'seapodym': [],
             >>>     'radiation': ['tisr', 'ssrd', 'slhf'],
+            >>>     'dyn_rep': {'thetao': [0, 50], 'zos': None},
             >>>     }
             >>>
             >>> extractor = Extractor(file_path=input_path, time_col='ls_date', index_col='idlance')
@@ -1382,7 +1438,7 @@ class Extractor:
 
     def _run_impl(
         self,
-        var_dict: Optional[Union[str, list[str], dict[str, str | list[str] | None]]],
+        var_dict: Optional[Union[str, list[str], Mapping[str, VarSelection]]],
         n_workers: int,
     ) -> tuple[pd.DataFrame, bool]:
         """Extraction loop body; returns (results, all_succeeded)."""
@@ -1820,82 +1876,92 @@ class Extractor:
             return pd.DataFrame(out).set_index(self.index_col)
         return out
 
-    @staticmethod
-    def _resolve_depth_slices(var_key: str, var_config) -> list[int]:
-        """
-        Depth levels to slice at, falling back to the compile-time ones.
-
-        ``extract_depth_slices`` is optional and several 3-D variables omit it
-        (``thetao``). Left unsliced, the ``depth`` axis survives into extraction
-        and the geometry engine's dimensionless ``.mean()`` silently averages it
-        away — a single 0-1000 m number reported under the plain variable name.
-        So fall back to ``compile_depth_slices``, which is the same variable's
-        own statement of which levels are worth publishing, and makes extraction
-        agree with the compiled store and Parquet.
-        """
-        levels = getattr(var_config, "extract_depth_slices", None)
-        if levels is not None:
-            return list(levels)
-
-        fallback = getattr(var_config, "compile_depth_slices", None)
-        if fallback is None:
-            raise ValueError(
-                f"[{var_key}] has a depth axis but declares no depth levels. "
-                f"Set extract_depth_slices (or compile_depth_slices) in its "
-                f"config entry — without them the depth axis would be averaged "
-                f"away into one value spanning the whole range."
-            )
-
-        logger.info(
-            f"[{var_key}] no extract_depth_slices; slicing at the "
-            f"compile_depth_slices levels instead: {list(fallback)}"
-        )
-        return list(fallback)
-
-    def _select_depth_columns(
-        self, ds: xr.Dataset, requested: list[str], var_key: str
+    def _slice_depth(
+        self,
+        ds: xr.Dataset,
+        var_key: str,
+        var_config,
+        requested: list[str] | None,
+        override: dict[str, list[int]],
     ) -> xr.Dataset:
         """
-        Subset an expanded 3-D dataset by the names the caller actually sees.
+        Slice a store with a depth axis down to the columns the caller asked for.
 
-        After expansion the columns are ``<var_key>_<level>``, so that is what
-        ``vars=`` names here. The bare ``var_key`` is accepted as "every level",
-        which is what asking for the variable itself means.
+        Levels are the extraction ones from config (``extract_depth_levels``
+        over ``depth_levels``, see ``models.depth_levels_for``) with *override*
+        — levels chosen in the request — replacing them per variable. Left
+        unsliced, a depth axis would be averaged away by the geometry engine's
+        dimensionless ``.mean()`` into one value spanning the whole range.
+
+        *requested* may name, besides 2-D variables:
+          - a 3-D variable, meaning every level it is sliced at;
+          - a single ``<variable>_<level>`` column;
+          - the var_key itself, meaning everything (the older single-variable
+            stores, where the variable and the var_key share a name).
+
+        Only the variables requested are sliced, so a 3-D variable nobody asked
+        for needs no levels.
         """
-        available = [str(v) for v in ds.data_vars]
-        wanted = [v for v in requested if v != var_key]
-        if not wanted:
-            return ds
+        levels = depth_levels_for(var_key, var_config, "extract")
+        levels.update(override)
+        if not levels:
+            raise ValueError(
+                f"[{var_key}] has a depth axis but declares no depth levels. Set "
+                f"depth_levels (or extract_depth_levels) in its config entry, or "
+                f"choose them in the request — var_dict={{'{var_key}': "
+                f"{{'<variable>': [0, 100]}}}} — without them the depth axis "
+                f"would be averaged away into one value spanning the whole range."
+            )
 
-        missing = sorted(set(wanted) - set(available))
+        store_vars = [str(v) for v in ds.data_vars]
+        unknown = sorted(set(levels) - set(store_vars))
+        if unknown:
+            raise ValueError(
+                f"[{var_key}] depth levels name {unknown}, which the store does "
+                f"not hold. Store variables: {sorted(store_vars)}."
+            )
+
+        if requested is None or (var_key in requested and var_key not in store_vars):
+            logger.info(f"[{var_key}] slicing at depth levels {levels}")
+            return select_depth_levels(ds, levels, var_key)
+
+        needed: list[str] = []
+        for name in requested:
+            parent = name if name in store_vars else None
+            if parent is None:
+                parent = next((v for v in levels if name.startswith(f"{v}_")), None)
+            if parent is None:
+                raise ValueError(
+                    f"[{var_key}] cannot extract '{name}': the store holds "
+                    f"{sorted(store_vars)}, and depth columns are named "
+                    f"<variable>_<level>."
+                )
+            if parent not in needed:
+                needed.append(parent)
+
+        needed_levels = {v: lv for v, lv in levels.items() if v in needed}
+        logger.info(f"[{var_key}] slicing at depth levels {needed_levels}")
+        sliced = select_depth_levels(ds[needed], needed_levels, var_key)
+
+        available = [str(v) for v in sliced.data_vars]
+        columns: list[str] = []
+        missing: list[str] = []
+        for name in requested:
+            if name in available:
+                columns.append(name)
+            elif name in needed_levels:
+                columns.extend(f"{name}_{level}" for level in needed_levels[name])
+            else:
+                missing.append(name)
         if missing:
             raise ValueError(
-                f"[{var_key}] cannot extract {missing}: this variable is sliced "
-                f"by depth, and at the configured levels it yields {available}. "
-                f"Pass one of those, '{var_key}' for all of them, or change "
-                f"extract_depth_slices."
+                f"[{var_key}] cannot extract {missing}: at the levels in use it "
+                f"yields {available}. Pass one of those, a variable name for all "
+                f"its levels, choose levels in the request (var_dict="
+                f"{{'{var_key}': {{'<variable>': [levels]}}}}), or change "
+                f"extract_depth_levels (extract_depth_slices)."
             )
-        return ds[wanted]
-
-    def _preprocess_depth_slices(
-        self, ds: xr.Dataset | xr.DataArray, var_key: str, var_config
-    ) -> xr.Dataset:
-        """Slice a 3-D variable at configured depth levels, returning one column per depth."""
-        depth_intervals = self._resolve_depth_slices(var_key, var_config)
-        da = ds[var_key].sel(depth=depth_intervals, method="nearest")
-        ds_out = xr.Dataset(
-            {
-                f"{var_key}_{int(d.values)}": da.sel(depth=d)
-                .squeeze(drop=True)
-                .drop_vars("depth")
-                for d in da.depth
-            }
-        )
-        rename_map = {
-            f"{var_key}_{int(d.values)}": f"{var_key}_{target}"
-            for d, target in zip(da.depth, depth_intervals)
-        }
-        return ds_out.rename(rename_map)
+        return sliced[list(dict.fromkeys(columns))]
 
     def _extract_moon_phase(
         self, data: pd.DataFrame | gpd.GeoDataFrame
@@ -1927,22 +1993,20 @@ class Extractor:
     # ======================= HELPERS =========================
     def _normalize_var_dict(
         self,
-        var_dict: Optional[
-            Union[str, list[str], dict[str, str | list[str] | None]]
-        ] = None,
-    ) -> dict[str, str | list[str] | None]:
+        var_dict: Optional[Union[str, list[str], Mapping[str, VarSelection]]] = None,
+    ) -> dict[str, VarSelection]:
         """
         Helper function to resolves var_dict arg from ``run()``
 
         Args:
-            var_dict (Optional[Union[str, list[str], dict[str, str  |  list[str]  |  None]]], optional): _description_. Defaults to None.
+            var_dict (Optional[Union[str, list[str], Mapping[str, VarSelection]]], optional): _description_. Defaults to None.
 
         Raises:
             TypeError: if type list[str] but elements not str
             TypeError: No valid var_dict
 
         Returns:
-            dict[str, str | list[str] | None]: _description_
+            dict[str, VarSelection]: _description_
         """
         if var_dict is None:
             # Exclude compiled-output variables (source: h2mare) from default extraction
@@ -1958,8 +2022,8 @@ class Extractor:
             )
             return {k: None for k in all_var_keys}
 
-        elif isinstance(var_dict, dict):
-            return var_dict
+        elif isinstance(var_dict, Mapping):
+            return dict(var_dict)
 
         # single var_key
         elif isinstance(var_dict, str):
