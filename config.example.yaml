@@ -51,11 +51,13 @@ variables:
     filename_date_range: true
     subset: true
     bbox: [-80, 0, 10, 70]
-    # What to download...
+    # What to download (a continuous band)...
     depth_range: [0, 1000]
-    # ...and which levels to publish. A 3-D variable declaring neither this nor
-    # extract_depth_slices is refused rather than averaged over its full range.
-    compile_depth_slices: [0, 100, 500, 1000]
+    # ...and the discrete depths each store variable is published at, as
+    # <variable>_<level> columns. A variable with a depth axis and no levels is
+    # refused rather than averaged over its full range.
+    depth_levels:
+      o2: [0, 100, 500, 1000]
 
   # --- An hourly ERA5 variable, scale/offset packed on disk. ---------------
   atm-instante:

@@ -333,6 +333,57 @@ def convert360_180(_ds: xr.Dataset) -> xr.Dataset:
     return _ds
 
 
+def select_depth_levels(
+    ds: xr.Dataset, levels: dict[str, list[int]], owner: str
+) -> xr.Dataset:
+    """
+    Replace each 3-D variable by one 2-D column per configured depth level.
+
+    ``levels`` maps a store variable to its depths in metres (as resolved by
+    ``models.depth_levels_for``); a variable listed there becomes
+    ``<variable>_<level>``, matched to the store's axis by nearest depth and
+    named after the *requested* level (``o2_1000`` off a 902 m axis). Variables
+    without a depth axis pass through, so a store may mix 2-D and 3-D fields.
+
+    A 3-D variable left out is refused rather than passed on: a depth axis
+    that survives is averaged away by the geometry engine or leaks into h2ds.
+    ``owner`` is the var_key named in the errors.
+    """
+    unknown = sorted(set(levels) - {str(v) for v in ds.data_vars})
+    if unknown:
+        raise ValueError(
+            f"[{owner}] depth_levels names {unknown}, which the store does not "
+            f"hold. Store variables: {sorted(str(v) for v in ds.data_vars)}."
+        )
+
+    out: dict[str, xr.DataArray] = {}
+    for name, da in ds.data_vars.items():
+        name = str(name)
+        has_depth = "depth" in da.dims
+        if name in levels:
+            if not has_depth:
+                raise ValueError(
+                    f"[{owner}] depth_levels lists '{name}', which has no depth "
+                    f"axis. Remove it from depth_levels."
+                )
+            for level in levels[name]:
+                out[f"{name}_{level}"] = da.sel(
+                    depth=level, method="nearest"
+                ).drop_vars("depth")
+        elif has_depth:
+            raise ValueError(
+                f"[{owner}] '{name}' has a depth axis but no depth levels. Add it "
+                f"to depth_levels (or compile_depth_slices / extract_depth_slices "
+                f"for a variable named like its var_key); left unsliced, its "
+                f"whole depth range would be averaged into one value."
+            )
+        else:
+            out[name] = da
+
+    result = xr.Dataset(out)
+    return result.drop_vars("depth", errors="ignore")
+
+
 def rename_dims(ds: xr.Dataset) -> xr.Dataset:
     """Rename 'longitude', 'latitude', and 'valid_time' (CDS-ERA5) to lon, lat, time."""
     mapping = {}

@@ -14,7 +14,8 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 
-from h2mare.models import step_freq
+from h2mare.models import depth_levels_for, step_freq
+from h2mare.storage.xarray_helpers import select_depth_levels
 from h2mare.storage.zarr_catalog import ZarrCatalog
 from h2mare.types import DateRange
 from h2mare.utils.datetime_utils import end_of_day
@@ -129,31 +130,37 @@ def _compile_depth_var(
     catalog: ZarrCatalog | None,
     date_range: DateRange,
 ) -> xr.Dataset | None:
-    """Generic processor for 3-D variables: selects depth levels from compile_depth_slices."""
+    """
+    Processor for stores with a depth axis: one column per configured level.
+
+    Dispatched by config (any var_key with depth levels), not by name. Each
+    listed variable becomes ``<variable>_<level>``; 2-D variables in the same
+    store pass through.
+    """
     assert catalog is not None
     var_key = catalog.var_key
-    depths = compiler.app_config.variables[var_key].compile_depth_slices
-    if depths is None:
+    var_config = compiler.app_config.variables[var_key]
+    levels = depth_levels_for(var_key, var_config)
+    if not levels:
         # Not an assert: assertions are stripped under `python -O`, and without
-        # this None would reach ds.sel(depth=None) and surface as a TypeError
-        # somewhere unrelated. A config error should name the config key.
+        # this the depth axis would surface as an error somewhere unrelated. A
+        # config error should name the config key.
         raise ValueError(
             f"'{var_key}' is compiled as a 3-D variable but declares no "
-            f"compile_depth_slices in config.yaml. Add the depth levels it "
-            f"should publish (e.g. [0, 100, 500, 1000])."
+            f"depth_levels (or compile_depth_slices) in config.yaml. Add the "
+            f"depth levels it should publish (e.g. {{thetao: [0, 100, 500]}})."
+        )
+    if step_freq(var_config) == "h":
+        raise ValueError(
+            f"'{var_key}' is hourly and has depth levels; compiling an hourly "
+            f"3-D store is not supported."
         )
 
     ds = _open_or_warn(catalog, var_key, date_range, compiler.bbox, chunks={"depth": 1})
     if ds is None:
         return None
-    ds_interp = ds.sel(depth=depths, method="nearest").interp_like(
+    return select_depth_levels(ds, levels, var_key).interp_like(
         compiler.base_grid, method="linear", assume_sorted=True
-    )
-    return xr.Dataset(
-        {
-            f"{var_key}_{target}": ds_interp[var_key].isel(depth=i).drop_vars("depth")
-            for i, target in enumerate(depths)
-        }
     )
 
 
@@ -578,6 +585,13 @@ def compile_default(
 
     if ds is None:
         return None
+    if "depth" in ds.dims:
+        # interp_like would carry the axis into h2ds, which is 2-D.
+        raise ValueError(
+            f"'{var_key}' has a depth axis but declares no depth_levels, so it "
+            f"cannot be compiled. Add depth_levels (e.g. {{variable: [0, 100]}}) "
+            f"to its config entry."
+        )
     return ds.interp_like(compiler.base_grid, method="linear", assume_sorted=True)
 
 
@@ -588,8 +602,6 @@ def compile_default(
 COMPILE_PROCESSORS: dict[str, CompileProcessor] = {
     "bathy": _compile_bathy,
     "moon": _compile_moon,
-    "o2": _compile_depth_var,
-    "thetao": _compile_depth_var,
     "atm-accum-avg": _compile_atm_accum_avg,
     "atm-instante": _compile_atm_instante,
     "sst": _compile_sst,
