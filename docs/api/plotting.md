@@ -201,7 +201,7 @@ DataFrame uses its point (± `offset`) and a red marker.
 | `title_fn` | Callable mapping a row to a plot title. Defaults to the record date |
 
 ```python
-# Inspect the SST field around the first 12 catch records
-plot_records_on_field(catches_gdf, var_key="sst", offset=2.0,
-                      title_fn=lambda r: f"{r['vessel']} — {r['date']:%Y-%m-%d}")
+# Inspect the SST field around the first 12 observation records
+plot_records_on_field(observations_gdf, var_key="sst", offset=2.0,
+                      title_fn=lambda r: f"{r['id_row']} — {r['date']:%Y-%m-%d}")
 ```

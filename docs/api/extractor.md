@@ -9,7 +9,7 @@ that is not yet in the store (see [`extract_from_dataset()`](#extract_from_datas
 ```python
 from h2mare.processing.extractor import Extractor
 
-extractor = Extractor("data/points.csv", time_col="ls_date", index_col="idlance")
+extractor = Extractor("data/points.csv", time_col="date", index_col="id_row")
 df = extractor.run("sst")                       # returns a DataFrame
 extractor.run("sst", output_path="out.csv")     # or writes a CSV and returns None
 ```
@@ -176,7 +176,7 @@ extractor.run(
 
 ```python
 var_dict = {"seapodym": [], "radiation": ["tisr", "ssrd", "slhf"]}
-extractor = Extractor("input.csv", time_col="ls_date", index_col="idlance")
+extractor = Extractor("input.csv", time_col="date", index_col="id_row")
 results = extractor.run(var_dict, output_path="out.csv", n_workers=12)
 ```
 
@@ -335,7 +335,7 @@ values inside each geometry, on the 15″ hi-res layer. It is a genuine within-p
 the only column in the table that is.
 
 Averaging a stored std layer is the deliberate choice for the others. A within-polygon std is
-polygon-size dependent — a haul touching one 0.25° cell yields `0` or `NaN`, a large one is
+polygon-size dependent — a polygon touching one 0.25° cell yields `0` or `NaN`, a large one is
 dominated by the regional gradient — so it is not comparable across rows of differing geometry
 size, whereas the layer mean is defined even for a single-cell polygon and stays on a fixed
 physical scale.

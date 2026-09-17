@@ -1400,8 +1400,8 @@ class Extractor:
             >>>     'dyn_rep': {'thetao': [0, 50], 'zos': None},
             >>>     }
             >>>
-            >>> extractor = Extractor(file_path=input_path, time_col='ls_date', index_col='idlance')
-            >>> results = extractor.run(output_path, var_dict=var_dict, n_workers=12)
+            >>> extractor = Extractor(file_path=input_path, time_col='date', index_col='id_row')
+            >>> results = extractor.run(var_dict, output_path=output_path, n_workers=12)
         """
         t0 = time.perf_counter()
         # job="extract" routes every message in this scope (including from the

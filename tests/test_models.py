@@ -45,7 +45,7 @@ class TestKeyVarConfigEntry:
 
     @pytest.mark.parametrize(
         "root",
-        ["/mnt/other_drive", r"D:\GlobalData", r"\\server\share"],
+        ["/mnt/other_drive", r"D:\data", r"\\server\share"],
         ids=["posix", "windows-drive", "unc"],
     )
     def test_store_root_accepts_an_absolute_path(self, root):
