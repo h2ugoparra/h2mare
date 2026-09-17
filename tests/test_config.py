@@ -430,8 +430,12 @@ class TestExampleConfigStaysValid:
 
     def test_a_three_dimensional_variable_declares_its_depth_levels(self):
         """A 3-D variable declaring neither depth key is refused at compile time."""
-        o2 = self._example()["variables"]["o2"]
-        assert o2.get("compile_depth_slices"), (
+        from types import SimpleNamespace
+
+        from h2mare.models import depth_levels_for
+
+        o2 = SimpleNamespace(**self._example()["variables"]["o2"])
+        assert depth_levels_for("o2", o2), (
             "the 3-D example would be refused by _compile_depth_var"
         )
 

@@ -62,7 +62,7 @@ Special variables handled outside the general path:
 
 - **`bathy`** — read from a static NetCDF file, no time dimension
 - **`moon`** — computed on the fly from the `ephem` library
-- **`o2`** — depth-sliced before interpolation
+- **3-D variables** (`o2`, `thetao`, any var_key with `depth_levels`) — each listed variable is sliced at its configured depths before interpolation; chosen by config rather than by a registry entry
 
 The `h2ds` store is chunked for **extraction** (time-contiguous: long time block per small spatial tile), which makes point/geometry time series cheap but full-grid single-date reads costly. For interactive visualization, `export_map_zarr` produces a separate **map-optimized** sibling store (`h2ds_map`) chunked the other way — space-contiguous with a small time chunk — so one date's full field reads as a single small chunk. See [Map export](api/map_export.md).
 

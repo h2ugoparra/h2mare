@@ -15,7 +15,7 @@ import xarray as xr
 from loguru import logger
 
 from h2mare.config import AppConfig, get_settings
-from h2mare.models import SYSTEM_VAR_KEYS
+from h2mare.models import SYSTEM_VAR_KEYS, depth_levels_for
 from h2mare.storage.coverage import (
     resolve_date_range,
     split_time_range,
@@ -587,6 +587,7 @@ class Compiler:
         # Lazy import breaks the compiler.py ↔ compiler_registry.py cycle.
         from h2mare.processing.compiler_registry import (
             COMPILE_PROCESSORS,
+            _compile_depth_var,
             compile_default,
         )
 
@@ -603,7 +604,14 @@ class Compiler:
             if not self._has_overlap(var_key, date_range, catalog):
                 return None
 
-        processor = COMPILE_PROCESSORS.get(var_key, compile_default)
+        processor = COMPILE_PROCESSORS.get(var_key)
+        if processor is None:
+            # Depth handling follows the config, not the name, so a new 3-D
+            # var_key needs no registry entry.
+            has_levels = depth_levels_for(
+                var_key, self.app_config.variables.get(var_key)
+            )
+            processor = _compile_depth_var if has_levels else compile_default
         return processor(self, catalog, date_range)
 
     # ============== UTILITIES ===================
