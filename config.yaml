@@ -14,6 +14,8 @@ variables:
     subset: true
     filename_date_range: true
     bbox: [-80, 0, 10, 70]
+    derived_vars:
+      sst_std: {op: rolling_std, source: sst, window: 3}
 
   ssh:
     local_folder: CMEMS_SSH
@@ -27,6 +29,10 @@ variables:
     subset: true
     filename_date_range: true
     bbox: [-180, -90, 180, 90]
+    derived_vars:
+      adt_std: {op: rolling_std, source: adt, window: 3}
+      sla_std: {op: rolling_std, source: sla, window: 3}
+      gke: {op: kinetic_energy, source: [ugos, vgos]}
 
   mld:
     local_folder: CMEMS_MLD

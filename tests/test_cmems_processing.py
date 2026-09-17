@@ -85,22 +85,14 @@ class TestProcessSsh:
             coords={"time": times, **coords},
         )
 
-    def test_adds_adt_std(self):
+    def test_casts_to_float32(self):
         result = process_ssh(self._make_ssh_ds())
-        assert "adt_std" in result
+        assert all(result[v].dtype == np.float32 for v in result.data_vars)
 
-    def test_adds_sla_std(self):
+    def test_leaves_derived_vars_to_config(self):
+        """adt_std, sla_std and gke come from ssh's derived_vars now."""
         result = process_ssh(self._make_ssh_ds())
-        assert "sla_std" in result
-
-    def test_adds_gke(self):
-        result = process_ssh(self._make_ssh_ds())
-        assert "gke" in result
-
-    def test_gke_value_equals_half_speed_squared(self):
-        # ugos=3, vgos=4 → speed²=25 → gke=12.5
-        result = process_ssh(self._make_ssh_ds())
-        np.testing.assert_allclose(result["gke"].values, 12.5, rtol=1e-5)
+        assert set(result.data_vars) == {"adt", "sla", "ugos", "vgos"}
 
 
 # ---------------------------------------------------------------------------
@@ -135,13 +127,14 @@ class TestProcessSst:
         # 300 K − 273.15 = 26.85 °C
         np.testing.assert_allclose(result["sst"].values, 300.0 - 273.15, rtol=1e-4)
 
-    def test_adds_sst_std(self):
+    def test_leaves_sst_std_to_config(self):
+        """sst_std comes from sst's derived_vars now."""
         ds = self._make_ds()
         fake_fdist = _fake_fdist_ds("sst_fdist", _make_times(1), _spatial_coords())
         with patch("h2mare.processing.core.cmems.FrontProcessor") as MockFP:
             MockFP.return_value.from_dataset.return_value = fake_fdist
             result = process_sst(ds)
-        assert "sst_std" in result
+        assert "sst_std" not in result
 
 
 # ---------------------------------------------------------------------------

@@ -39,6 +39,58 @@ class StoreDtype(str, Enum):
     INT16 = "int16"
 
 
+class DerivedOp(str, Enum):
+    """Operations a ``derived_vars`` entry can apply; see ``processing/derived.py``."""
+
+    # Standard deviation over a square lon/lat window centred on each cell.
+    ROLLING_STD = "rolling_std"
+    # 0.5 * (u**2 + v**2) — kinetic energy per unit mass of a velocity pair.
+    KINETIC_ENERGY = "kinetic_energy"
+
+
+# How many source variables each operation reads.
+_DERIVED_OP_ARITY = {DerivedOp.ROLLING_STD: 1, DerivedOp.KINETIC_ENERGY: 2}
+
+
+class DerivedVarSpec(msgspec.Struct, forbid_unknown_fields=True):
+    """
+    One variable computed at convert time from others in the same dataset.
+
+    Unknown fields are refused so a misspelt ``window`` fails at load instead
+    of silently falling back to the default.
+    """
+
+    op: DerivedOp
+    # Variable name(s) read, as they stand after the var_key's processor ran
+    # (``sst``, not ``analysed_sst``). One name for rolling_std, [u, v] for
+    # kinetic_energy.
+    source: str | list[str]
+    # rolling_std only: side of the square window, in cells. Odd, so the
+    # window centres on its cell.
+    window: Optional[int] = None
+
+    @property
+    def sources(self) -> list[str]:
+        return [self.source] if isinstance(self.source, str) else list(self.source)
+
+    def __post_init__(self):
+        arity = _DERIVED_OP_ARITY[self.op]
+        if len(self.sources) != arity:
+            raise ValueError(
+                f"{self.op.value} reads {arity} source variable(s); got {self.source!r}"
+            )
+        if self.op is DerivedOp.ROLLING_STD:
+            if self.window is None:
+                self.window = 3
+            if self.window < 1 or self.window % 2 == 0:
+                raise ValueError(
+                    f"rolling_std window must be an odd number of cells >= 1; "
+                    f"got {self.window}"
+                )
+        elif self.window is not None:
+            raise ValueError(f"{self.op.value} takes no window; got {self.window}")
+
+
 def step_freq(var_config) -> str:
     """
     Pandas frequency alias matching a variable's cadence — ``"h"`` or ``"D"``.
@@ -258,6 +310,13 @@ class KeyVarConfigEntry(msgspec.Struct):
     # Outranked by ``--store-path``, which relocates a whole run on purpose.
     # See ``h2mare.utils.paths.store_root_for`` for the full precedence.
     store_root: Optional[str] = None
+    # Variables computed at convert time and written to the native store beside
+    # the ones downloaded, keyed by output name — e.g.
+    # {gke: {op: kinetic_energy, source: [ugos, vgos]}}. Applied after the
+    # var_key's registered processor, in declaration order, so an entry may
+    # read an earlier one. A variable derived from a 3-D source keeps its depth
+    # axis and needs its own depth_levels entry like any other.
+    derived_vars: Optional[dict[str, DerivedVarSpec]] = None
 
     def __post_init__(self):
         if self.bbox is not None:

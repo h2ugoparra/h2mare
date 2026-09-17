@@ -18,6 +18,7 @@ from loguru import logger
 from h2mare.config import AppConfig, get_settings
 from h2mare.format_converters.base import BaseConverter
 from h2mare.models import StoreDtype, step_freq
+from h2mare.processing.derived import apply_derived_vars
 from h2mare.processing.registry import PROCESSORS
 from h2mare.storage.audit import format_date_blocks, known_gap_days
 from h2mare.storage.provenance import (
@@ -897,6 +898,9 @@ class Netcdf2Zarr(BaseConverter):
         processor = PROCESSORS.get(self.var_key)
         if processor:
             ds = processor(ds, self.var_config, self.var_key)
+
+        # After the processor, so derived_vars name variables as it leaves them.
+        ds = apply_derived_vars(ds, self.var_config.derived_vars, self.var_key)
 
         # Snap lon/lat to a canonical grid so float-noise drift between a source's
         # reprocessed periods can't union into a doubled axis on read/append.

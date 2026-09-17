@@ -367,6 +367,29 @@ class TestProcessDataset:
             n2z.process_dataset(ds)
         mock_proc.assert_called_once()
 
+    def test_derived_vars_read_the_processor_output(self, tmp_path):
+        """derived_vars name variables as the processor leaves them (sst, not
+        analysed_sst), and a declared entry reaches the store."""
+        entry = {
+            **_SST_ENTRY_SUBSET,
+            "derived_vars": {"sst_std": {"op": "rolling_std", "source": "sst"}},
+        }
+        n2z = _make_converter(tmp_path, entry=entry)
+        ds = xr.Dataset(
+            {"analysed_sst": (["time", "lat", "lon"], np.ones((2, 2, 2)))},
+            coords={
+                "time": pd.date_range("2020-01-01", periods=2, freq="D"),
+                "lat": [30.0, 35.0],
+                "lon": [-10.0, -5.0],
+            },
+        )
+        with patch.dict(
+            "h2mare.format_converters.netcdf2zarr.PROCESSORS",
+            {"sst": lambda d, *_: d.rename_vars({"analysed_sst": "sst"})},
+        ):
+            result = n2z.process_dataset(ds)
+        np.testing.assert_array_equal(result["sst_std"].values, 0.0)
+
     def test_returns_chunked_dataset_when_no_processor(self, tmp_path):
         n2z = _make_converter(tmp_path)
         ds = xr.Dataset(
