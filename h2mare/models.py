@@ -53,6 +53,76 @@ def step_freq(var_config) -> str:
     return "h" if getattr(var_config, "time_step", None) is TimeStep.HOURLY else "D"
 
 
+def _check_levels(key: str, levels: list[int]) -> None:
+    if not levels:
+        raise ValueError(f"{key} has an empty level list; omit the entry instead")
+    if any(level < 0 for level in levels):
+        raise ValueError(f"{key} levels must be depths in metres >= 0; got {levels}")
+    if len(set(levels)) != len(levels):
+        raise ValueError(f"{key} has duplicate levels: {levels}")
+
+
+def _validate_depth_keys(
+    new_key: str,
+    new: Optional[dict[str, list[int]]],
+    old_key: str,
+    old: Optional[list[int]],
+) -> None:
+    """Shape checks for one depth key and its older single-variable form."""
+    if new is not None and old is not None:
+        raise ValueError(
+            f"{new_key} and {old_key} are both set; keep {new_key} only "
+            f"({old_key}: [...] is the same as {new_key}: {{<var_key>: [...]}})"
+        )
+    if new is not None:
+        if not new:
+            raise ValueError(f"{new_key} is empty; omit the key instead")
+        for var, levels in new.items():
+            _check_levels(f"{new_key}.{var}", levels)
+    if old is not None:
+        _check_levels(old_key, old)
+
+
+def depth_levels_for(
+    var_key: str, var_config, purpose: str = "compile"
+) -> dict[str, list[int]]:
+    """
+    Depth levels per store variable, for ``"compile"`` or ``"extract"``.
+
+    The single reader of the four depth keys, so that compile and extraction
+    cannot disagree on what the older list forms mean. Returns ``{}`` for a
+    variable without depth levels.
+
+    Extraction starts from the compile levels and replaces, per variable,
+    whatever ``extract_depth_levels`` lists — narrowing one field must not drop
+    the others.
+
+    Takes any object with the attributes (``getattr``), like :func:`step_freq`,
+    so stand-in configs predating these fields resolve to their old meaning.
+    """
+    if purpose not in ("compile", "extract"):
+        raise ValueError(f"purpose must be 'compile' or 'extract'; got {purpose!r}")
+
+    def _resolve(new_attr: str, old_attr: str) -> dict[str, list[int]]:
+        new = getattr(var_config, new_attr, None)
+        if new is not None:
+            return {var: list(levels) for var, levels in new.items()}
+        old = getattr(var_config, old_attr, None)
+        return {var_key: list(old)} if old is not None else {}
+
+    levels = _resolve("depth_levels", "compile_depth_slices")
+    if purpose == "extract":
+        levels.update(_resolve("extract_depth_levels", "extract_depth_slices"))
+    return levels
+
+
+def depth_column_names(levels: dict[str, list[int]]) -> list[str]:
+    """Output columns for resolved depth levels: ``<variable>_<level>``."""
+    return [
+        f"{var}_{level}" for var, var_levels in levels.items() for level in var_levels
+    ]
+
+
 class KeyVarConfigEntry(msgspec.Struct):
     """Configuration for a single Key variable/dataset."""
 
@@ -119,18 +189,23 @@ class KeyVarConfigEntry(msgspec.Struct):
     # Set True for variables whose Zarr store uses lon/lat coordinate names that
     # must be renamed to x/y before rioxarray clip (e.g. AVISO fsle, eddies).
     rename_lonlat: bool = False
-    # Depth levels (metres) to slice at during Extractor runs, when they should
-    # differ from compile_depth_slices. Each level becomes a separate output
-    # column (e.g. [0, 100, 500] → o2_0, o2_100, o2_500). None (the default, and
-    # what every shipped variable uses) falls back to compile_depth_slices, so
-    # extraction returns what the variable publishes; set it only to narrow a
-    # variable to fewer levels than it compiles.
+    # Discrete depths (metres) each 3-D variable is published at, keyed by the
+    # variable's name *in the store* (e.g. {thetao: [0, 50, 100], uo: [0]}).
+    # Each level becomes a column named <variable>_<level>; store variables
+    # not listed pass through, which is what lets one store mix 2-D and 3-D
+    # fields. Levels are matched to the store's axis by nearest depth.
+    # Distinct from depth_range, the continuous band that is downloaded.
+    # Used by compile, and the default for extraction. Resolve it through
+    # depth_levels_for rather than reading it directly.
+    depth_levels: Optional[dict[str, list[int]]] = None
+    # Extraction-only override, same shape as depth_levels. Merged per
+    # variable: a variable listed here replaces its depth_levels entry, the
+    # others keep theirs.
+    extract_depth_levels: Optional[dict[str, list[int]]] = None
+    # Older single-variable forms of the two keys above, still accepted. A list
+    # here means {var_key: [...]}, i.e. the store's variable shares the
+    # var_key's name (o2, thetao). Not combinable with their newer key.
     extract_depth_slices: Optional[list[int]] = None
-    # Depth levels (metres) to select when compiling a 3-D variable into h2ds.
-    # Each level becomes a separate output variable (e.g. [0, 100, 500, 1000]
-    # → o2_0, o2_100, o2_500, o2_1000). None = no depth slicing in compiler.
-    # Also the default for extract_depth_slices, so this is the single place a
-    # 3-D variable's levels are declared unless extraction is narrowed.
     compile_depth_slices: Optional[list[int]] = None
     # Exact variable names as they appear in the compiled h2ds Zarr for this
     # var_key. Used to select only these columns when adding a variable to an
@@ -193,6 +268,19 @@ class KeyVarConfigEntry(msgspec.Struct):
             if self.depth_range[0] >= self.depth_range[1]:
                 raise ValueError("depth_min must be less than depth_max")
 
+        _validate_depth_keys(
+            "depth_levels",
+            self.depth_levels,
+            "compile_depth_slices",
+            self.compile_depth_slices,
+        )
+        _validate_depth_keys(
+            "extract_depth_levels",
+            self.extract_depth_levels,
+            "extract_depth_slices",
+            self.extract_depth_slices,
+        )
+
         # Range-mode parsing unpacks exactly two capture groups (start, end);
         # fail fast at config load rather than deep in the convert step with a
         # cryptic "not enough values to unpack".
@@ -254,3 +342,19 @@ class AppConfig(msgspec.Struct):
 
     variables: VariablesConfig
     secrets: SecretsConfig
+
+    def __post_init__(self):
+        # compiled_vars is written by hand and read by Parquet, routing and the
+        # CF checks, so a depth column compile produces but compiled_vars omits
+        # would be silently left out of all of them. Only checked where
+        # compiled_vars is declared at all.
+        for var_key, var_config in self.variables.items():
+            if var_config.compiled_vars is None:
+                continue
+            produced = depth_column_names(depth_levels_for(var_key, var_config))
+            missing = [c for c in produced if c not in var_config.compiled_vars]
+            if missing:
+                raise ValueError(
+                    f"'{var_key}': its depth levels produce {missing}, which "
+                    f"compiled_vars does not list. Add them to compiled_vars."
+                )
