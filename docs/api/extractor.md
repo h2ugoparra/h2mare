@@ -46,7 +46,7 @@ Extractor(
 | `time_col` | `"time"` | Name of the time column in the input. |
 | `lon_col` | `"lon"` | Longitude column name (CSV/point input only). |
 | `lat_col` | `"lat"` | Latitude column name (CSV/point input only). |
-| `app_config` | `settings.app_config` | Override the application configuration (variable registry, depth slices, etc.). |
+| `app_config` | `settings.app_config` | Override the application configuration (variable registry, depth levels, etc.). |
 | `store_root` | `STORE_ROOT` | Root directory of the Zarr stores. Each `var_key` is read from its own `store_root` where `config.yaml` declares one; see [Where a variable's store lives](../configuration.md#where-a-variables-store-lives). |
 | `crs` | `4326` | EPSG code that geometries are reprojected to (SHP/geometry input only). |
 | `time_cadence` | `"auto"` | How `time_col` is read: `"daily"` truncates to midnight, `"hourly"` keeps the precision, `"auto"` infers. See [Cadence](#cadence). |
@@ -170,7 +170,7 @@ extractor.run(
 
 | Parameter | Description |
 |---|---|
-| `var_dict` | Selects what to extract. A `str` (single `var_key`), a `list[str]` (several `var_keys`), or a `dict[var_key, vars]` to pick specific variables inside a `var_key` (e.g. `{"radiation": ["tisr", "ssrd"]}`). `None` extracts every `var_key` in config (excluding compiled `h2mare`-source outputs). |
+| `var_dict` | Selects what to extract. A `str` (single `var_key`), a `list[str]` (several `var_keys`), or a `dict[var_key, vars]` to pick specific variables inside a `var_key` (e.g. `{"radiation": ["tisr", "ssrd"]}`). `vars` may also be a `{variable: depths}` dict, which picks the variables *and* the depth levels of 3-D ones for this run — see [Depth levels](#depth-levels). `None` extracts every `var_key` in config (excluding compiled `h2mare`-source outputs). |
 | `output_path` | If `None`, `run()` returns the result `DataFrame`. If a path is given, the result is written to **CSV** and `run()` returns `None`. |
 | `n_workers` | Number of `ThreadPoolExecutor` workers. **Only used for geometry (SHP) extraction**; point (CSV) extraction is vectorized and ignores it. |
 
@@ -202,6 +202,55 @@ that, discards the stale columns and re-extracts, warning as it goes. The write 
 deliberate: reversed, the same interruption would mark the `var_key` done with its columns
 missing and the resume would skip it, dropping the variable silently.
 
+### Depth levels
+
+A store with a `depth` axis is sliced into one column per level, `<variable>_<level>`
+(`thetao_50`), before extraction; left unsliced, the axis would be averaged away. The
+levels come from, in increasing priority:
+
+1. `depth_levels` in the var_key's config — also what compile publishes;
+2. `extract_depth_levels` — an extraction-only override, per variable;
+3. the request itself.
+
+```python
+extractor.run({
+    "dyn_rep": {
+        "thetao": [0, 50, 100],  # these depths, for this run only
+        "uo": None,              # the levels config gives uo
+        "zos": None,             # a 2-D variable, as it is
+    },
+})
+```
+
+A variable the request lists replaces its configured levels; the others keep theirs, and
+config is not changed. A plain list (`{"dyn_rep": ["thetao", "zos"]}`) uses config for
+every variable. What may be named:
+
+| Name | Meaning |
+|---|---|
+| a 3-D variable (`thetao`) | all of its levels |
+| a level column (`thetao_50`) | that level only — it must be one of the levels in use |
+| a 2-D variable (`zos`) | the variable as stored |
+| the var_key itself | everything (the older single-variable stores, where `o2` names both) |
+
+Only the variables requested are sliced, so a 3-D variable nobody asked for needs no levels.
+Refused rather than guessed:
+
+- a requested 3-D variable with no levels from any of the three sources;
+- levels for a variable with no depth axis, or for a store without one;
+- levels naming a variable the store does not hold;
+- levels in a request answered from the compiled store (an hourly var_key with date-only
+  input, or `read_from="compiled"`) — its columns are fixed at compile time, so name them
+  (`thetao_100`) instead;
+- a level list that is empty, negative, fractional or repeated.
+
+Levels are matched to the store's axis by nearest depth and keep the requested name, so
+`thetao_1000` off a store that ends at 902 m holds the 902 m values.
+
+The checkpoint is keyed by `var_key`, not by the levels asked for: after a failed run, a
+re-run with *different* levels replays the columns already extracted. Delete
+`INTERIM_DIR/extraction_checkpoint.*` when you change them.
+
 ---
 
 ## `extract_from_dataset()`
@@ -228,7 +277,7 @@ extractor.extract_from_dataset(
 | `clip_to_coverage` | When `True`, input rows whose location (and time, if `ds` has a time coord) fall outside the `ds` extent are dropped and surface as `NaN` in the result. Default `False`, since nearest-neighbour (CSV) and clip-or-NaN (SHP) already handle out-of-extent inputs. |
 
 Only config-free preparation is applied. Config-driven steps that the store path performs
-— depth-slice expansion, store selection (`read_from`), and store date/bbox coverage resolution — are
+— depth-level slicing, store selection (`read_from`), and store date/bbox coverage resolution — are
 the **caller's** responsibility: prepare `ds` beforehand.
 
 ```python

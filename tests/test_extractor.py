@@ -1470,6 +1470,198 @@ class TestDepthVariables:
         assert "extract_depth_slices" in msg
 
 
+def _mixed_config(**depth) -> SimpleNamespace:
+    """dyn_rep-shaped config: several store variables, none named like the key."""
+    return SimpleNamespace(
+        compiled_vars=None,
+        time_step=TimeStep.DAILY,
+        rename_lonlat=False,
+        source="cmems",
+        local_folder="dyn_rep",
+        store_root=None,
+        **depth,
+    )
+
+
+def _mixed_ds() -> xr.Dataset:
+    """thetao (= depth) and uo (= 10 x depth) on a depth axis, zos (= 7) flat."""
+    base = _depth_ds()
+    return xr.Dataset(
+        {
+            "thetao": base["thetao"],
+            "uo": base["thetao"] * 10,
+            "zos": base["thetao"].isel(depth=0, drop=True) * 0 + 7,
+        }
+    )
+
+
+class TestPerVariableDepthLevels:
+    """A store mixing 2-D and 3-D fields, each 3-D one at its own levels."""
+
+    _D = TestDepthVariables
+
+    def _extractor(self, cfg, monkeypatch, ds=None) -> Extractor:
+        ext = self._D()._extractor(
+            cfg, monkeypatch, ds if ds is not None else _mixed_ds()
+        )
+        ext.app_config = SimpleNamespace(
+            variables={"dyn_rep": cfg, "h2ds": _h2ds_config()}
+        )
+        return ext
+
+    @staticmethod
+    def _values(out) -> dict:
+        return {
+            c: out[c].tolist()[0]
+            for c in out.columns
+            if c not in extractor_module._COORD_COLS
+        }
+
+    def test_whole_store_slices_each_variable_at_its_levels(self, monkeypatch):
+        cfg = _mixed_config(depth_levels={"thetao": [0, 100], "uo": [500]})
+        out = self._extractor(cfg, monkeypatch).process_single_varkey("dyn_rep")
+
+        assert self._values(out) == {
+            "thetao_0": 0.0,
+            "thetao_100": 100.0,
+            "uo_500": 5000.0,
+            "zos": 7.0,
+        }
+
+    def test_a_named_variable_brings_all_its_levels(self, monkeypatch):
+        cfg = _mixed_config(depth_levels={"thetao": [0, 100], "uo": [500]})
+        out = self._extractor(cfg, monkeypatch).process_single_varkey(
+            "dyn_rep", vars=["thetao", "zos"]
+        )
+        assert set(self._values(out)) == {"thetao_0", "thetao_100", "zos"}
+
+    def test_a_single_level_column_can_be_named(self, monkeypatch):
+        cfg = _mixed_config(depth_levels={"thetao": [0, 100], "uo": [500]})
+        out = self._extractor(cfg, monkeypatch).process_single_varkey(
+            "dyn_rep", vars=["uo_500"]
+        )
+        assert self._values(out) == {"uo_500": 5000.0}
+
+    def test_an_unrequested_3d_variable_needs_no_levels(self, monkeypatch):
+        cfg = _mixed_config(depth_levels={"thetao": [0]})
+        ext = self._extractor(cfg, monkeypatch)
+
+        out = ext.process_single_varkey("dyn_rep", vars=["thetao", "zos"])
+        assert set(self._values(out)) == {"thetao_0", "zos"}
+
+        with pytest.raises(ValueError, match="'uo' has a depth axis"):
+            ext.process_single_varkey("dyn_rep")
+
+    def test_extract_override_is_merged_per_variable(self, monkeypatch):
+        cfg = _mixed_config(
+            depth_levels={"thetao": [0, 100], "uo": [500]},
+            extract_depth_levels={"thetao": [1000]},
+        )
+        out = self._extractor(cfg, monkeypatch).process_single_varkey("dyn_rep")
+        assert set(self._values(out)) == {"thetao_1000", "uo_500", "zos"}
+
+    def test_levels_for_a_variable_the_store_lacks_are_refused(self, monkeypatch):
+        cfg = _mixed_config(depth_levels={"thetao": [0], "so": [0]})
+        with pytest.raises(ValueError, match=r"name \['so'\]"):
+            self._extractor(cfg, monkeypatch).process_single_varkey(
+                "dyn_rep", vars=["thetao"]
+            )
+
+    def test_an_unknown_name_is_refused(self, monkeypatch):
+        cfg = _mixed_config(depth_levels={"thetao": [0]})
+        with pytest.raises(ValueError, match="cannot extract 'mlotst'"):
+            self._extractor(cfg, monkeypatch).process_single_varkey(
+                "dyn_rep", vars=["mlotst"]
+            )
+
+
+class TestDepthLevelsInTheRequest:
+    """var_dict={var_key: {variable: depths}} chooses levels for one run."""
+
+    _P = TestPerVariableDepthLevels
+
+    def _run(self, monkeypatch, vars, cfg=None, ds=None):
+        cfg = cfg or _mixed_config(depth_levels={"thetao": [0, 100]})
+        ext = self._P()._extractor(cfg, monkeypatch, ds)
+        return self._P._values(ext.process_single_varkey("dyn_rep", vars=vars))
+
+    def test_request_levels_replace_the_configured_ones(self, monkeypatch):
+        out = self._run(monkeypatch, {"thetao": [500], "zos": None})
+        assert out == {"thetao_500": 500.0, "zos": 7.0}
+
+    def test_request_levels_cover_a_variable_config_leaves_out(self, monkeypatch):
+        out = self._run(monkeypatch, {"uo": [0, 1000]})
+        assert out == {"uo_0": 0.0, "uo_1000": 10000.0}
+
+    def test_none_keeps_the_configured_levels(self, monkeypatch):
+        out = self._run(monkeypatch, {"thetao": None})
+        assert set(out) == {"thetao_0", "thetao_100"}
+
+    def test_an_empty_dict_means_everything(self, monkeypatch):
+        cfg = _mixed_config(depth_levels={"thetao": [0], "uo": [0]})
+        assert set(self._run(monkeypatch, {}, cfg=cfg)) == {"thetao_0", "uo_0", "zos"}
+
+    def test_the_config_is_left_untouched(self, monkeypatch):
+        cfg = _mixed_config(depth_levels={"thetao": [0, 100]})
+        self._run(monkeypatch, {"thetao": [500]}, cfg=cfg)
+        assert cfg.depth_levels == {"thetao": [0, 100]}
+
+    def test_levels_for_a_flat_variable_are_refused(self, monkeypatch):
+        with pytest.raises(ValueError, match="'zos', which has no depth axis"):
+            self._run(monkeypatch, {"zos": [0]})
+
+    def test_levels_for_a_store_without_depth_are_refused(self, monkeypatch):
+        flat = _mixed_ds()[["zos"]]
+        with pytest.raises(ValueError, match="store has no depth axis"):
+            self._run(monkeypatch, {"zos": [0]}, ds=flat)
+
+    @pytest.mark.parametrize(
+        ("levels", "error", "message"),
+        [
+            ([], ValueError, "empty level list"),
+            ([-10], ValueError, ">= 0"),
+            ([0, 0], ValueError, "duplicate"),
+            ([0.5], ValueError, "whole metres"),
+            (100, TypeError, "list of depths"),
+        ],
+    )
+    def test_malformed_request_levels_are_refused(
+        self, monkeypatch, levels, error, message
+    ):
+        with pytest.raises(error, match=message):
+            self._run(monkeypatch, {"thetao": levels})
+
+    def test_older_single_variable_store_takes_request_levels(self, monkeypatch):
+        cfg = _depth_config(compile_=[0, 100])
+        ext = TestDepthVariables()._extractor(cfg, monkeypatch, _depth_ds())
+
+        out = ext.process_single_varkey("thetao", vars={"thetao": [1000]})
+
+        assert out["thetao_1000"].tolist() == [1000.0, 1000.0]
+        assert "thetao_0" not in out.columns
+
+    def test_levels_cannot_be_chosen_from_the_compiled_store(self, monkeypatch):
+        R = TestProcessSingleVarkeyRouting
+        R()._patch_catalogs(monkeypatch, R._hourly_ds(), R._h2ds())
+        ext = R()._extractor_for(_atm_config(), ["2020-01-01", "2020-01-02"])
+
+        with pytest.raises(ValueError, match="compiled store"):
+            ext.process_single_varkey("atm-accum-avg", vars={"tp": [0]})
+
+    def test_levels_cannot_be_chosen_for_moon(self, monkeypatch):
+        cfg = _mixed_config(depth_levels={"thetao": [0]})
+        ext = self._P()._extractor(cfg, monkeypatch)
+        with pytest.raises(ValueError, match="no depth axis"):
+            ext.process_single_varkey("moon", vars={"moon_phase": [0]})
+
+    def test_run_accepts_a_read_only_mapping(self):
+        from types import MappingProxyType
+
+        ext = _make_extractor(["2020-01-01"])
+        selection = MappingProxyType({"dyn_rep": {"thetao": [0]}})
+        assert ext._normalize_var_dict(selection) == {"dyn_rep": {"thetao": [0]}}
+
+
 class TestSplitVarsBySourceDepth:
     def test_depth_disables_the_reconciliation(self):
         """The two sides are not comparable, so nothing is reported missing."""
