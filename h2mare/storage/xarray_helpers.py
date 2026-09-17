@@ -167,11 +167,14 @@ def chunk_dataset(
     cells (capped at the dim size) and fills the remaining byte budget with time.
     Tiling is what makes point/geometry extraction cheap: a small bbox reads only
     the overlapping tiles instead of decompressing the full grid for every
-    timestep. Non-spatial, non-time dims (e.g. depth) are chunked to 1 when a
-    full-grid per-step payload exceeds target_mb, preventing oversized chunks on
-    4-D datasets. Trade-off: tiling speeds up subset reads but makes full-grid
-    single-timestep reads (e.g. a global daily map) costlier, since the larger
-    time chunk pulls neighbouring timesteps per tile.
+    timestep. Non-spatial, non-time dims (e.g. depth) are always chunked to 1:
+    compile and extraction read a few levels, never the whole column, and a
+    level shared a chunk with every other level otherwise — reading one depth
+    decompressed them all (10× slower on a 23-level store), at the cost of
+    ~1/3 more disk from compressing each level alone. Trade-off: tiling speeds
+    up subset reads but makes full-grid single-timestep reads (e.g. a global
+    daily map) costlier, since the larger time chunk pulls neighbouring
+    timesteps per tile.
 
     ``"map"`` keeps spatial dims contiguous and pins the time chunk to
     ``map_time_chunk`` (default 14), so a small block of full-grid fields is the
@@ -213,11 +216,6 @@ def chunk_dataset(
         time_vars, key=lambda v: ds[v].sizes[time_dim] * ds[v].dtype.itemsize
     )
     da = ds[main_var]
-    time_idx = da.dims.index(time_dim)
-    bytes_per_step = (
-        int(np.prod([s for i, s in enumerate(da.shape) if i != time_idx]))
-        * da.dtype.itemsize
-    )
 
     if layout == "map":
         # Asymmetry vs "timeseries" is deliberate, do NOT "fix" it to mirror the
@@ -266,9 +264,8 @@ def chunk_dataset(
         if dim.lower() in spatial_dims:
             # Tile spatial dims so a small bbox reads only the overlapping tiles.
             dim_dict[dim] = min(spatial_chunk, int(size))
-        elif bytes_per_step <= target_bytes:
-            dim_dict[dim] = size
         else:
+            # Levels are indexed into, not read contiguously: one per chunk.
             dim_dict[dim] = 1
 
     non_time_size = int(np.prod(list(dim_dict.values()))) if dim_dict else 1

@@ -118,10 +118,12 @@ class TestChunkDataset:
         result = chunk_dataset(ds, target_mb=1)
         assert result.chunks["depth"] == (1,) * n_depth
 
-    def test_depth_not_chunked_when_payload_under_target(self):
-        """depth stays at full size when the per-step payload is under target_mb."""
+    def test_depth_chunked_to_1_even_when_payload_fits_target(self):
+        """Levels are indexed into, not read together: one per chunk even when
+        the whole column would fit. A 23-level store written with depth in one
+        chunk decompressed every level to read one, 10x slower."""
         times = pd.date_range("2020-01-01", periods=10, freq="D")
-        # 3 × 10 × 10 × 4 bytes = 1 200 bytes ≪ 32 MB → depth must NOT chunk
+        # 3 × 10 × 10 × 4 bytes = 1 200 bytes ≪ 32 MB
         n_depth = 3
         data = np.ones((10, n_depth, 10, 10), dtype=np.float32)
         ds = xr.Dataset(
@@ -134,7 +136,9 @@ class TestChunkDataset:
             },
         )
         result = chunk_dataset(ds, target_mb=32)
-        assert result.chunks["depth"] == (n_depth,)
+        assert result.chunks["depth"] == (1,) * n_depth
+        # The freed budget goes to time, as it would with depth split for size.
+        assert result.chunks["time"] == (10,)
 
     def test_time_chunk_recomputed_after_depth_reduction(self):
         """After depth is chunked to 1, time chunk should be larger than 1."""
