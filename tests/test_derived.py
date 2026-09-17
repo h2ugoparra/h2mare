@@ -144,6 +144,97 @@ class TestKineticEnergy:
         assert out.values[0, 0, 1] == 1.0
 
 
+def _uv_depth(depths=(0.5, 47.0, 109.7)) -> xr.Dataset:
+    """uo = level index + 1, vo = 0, so ke at level i is (i+1)**2 / 2."""
+    u = np.stack([np.full((2, 3), i + 1.0, dtype="float32") for i in range(3)])[None]
+    coords = {
+        "time": pd.date_range("2020-01-01", periods=1),
+        "depth": list(depths),
+        "lat": [0.0, 1.0],
+        "lon": [0.0, 1.0, 2.0],
+    }
+    dims = ["time", "depth", "lat", "lon"]
+    return xr.Dataset({"uo": (dims, u), "vo": (dims, np.zeros_like(u))}, coords=coords)
+
+
+class TestDepthSelection:
+    def test_writes_one_2d_variable_per_level(self):
+        out = apply_derived_vars(
+            _uv_depth(),
+            {"ke": _spec(op="kinetic_energy", source=["uo", "vo"], depth=[0, 110])},
+            "dyn",
+        )
+        assert "ke" not in out
+        for name, expected in [("ke_0", 0.5), ("ke_110", 4.5)]:
+            assert out[name].dims == ("time", "lat", "lon")
+            assert "depth" not in out[name].coords
+            np.testing.assert_array_equal(out[name].values, expected)
+
+    def test_matches_the_nearest_depth_and_keeps_the_requested_name(self):
+        """Same rule as depth_levels: ke_50 off the 47 m level."""
+        out = apply_derived_vars(
+            _uv_depth(),
+            {"ke": _spec(op="kinetic_energy", source=["uo", "vo"], depth=[50])},
+            "dyn",
+        )
+        np.testing.assert_array_equal(out["ke_50"].values, 2.0)
+
+    def test_unselected_levels_are_never_computed(self):
+        """The point of `depth`: levels not asked for are not even read."""
+        import dask.array as dsa
+        from dask.delayed import delayed
+
+        def _boom():
+            raise AssertionError("an unselected level was computed")
+
+        good = dsa.from_array(np.ones((1, 2, 3), dtype="float32"))
+        bad = dsa.from_delayed(delayed(_boom)(), shape=(1, 2, 3), dtype="float32")
+        u = dsa.stack([good, bad], axis=1)  # time, depth, lat, lon
+        dims = ["time", "depth", "lat", "lon"]
+        ds = xr.Dataset(
+            {"uo": (dims, u), "vo": (dims, u)},
+            coords={"depth": [0.5, 100.0], "lat": [0.0, 1.0], "lon": [0.0, 1.0, 2.0]},
+        )
+        out = apply_derived_vars(
+            ds,
+            {"ke": _spec(op="kinetic_energy", source=["uo", "vo"], depth=[0])},
+            "dyn",
+        )
+        np.testing.assert_array_equal(out["ke_0"].values, 1.0)
+
+    def test_rolling_std_at_a_level(self):
+        out = apply_derived_vars(
+            _uv_depth(),
+            {"s": _spec(op="rolling_std", source="uo", depth=[0])},
+            "dyn",
+        )
+        assert out["s_0"].dims == ("time", "lat", "lon")
+        np.testing.assert_array_equal(out["s_0"].values, 0.0)
+
+    def test_source_without_depth_axis_is_refused(self):
+        ds = xr.Dataset(
+            {"u": _grid(np.ones((1, 2, 2))), "v": _grid(np.ones((1, 2, 2)))}
+        )
+        with pytest.raises(ValueError, match=r"\['u', 'v'\] has no depth axis"):
+            apply_derived_vars(
+                ds,
+                {"ke": _spec(op="kinetic_energy", source=["u", "v"], depth=[0])},
+                "k",
+            )
+
+    def test_output_passes_through_depth_slicing(self):
+        """ke_0 is 2-D, so compile/extract slice uo beside it and leave it be."""
+        from h2mare.storage.xarray_helpers import select_depth_levels
+
+        ds = apply_derived_vars(
+            _uv_depth(),
+            {"ke": _spec(op="kinetic_energy", source=["uo", "vo"], depth=[0])},
+            "dyn",
+        )
+        out = select_depth_levels(ds, {"uo": [0], "vo": [0]}, "dyn")
+        assert set(out.data_vars) == {"uo_0", "vo_0", "ke_0"}
+
+
 class TestApplyDerivedVars:
     def _ds(self):
         return xr.Dataset({"adt": _grid(_noisy((1, 5, 5)))})
@@ -187,6 +278,9 @@ class TestDerivedVarSpec:
             ({"op": "rolling_std", "source": "a", "window": 4}, "odd"),
             ({"op": "rolling_std", "source": "a", "window": 0}, "odd"),
             ({"op": "kinetic_energy", "source": ["u", "v"], "window": 3}, "no window"),
+            ({"op": "rolling_std", "source": "a", "depth": []}, "empty"),
+            ({"op": "rolling_std", "source": "a", "depth": [-5]}, ">= 0"),
+            ({"op": "rolling_std", "source": "a", "depth": [0, 0]}, "duplicate"),
         ],
     )
     def test_refuses_malformed_entries(self, kw, match):
@@ -223,6 +317,65 @@ class TestDerivedVarSpec:
         derived = cfg.variables["ssh"].derived_vars
         assert derived is not None
         assert derived["gke"].sources == ["ugos", "vgos"]
+
+
+def _dyn_config(**entry) -> AppConfig:
+    return msgspec.convert(
+        {
+            "variables": {
+                "dyn": {
+                    "local_folder": "dyn",
+                    "source_vars": ["uo", "vo"],
+                    "dataset_id_rep": "x",
+                    "source": "cmems",
+                    "archive_raw": False,
+                    **entry,
+                }
+            },
+            "secrets": {},
+        },
+        AppConfig,
+    )
+
+
+_KE_AT_0 = {"op": "kinetic_energy", "source": ["uo", "vo"], "depth": [0]}
+_KE_FULL = {"op": "kinetic_energy", "source": ["uo", "vo"]}
+
+
+class TestDerivedNamesAtLoad:
+    def test_depth_entry_beside_depth_levels_for_other_vars_loads(self):
+        cfg = _dyn_config(
+            depth_levels={"uo": [0]},
+            derived_vars={"ke": _KE_AT_0},
+            compiled_vars=["uo_0", "ke_0"],
+        )
+        derived = cfg.variables["dyn"].derived_vars
+        assert derived is not None
+        assert derived["ke"].output_names("ke") == ["ke_0"]
+
+    def test_full_depth_entry_sliced_by_depth_levels_loads(self):
+        _dyn_config(depth_levels={"ke": [0]}, derived_vars={"ke": _KE_FULL})
+
+    @pytest.mark.parametrize("key", ["depth_levels", "extract_depth_levels"])
+    def test_depth_levels_cannot_slice_a_depth_entry(self, key):
+        with pytest.raises(ValueError, match="stored without a depth axis"):
+            _dyn_config(**{key: {"ke": [0]}}, derived_vars={"ke": _KE_AT_0})
+
+    def test_same_column_from_both_sides_is_refused(self):
+        with pytest.raises(ValueError, match=r"\['uo_0'\] are written both"):
+            _dyn_config(
+                depth_levels={"uo": [0]},
+                derived_vars={"uo_0": {"op": "rolling_std", "source": "vo"}},
+            )
+
+    def test_two_entries_writing_one_name_are_refused(self):
+        with pytest.raises(ValueError, match="both write 'ke_0'"):
+            _dyn_config(
+                derived_vars={
+                    "ke": _KE_AT_0,
+                    "ke_0": {"op": "rolling_std", "source": "uo"},
+                }
+            )
 
 
 class TestRepoConfig:

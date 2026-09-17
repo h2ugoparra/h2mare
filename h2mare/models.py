@@ -68,12 +68,25 @@ class DerivedVarSpec(msgspec.Struct, forbid_unknown_fields=True):
     # rolling_std only: side of the square window, in cells. Odd, so the
     # window centres on its cell.
     window: Optional[int] = None
+    # Depths (metres) to compute at, instead of the sources' whole depth axis.
+    # Each level is matched to the nearest source depth and written as a 2-D
+    # variable <name>_<level> — the name depth_levels would give it — so only
+    # these levels are read, computed and stored. None keeps the depth axis.
+    depth: Optional[list[int]] = None
 
     @property
     def sources(self) -> list[str]:
         return [self.source] if isinstance(self.source, str) else list(self.source)
 
+    def output_names(self, name: str) -> list[str]:
+        """Variables this entry writes: ``name``, or one per ``depth`` level."""
+        if self.depth is None:
+            return [name]
+        return depth_column_names({name: self.depth})
+
     def __post_init__(self):
+        if self.depth is not None:
+            check_depth_levels("depth", self.depth)
         arity = _DERIVED_OP_ARITY[self.op]
         if len(self.sources) != arity:
             raise ValueError(
@@ -403,6 +416,47 @@ VariablesConfig = dict[str, KeyVarConfigEntry]
 SYSTEM_VAR_KEYS: frozenset[str] = frozenset({"h2ds", "bathy", "moon"})
 
 
+def _check_derived_names(var_key: str, var_config: KeyVarConfigEntry) -> None:
+    """
+    Refuse derived_vars that would clash with each other or with depth_levels.
+
+    Both write ``<variable>_<level>`` names, so ``ke: {depth: [0]}`` beside
+    ``depth_levels: {ke: [0]}`` would describe one column twice — and the
+    latter would fail only at compile, because the 2-D ``ke_0`` leaves no
+    ``ke`` in the store to slice.
+    """
+    if not var_config.derived_vars:
+        return
+
+    written: dict[str, str] = {}
+    for name, spec in var_config.derived_vars.items():
+        for out in spec.output_names(name):
+            if out in written:
+                raise ValueError(
+                    f"'{var_key}': derived_vars.{name} and "
+                    f"derived_vars.{written[out]} both write '{out}'"
+                )
+            written[out] = name
+
+    for purpose in ("compile", "extract"):
+        levels = depth_levels_for(var_key, var_config, purpose)
+        for var in levels:
+            spec = var_config.derived_vars.get(var)
+            if spec is not None and spec.depth is not None:
+                raise ValueError(
+                    f"'{var_key}': derived_vars.{var} is computed at depth "
+                    f"{spec.depth} and stored without a depth axis, so depth "
+                    f"levels cannot slice it. Drop '{var}' from the depth "
+                    f"levels, or drop its `depth` to store every level."
+                )
+        clash = sorted(set(written) & set(depth_column_names(levels)))
+        if clash:
+            raise ValueError(
+                f"'{var_key}': {clash} are written both by derived_vars and "
+                f"by depth levels; keep one."
+            )
+
+
 class AppConfig(msgspec.Struct):
     """Complete application configuration."""
 
@@ -410,6 +464,9 @@ class AppConfig(msgspec.Struct):
     secrets: SecretsConfig
 
     def __post_init__(self):
+        for var_key, var_config in self.variables.items():
+            _check_derived_names(var_key, var_config)
+
         # compiled_vars is written by hand and read by Parquet, routing and the
         # CF checks, so a depth column compile produces but compiled_vars omits
         # would be silently left out of all of them. The reverse slip matters as

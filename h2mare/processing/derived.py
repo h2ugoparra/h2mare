@@ -49,6 +49,9 @@ def apply_derived_vars(
     """
     Add each declared derived variable to ``ds``, in declaration order.
 
+    An entry with ``depth`` selects each level from its sources first and
+    writes one 2-D ``<name>_<level>``, so the other levels are never read.
+
     Lazy: nothing is computed here. ``owner`` is the var_key named in errors.
     """
     for name, spec in (derived or {}).items():
@@ -59,5 +62,20 @@ def apply_derived_vars(
                 f"dataset does not hold. Variables: {sorted(map(str, ds.data_vars))}."
             )
         srcs = [ds[s] for s in spec.sources]
-        ds[name] = _OPS[spec.op](srcs, spec).rename(name)
+
+        if spec.depth is None:
+            ds[name] = _OPS[spec.op](srcs, spec).rename(name)
+            continue
+
+        flat = [s for s in spec.sources if "depth" not in ds[s].dims]
+        if flat:
+            raise ValueError(
+                f"[{owner}] derived_vars.{name} sets depth {spec.depth}, but "
+                f"{flat} has no depth axis. Drop `depth` from the entry."
+            )
+        for level, out in zip(spec.depth, spec.output_names(name)):
+            at_level = [
+                s.sel(depth=level, method="nearest").drop_vars("depth") for s in srcs
+            ]
+            ds[out] = _OPS[spec.op](at_level, spec).rename(out)
     return ds
