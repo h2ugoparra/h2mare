@@ -1,9 +1,17 @@
 """Tests for msgspec-based data models (KeyVarConfigEntry, AppConfig)."""
 
+from types import SimpleNamespace
+
 import msgspec
 import pytest
 
-from h2mare.models import AppConfig, KeyVarConfigEntry, SecretsConfig
+from h2mare.models import (
+    AppConfig,
+    KeyVarConfigEntry,
+    SecretsConfig,
+    depth_column_names,
+    depth_levels_for,
+)
 
 # ---------------------------------------------------------------------------
 # Shared fixtures
@@ -179,6 +187,105 @@ class TestKeyVarConfigEntry:
 
 
 # ---------------------------------------------------------------------------
+# Depth levels
+# ---------------------------------------------------------------------------
+
+
+def _entry(**depth) -> KeyVarConfigEntry:
+    return msgspec.convert({**VALID_ENTRY, **depth}, KeyVarConfigEntry)
+
+
+class TestDepthLevelKeys:
+    def test_per_variable_levels_are_accepted(self):
+        entry = _entry(depth_levels={"thetao": [0, 50, 100], "uo": [0]})
+        assert entry.depth_levels == {"thetao": [0, 50, 100], "uo": [0]}
+
+    @pytest.mark.parametrize(
+        "depth",
+        [
+            {"depth_levels": {"thetao": [0]}, "compile_depth_slices": [0]},
+            {"extract_depth_levels": {"thetao": [0]}, "extract_depth_slices": [0]},
+        ],
+        ids=["compile", "extract"],
+    )
+    def test_new_and_older_key_together_are_refused(self, depth):
+        with pytest.raises(msgspec.ValidationError, match="are both set"):
+            _entry(**depth)
+
+    @pytest.mark.parametrize(
+        ("depth", "message"),
+        [
+            ({"depth_levels": {}}, "is empty"),
+            ({"depth_levels": {"thetao": []}}, "empty level list"),
+            ({"depth_levels": {"thetao": [-5]}}, ">= 0"),
+            ({"depth_levels": {"thetao": [0, 0]}}, "duplicate"),
+            ({"extract_depth_levels": {"uo": [10, 10]}}, "duplicate"),
+            ({"compile_depth_slices": []}, "empty level list"),
+            ({"extract_depth_slices": [-1]}, ">= 0"),
+        ],
+    )
+    def test_malformed_levels_are_refused(self, depth, message):
+        with pytest.raises(msgspec.ValidationError, match=message):
+            _entry(**depth)
+
+    def test_depth_levels_are_distinct_from_depth_range(self):
+        """The continuous download band does not imply any levels."""
+        assert depth_levels_for("thetao", _entry(depth_range=[0.0, 110.0])) == {}
+
+
+class TestDepthLevelsFor:
+    def test_older_list_form_keys_by_var_key(self):
+        """o2/thetao keep their meaning: the store variable is named like the key."""
+        entry = _entry(compile_depth_slices=[0, 100])
+        assert depth_levels_for("o2", entry) == {"o2": [0, 100]}
+        assert depth_levels_for("o2", entry, "extract") == {"o2": [0, 100]}
+
+    def test_older_extract_list_replaces_compile_levels(self):
+        entry = _entry(compile_depth_slices=[0, 100, 500], extract_depth_slices=[0])
+        assert depth_levels_for("o2", entry, "extract") == {"o2": [0]}
+        assert depth_levels_for("o2", entry, "compile") == {"o2": [0, 100, 500]}
+
+    def test_extract_override_is_merged_per_variable(self):
+        """Narrowing one field must not drop the others from extraction."""
+        entry = _entry(
+            depth_levels={"thetao": [0, 50, 100], "so": [0]},
+            extract_depth_levels={"thetao": [0]},
+        )
+        assert depth_levels_for("dyn_rep", entry, "extract") == {
+            "thetao": [0],
+            "so": [0],
+        }
+        assert depth_levels_for("dyn_rep", entry) == {
+            "thetao": [0, 50, 100],
+            "so": [0],
+        }
+
+    def test_no_depth_keys_resolve_to_nothing(self):
+        assert depth_levels_for("sst", _entry()) == {}
+        assert depth_levels_for("sst", _entry(), "extract") == {}
+
+    def test_stand_in_config_without_the_new_fields(self):
+        cfg = SimpleNamespace(compile_depth_slices=[100], extract_depth_slices=None)
+        assert depth_levels_for("thetao", cfg, "extract") == {"thetao": [100]}
+
+    def test_returned_lists_are_copies(self):
+        entry = _entry(depth_levels={"thetao": [0]})
+        depth_levels_for("x", entry)["thetao"].append(99)
+        assert entry.depth_levels == {"thetao": [0]}
+
+    def test_unknown_purpose_is_refused(self):
+        with pytest.raises(ValueError, match="purpose"):
+            depth_levels_for("x", _entry(), "convert")
+
+    def test_column_names_follow_the_variable(self):
+        assert depth_column_names({"thetao": [0, 50], "uo": [0]}) == [
+            "thetao_0",
+            "thetao_50",
+            "uo_0",
+        ]
+
+
+# ---------------------------------------------------------------------------
 # AppConfig
 # ---------------------------------------------------------------------------
 
@@ -225,6 +332,42 @@ class TestAppConfig:
         assert len(list(cfg.variables.values())) == 1
         entry = cfg.variables["sst"]
         assert entry.source == "cmems"
+
+    def _with(self, **entry):
+        return {"variables": {"dyn": {**VALID_ENTRY, **entry}}, "secrets": {}}
+
+    def test_depth_columns_missing_from_compiled_vars_are_refused(self):
+        raw = self._with(
+            depth_levels={"thetao": [0, 50], "uo": [0]},
+            compiled_vars=["thetao_0", "thetao_50", "zos"],
+        )
+        with pytest.raises(msgspec.ValidationError, match=r"\['uo_0'\]"):
+            msgspec.convert(raw, AppConfig)
+
+    def test_older_form_is_checked_under_the_var_key_name(self):
+        raw = self._with(compile_depth_slices=[100], compiled_vars=["thetao_100"])
+        with pytest.raises(msgspec.ValidationError, match=r"\['dyn_100'\]"):
+            msgspec.convert(raw, AppConfig)
+
+    def test_consistent_depth_columns_are_accepted(self):
+        raw = self._with(
+            depth_levels={"thetao": [0, 50]},
+            compiled_vars=["thetao_0", "thetao_50", "zos", "mlotst"],
+        )
+        assert msgspec.convert(raw, AppConfig).variables["dyn"].depth_levels
+
+    def test_undeclared_compiled_vars_skip_the_check(self):
+        """compiled_vars: None means 'not yet declared', not 'publishes nothing'."""
+        raw = self._with(depth_levels={"thetao": [0]})
+        assert msgspec.convert(raw, AppConfig).variables["dyn"].compiled_vars is None
+
+    def test_extract_only_levels_need_not_be_compiled(self):
+        raw = self._with(
+            depth_levels={"thetao": [0]},
+            extract_depth_levels={"uo": [0]},
+            compiled_vars=["thetao_0"],
+        )
+        assert msgspec.convert(raw, AppConfig)
 
     def test_missing_required_field_raises(self):
         """Missing required field (e.g. source) raises msgspec.ValidationError."""
