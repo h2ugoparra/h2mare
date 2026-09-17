@@ -344,6 +344,36 @@ class TestAppConfig:
         with pytest.raises(msgspec.ValidationError, match=r"\['uo_0'\]"):
             msgspec.convert(raw, AppConfig)
 
+    def test_the_message_gives_the_list_to_write(self):
+        """
+        The case that prompted it: levels added, compiled_vars left with the
+        bare names. "Add them" would have left four names h2ds never holds.
+        """
+        raw = self._with(
+            depth_levels={"thetao": [0, 5], "uo": [0]},
+            compiled_vars=["thetao", "uo", "zos", "mlotst"],
+        )
+        with pytest.raises(msgspec.ValidationError) as err:
+            msgspec.convert(raw, AppConfig)
+
+        msg = str(err.value)
+        assert "['thetao', 'uo'] are sliced by depth" in msg
+        assert "['thetao_0', 'thetao_5', 'uo_0'] are not listed" in msg
+        assert "compiled_vars: [thetao_0, thetao_5, uo_0, zos, mlotst]" in msg
+
+    def test_a_bare_sliced_name_is_refused_even_with_its_columns(self):
+        raw = self._with(
+            depth_levels={"thetao": [0]},
+            compiled_vars=["thetao", "thetao_0", "zos"],
+        )
+        with pytest.raises(msgspec.ValidationError) as err:
+            msgspec.convert(raw, AppConfig)
+
+        msg = str(err.value)
+        assert "['thetao'] are sliced by depth" in msg
+        assert "not listed" not in msg
+        assert "compiled_vars: [thetao_0, zos]" in msg
+
     def test_older_form_is_checked_under_the_var_key_name(self):
         raw = self._with(compile_depth_slices=[100], compiled_vars=["thetao_100"])
         with pytest.raises(msgspec.ValidationError, match=r"\['dyn_100'\]"):
