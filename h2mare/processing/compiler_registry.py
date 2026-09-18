@@ -3,7 +3,7 @@ Registry mapping var_key → compile processor for h2ds compilation.
 
 Add a new entry to COMPILE_PROCESSORS when a variable needs custom handling
 during the Zarr compilation step. Variables not registered here use
-``compile_default``, which opens the catalog and interpolates to the base grid.
+``compile_default``, which opens the catalog and regrids to the base grid.
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ from h2mare.storage.zarr_catalog import ZarrCatalog
 from h2mare.types import DateRange
 from h2mare.utils.datetime_utils import end_of_day
 from h2mare.utils.paths import store_root_for
-from h2mare.utils.spatial import clip_land_data
+from h2mare.utils.spatial import clip_land_data, regrid_to
 
 if TYPE_CHECKING:
     from h2mare.processing.compiler import Compiler
@@ -94,7 +94,7 @@ def _compile_bathy(
         lon=slice(compiler.bbox.xmin, compiler.bbox.xmax),
         lat=slice(compiler.bbox.ymin, compiler.bbox.ymax),
     )
-    return ds.interp_like(compiler.base_grid, method="linear", assume_sorted=True)
+    return regrid_to(ds, compiler.base_grid)
 
 
 def _compile_moon(
@@ -159,9 +159,7 @@ def _compile_depth_var(
     ds = _open_or_warn(catalog, var_key, date_range, compiler.bbox, chunks={"depth": 1})
     if ds is None:
         return None
-    return select_depth_levels(ds, levels, var_key).interp_like(
-        compiler.base_grid, method="linear", assume_sorted=True
-    )
+    return regrid_to(select_depth_levels(ds, levels, var_key), compiler.base_grid)
 
 
 #: Decoded source bytes to aim for per slab of the hourly reduction.
@@ -410,7 +408,7 @@ def _compile_atm_accum_avg(
     # Coords ride along from the climatology alignment (.sel on dayofyear/month)
     # whether the features came off disk or were just computed.
     ds = ds.drop_vars(["dayofyear", "month", "quantile"], errors="ignore")
-    return ds.interp_like(compiler.base_grid, method="linear", assume_sorted=True)
+    return regrid_to(ds, compiler.base_grid)
 
 
 def _daily_atm_instante_for_slab(ds_hourly: xr.Dataset, slab: DateRange) -> xr.Dataset:
@@ -468,7 +466,7 @@ def _compile_atm_instante(
         )
     if ds is None:
         return None
-    return ds.interp_like(compiler.base_grid, method="linear", assume_sorted=True)
+    return regrid_to(ds, compiler.base_grid)
 
 
 #: radiation has no entry here on purpose. Both cadences settle their units at
@@ -508,7 +506,7 @@ def _compile_waves(
     # recombine. swh is a magnitude and interpolates directly.
     components = direction_to_uv(ds["mdts"])
     to_interp = ds[["swh"]].assign(u_ts=components["u_ts"], v_ts=components["v_ts"])
-    out = to_interp.interp_like(compiler.base_grid, method="linear", assume_sorted=True)
+    out = regrid_to(to_interp, compiler.base_grid)
     out["mdts"] = uv_to_direction(out["u_ts"], out["v_ts"])
     out["mdts"].attrs.update(ds["mdts"].attrs)
     return out.drop_vars(["u_ts", "v_ts"])
@@ -525,7 +523,7 @@ def _compile_sst(
     if ds is None:
         return None
     ds = postprocess_sst_fdist(ds)
-    return ds.interp_like(compiler.base_grid, method="linear", assume_sorted=True)
+    return regrid_to(ds, compiler.base_grid)
 
 
 # ---------------------------------------------------------------------------
@@ -540,7 +538,7 @@ def compile_default(
 ) -> xr.Dataset | None:
     """
     Fallback processor: open from catalog, reduce an hourly store to daily, and
-    interpolate to the base grid.
+    regrid to the base grid.
 
     h2ds is daily whatever cadence its sources are kept at, and the compiler
     merges the per-variable results with an outer join. An hourly store handed
@@ -592,7 +590,7 @@ def compile_default(
             f"cannot be compiled. Add depth_levels (e.g. {{variable: [0, 100]}}) "
             f"to its config entry."
         )
-    return ds.interp_like(compiler.base_grid, method="linear", assume_sorted=True)
+    return regrid_to(ds, compiler.base_grid)
 
 
 # ---------------------------------------------------------------------------

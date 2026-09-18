@@ -2,11 +2,12 @@
 Functions for geographic distance calculations, Grid creation and land cover cliping
 """
 
-from typing import Optional
+from typing import Literal, Optional
 
 import numpy as np
 import xarray as xr
 from global_land_mask import globe
+from loguru import logger
 from numpy.typing import NDArray
 from scipy.spatial import KDTree
 
@@ -91,6 +92,212 @@ class GridBuilder:
         if self.attributes is not None:
             grid.attrs.update(self.attributes)
         return grid
+
+
+#: Tolerance on the target/native step ratio before a variable counts as being
+#: coarsened. Stored axes are rounded to ``GRID_COORD_DECIMALS`` on write, so a
+#: 0.25° store measures as 0.2500xx rather than 0.25 and must not read as
+#: "slightly coarser than the target" and flip to the aggregating path.
+_RATIO_TOL = 0.01
+
+#: How far a stored label may sit from the regular axis fitted through the ends
+#: before the axis is refused as irregular. Rounding to 4 decimals moves a label
+#: by at most 5e-5, so this is twice the largest legitimate offset.
+_AXIS_FIT_TOL = 1e-4
+
+RegridMethod = Literal["auto", "linear", "nearest", "conservative"]
+
+
+def axis_step(values: NDArray[np.float64] | xr.DataArray) -> float:
+    """
+    Mean spacing of a regular coordinate axis.
+
+    Measured end to end rather than from ``np.diff``, because stored axes carry
+    labels rounded to ``GRID_COORD_DECIMALS``: consecutive differences on a
+    1/12° store alternate between 0.0833 and 0.0834, so their median reads
+    0.083302 and their spread is 1e-4. The two endpoints carry the same rounding
+    but divide it by the number of cells, which puts the result back within a
+    float of the true step.
+
+    Args:
+        values: Coordinate labels, strictly increasing.
+
+    Raises:
+        ValueError: If the axis has fewer than two points, is not strictly
+            increasing, or is not regularly spaced.
+    """
+    v = np.asarray(values, dtype="float64")
+    if v.size < 2:
+        raise ValueError(f"need at least 2 points to measure a step; got {v.size}")
+    if not np.all(np.diff(v) > 0):
+        raise ValueError("axis must be strictly increasing; sort it first")
+
+    step = float((v[-1] - v[0]) / (v.size - 1))
+    drift = float(np.abs(v[0] + np.arange(v.size) * step - v).max())
+    if drift > _AXIS_FIT_TOL:
+        raise ValueError(
+            f"axis is not regularly spaced: labels sit up to {drift:.2e}° from a "
+            f"regular {step:.6g}° grid. Regridding assumes a rectilinear axis."
+        )
+    return step
+
+
+def _cell_edges(values: NDArray[np.float64], spherical: bool) -> NDArray[np.float64]:
+    """
+    Cell boundaries of a regular axis, built from the fitted step.
+
+    From the fit rather than from the labels themselves, so rounded labels
+    cannot leak their jitter into the weights. ``spherical`` converts latitude
+    edges to sine, which turns a length overlap into the true area fraction of
+    the zone between two parallels.
+    """
+    step = axis_step(values)
+    edges = float(values[0]) - step / 2 + np.arange(len(values) + 1) * step
+    if spherical:
+        edges = np.sin(np.deg2rad(np.clip(edges, -90.0, 90.0)))
+    return np.asarray(edges, dtype="float64")
+
+
+def _overlap_weights(
+    source: NDArray[np.float64], target: NDArray[np.float64], spherical: bool = False
+) -> NDArray[np.float64]:
+    """
+    Per-axis overlap matrix ``(n_source, n_target)``.
+
+    ``W[i, j]`` is how much of source cell *i* falls inside target cell *j* —
+    length for longitude, area fraction for latitude. Zero where they do not
+    meet. This is the whole of conservative remapping for a rectilinear grid:
+    the 2-D weight is the product of the two axes' matrices, so they are applied
+    one axis at a time and never formed as a 4-D tensor.
+    """
+    src_edges = _cell_edges(source, spherical)
+    tgt_edges = _cell_edges(target, spherical)
+    lower = np.maximum(src_edges[:-1, None], tgt_edges[None, :-1])
+    upper = np.minimum(src_edges[1:, None], tgt_edges[None, 1:])
+    return np.clip(upper - lower, 0.0, None)
+
+
+def _weight_array(
+    source: xr.DataArray, target: xr.DataArray, dim: str, spherical: bool
+) -> xr.DataArray:
+    """Overlap weights as a DataArray indexed ``(dim, <dim>_out)`` for ``xr.dot``."""
+    weights = _overlap_weights(
+        np.asarray(source.values, dtype="float64"),
+        np.asarray(target.values, dtype="float64"),
+        spherical=spherical,
+    )
+    return xr.DataArray(
+        weights,
+        dims=(dim, f"{dim}_out"),
+        coords={dim: source.values},
+    )
+
+
+def _conservative_regrid(
+    ds: xr.Dataset, target: xr.Dataset, min_coverage: float
+) -> xr.Dataset:
+    """
+    Area-weighted mean of each variable over the target cells.
+
+    Each output cell is the mean of the source cells overlapping it, weighted by
+    how much of the cell each one covers, skipping the ones that are NaN. The
+    normalisation is the weight of the *valid* source area rather than the whole
+    cell, so a cell that is half land still reports the mean of its water —
+    which is why this keeps coastal cells that ``interp`` drops.
+    """
+    w_lat = _weight_array(ds["lat"], target["lat"], "lat", spherical=True)
+    w_lon = _weight_array(ds["lon"], target["lon"], "lon", spherical=False)
+    # Weight available per target cell if every source cell contributing to it
+    # were valid — the denominator ``coverage`` is measured against.
+    full = w_lat.sum("lat") * w_lon.sum("lon")
+
+    renames = {"lat_out": "lat", "lon_out": "lon"}
+    out: dict[str, xr.DataArray] = {}
+    for name, da in ds.data_vars.items():
+        if "lat" not in da.dims or "lon" not in da.dims:
+            out[str(name)] = da
+            continue
+
+        valid = da.notnull()
+        # fillna(0) rather than masking: a NaN cell contributes nothing to the
+        # sum and nothing to the weight, which is the same as not being there.
+        # It is also what avoids interp's 0 x NaN = NaN, which drops a target
+        # cell over a zero-weight land neighbour.
+        numerator = xr.dot(xr.dot(da.fillna(0.0), w_lat, dim="lat"), w_lon, dim="lon")
+        denominator = xr.dot(
+            xr.dot(valid.astype("float64"), w_lat, dim="lat"), w_lon, dim="lon"
+        )
+        result = numerator / denominator.where(denominator > 0)
+        if min_coverage > 0:
+            result = result.where(denominator >= min_coverage * full)
+
+        result = result.rename(renames).transpose(*da.dims)
+        result.attrs = dict(da.attrs)
+        out[str(name)] = result.astype(da.dtype)
+
+    return xr.Dataset(out, attrs=ds.attrs)
+
+
+def regrid_to(
+    ds: xr.Dataset,
+    target: xr.Dataset,
+    *,
+    method: RegridMethod = "auto",
+    min_coverage: float = 0.0,
+) -> xr.Dataset:
+    """
+    Put *ds* on the *target* grid, choosing how by comparing the two resolutions.
+
+    ``interp`` samples the field at the target cell centres, which is right when
+    the target is the same resolution or finer and wrong when it is coarser: it
+    reads the 2x2 source cells around each centre and ignores the rest of the
+    cell. Going from 0.05° to 0.25° that is 4 of 25 source cells, or exactly 1
+    where the centres coincide. So the direction decides the method:
+
+    * target step <= native step — ``linear``, as before.
+    * target step > native step — ``conservative``, the area-weighted mean of
+      every source cell in the target footprint.
+
+    ``nearest`` is never chosen automatically. It is for fields a mean would
+    destroy — an identifier, a class — and has to be asked for.
+
+    Args:
+        ds: Dataset on a rectilinear lat/lon grid, both axes increasing.
+        target: Dataset whose ``lat``/``lon`` define the output grid.
+        method: Override the choice described above.
+        min_coverage: Fraction of a target cell that must be valid (not NaN) for
+            it to carry a value, for the conservative path only. ``0.0`` (the
+            default) gives a value to any cell with some valid area.
+
+    Returns:
+        *ds* on the target grid, carrying the target's own coordinate objects so
+        that separately regridded variables merge rather than union.
+    """
+    if method == "auto":
+        ratio = max(
+            axis_step(target["lat"].values) / axis_step(ds["lat"].values),
+            axis_step(target["lon"].values) / axis_step(ds["lon"].values),
+        )
+        method = "conservative" if ratio > 1 + _RATIO_TOL else "linear"
+        logger.debug(
+            f"regrid: {axis_step(ds['lat'].values):.6g}° → "
+            f"{axis_step(target['lat'].values):.6g}° (ratio {ratio:.3g}) via {method}"
+        )
+
+    if method == "linear":
+        out = ds.interp_like(target, method="linear", assume_sorted=True)
+    elif method == "nearest":
+        out = ds.sel(lat=target["lat"], lon=target["lon"], method="nearest")
+    elif method == "conservative":
+        out = _conservative_regrid(ds, target, min_coverage)
+    else:
+        raise ValueError(f"unknown regrid method {method!r}")
+
+    # Assigned rather than assumed: ``sel`` carries the source's own labels, and
+    # the compiler merges the per-variable results with an outer join, where
+    # axes differing in the last bit union into a doubled grid instead of
+    # aligning.
+    return out.assign_coords(lat=target["lat"].values, lon=target["lon"].values)
 
 
 def sel_padded_bbox(
