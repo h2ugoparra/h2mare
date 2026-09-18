@@ -161,7 +161,7 @@ variables:
     # eddy's radius. The store on disk is still the older 0.1° one — changing
     # this takes effect when it is regenerated.
     cells_per_degree: 12
-    registration: node
+    values_at: grid_line
     # Each of these holds a property of whichever eddy is nearest, so it is
     # constant over that eddy's neighbourhood and a mean across a boundary
     # describes neither eddy — a track ID averaged with its neighbour's names
@@ -281,11 +281,12 @@ variables:
     source: h2mare
     bbox: [-80, 0, 10, 70]
     # The compile grid: 4 cells per degree is 0.25°, cell-centred, which is what
-    # this store holds. Changing either key needs a new store (its own
-    # local_folder and dataset_id_rep) — the write path refuses to merge one
-    # grid into another. See "Regridding" in docs/configuration.md.
+    # this store holds, with the values at cell centres. Changing either key
+    # needs a new store (its own local_folder and dataset_id_rep) — the write
+    # path refuses to merge one grid into another. See "Where the values sit"
+    # in docs/configuration.md.
     cells_per_degree: 4
-    registration: center
+    values_at: cell_center
 
 
 # Fixed root attributes for h2ds. Everything here is a choice - what the

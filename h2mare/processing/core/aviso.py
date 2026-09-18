@@ -341,7 +341,7 @@ class EDDIESProcessor:
                 self.bbox,
                 dx=dx,
                 dy=dy,
-                registration=self.var_config.registration,
+                values_at=self.var_config.values_at,
             ).generate_grid()
             lat = base_grid.coords["lat"].values
             lon = base_grid.coords["lon"].values

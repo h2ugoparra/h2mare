@@ -321,21 +321,19 @@ class Compiler:
         """
         The grid this compile writes on, from the compiled var_key's config.
 
-        Declared as a whole number of cells per degree and a registration, so
-        the resolution is exact and the phase is deliberate. An entry naming
-        neither gets 0.25° cell-centred, which is what every existing h2ds
-        store holds.
+        Declared as a whole number of cells per degree and a place for the
+        values to sit, so the resolution is exact and the phase is deliberate.
+        An entry naming neither gets 0.25° with values at cell centres, which is
+        what every existing h2ds store holds.
         """
         cells = self.var_config.cells_per_degree or DEFAULT_CELLS_PER_DEGREE
-        registration = self.var_config.registration
+        values_at = self.var_config.values_at
         step = 1 / cells
+        where = "cell centres" if values_at == "cell_center" else "grid lines"
         logger.info(
-            f"Base grid: 1/{cells}° ({step:.6g}°), {registration}-registered, "
-            f"over {self.bbox}"
+            f"Base grid: 1/{cells}° ({step:.6g}°), values at {where}, over {self.bbox}"
         )
-        return GridBuilder(
-            self.bbox, step, step, registration=registration
-        ).generate_grid()
+        return GridBuilder(self.bbox, step, step, values_at=values_at).generate_grid()
 
     def _check_store_grid(self) -> None:
         """
@@ -345,7 +343,7 @@ class Compiler:
         reject it — every variable NaN at the other grid's cells.
         :func:`check_grid_compatible` is the check that catches it, and it runs
         there too; doing it here as well turns a changed ``cells_per_degree``
-        or ``registration`` into a failure before the first chunk is read
+        or ``values_at`` into a failure before the first chunk is read
         rather than after one has been computed.
         """
         existing = sorted(self.catalog.store_root.glob("*.zarr"))

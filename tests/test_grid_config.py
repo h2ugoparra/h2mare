@@ -1,4 +1,4 @@
-"""The compile grid declared in config: resolution, registration, and phase."""
+"""The compile grid declared in config: resolution, values_at, and phase."""
 
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -47,13 +47,13 @@ class TestCellsPerDegree:
             msgspec.convert(raw, AppConfig)
         assert "lat span (10.3" in str(err.value)
 
-    def test_registration_defaults_to_center(self):
+    def test_values_at_defaults_to_center(self):
         cfg = msgspec.convert(_config(), AppConfig)
-        assert cfg.variables["dyn"].registration == "center"
+        assert cfg.variables["dyn"].values_at == "cell_center"
 
-    def test_an_unknown_registration_is_refused(self):
+    def test_an_unknown_values_at_is_refused(self):
         with pytest.raises(msgspec.ValidationError, match="Invalid enum value"):
-            msgspec.convert(_config(registration="corner"), AppConfig)
+            msgspec.convert(_config(values_at="corner"), AppConfig)
 
 
 class TestGridBuilder:
@@ -66,8 +66,8 @@ class TestGridBuilder:
         np.testing.assert_array_equal(grid["lat"].values, expected)
         assert grid.sizes == {"lat": 280, "lon": 360}
 
-    def test_node_puts_values_on_the_bbox_edges(self):
-        grid = GridBuilder(self.BOX, 0.25, 0.25, registration="node").generate_grid()
+    def test_grid_line_puts_values_on_the_bbox_edges(self):
+        grid = GridBuilder(self.BOX, 0.25, 0.25, values_at="grid_line").generate_grid()
         assert grid["lat"].values[0] == 0.0
         assert grid["lat"].values[-1] == 70.0
         assert grid.sizes == {"lat": 281, "lon": 361}
@@ -86,33 +86,33 @@ class TestGridBuilder:
         assert grid.sizes["lat"] == 90
         assert np.arange(30 + (1 / 6) / 2, 45 + (1 / 6) / 2, 1 / 6).size == 91
 
-    def test_node_and_center_are_half_a_cell_apart(self):
+    def test_the_two_are_half_a_cell_apart(self):
         centred = GridBuilder(self.BOX, 0.25, 0.25).generate_grid()
-        node = GridBuilder(self.BOX, 0.25, 0.25, registration="node").generate_grid()
+        node = GridBuilder(self.BOX, 0.25, 0.25, values_at="grid_line").generate_grid()
         assert centred["lat"].values[0] - node["lat"].values[0] == pytest.approx(0.125)
 
 
 class TestCompilerReadsTheConfig:
     @staticmethod
-    def _grid(cells_per_degree, registration):
+    def _grid(cells_per_degree, values_at):
         from h2mare.processing.compiler import Compiler
 
         compiler = MagicMock()
         compiler.bbox = BBox(-80, 0, 10, 70)
         compiler.var_config = SimpleNamespace(
-            cells_per_degree=cells_per_degree, registration=registration
+            cells_per_degree=cells_per_degree, values_at=values_at
         )
         return Compiler._build_base_grid(compiler)
 
     def test_the_declared_resolution_is_used(self):
-        grid = self._grid(12, "center")
+        grid = self._grid(12, "cell_center")
         assert grid.sizes == {"lat": 840, "lon": 1080}
 
-    def test_the_declared_registration_is_used(self):
-        assert self._grid(4, "node")["lat"].values[0] == 0.0
+    def test_the_declared_values_at_is_used(self):
+        assert self._grid(4, "grid_line")["lat"].values[0] == 0.0
 
     def test_an_entry_declaring_neither_gets_the_shipped_grid(self):
-        grid = self._grid(None, "center")
+        grid = self._grid(None, "cell_center")
         assert grid.sizes == {"lat": 280, "lon": 360}
         assert grid["lat"].values[0] == pytest.approx(0.125)
 

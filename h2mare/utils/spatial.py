@@ -11,7 +11,7 @@ from loguru import logger
 from numpy.typing import NDArray
 from scipy.spatial import KDTree
 
-from h2mare.types import BBox, GridRegistration, RegridMethod
+from h2mare.types import BBox, GridValuesAt, RegridMethod
 
 _EARTH_RADIUS_KM: float = 6371.0
 
@@ -89,7 +89,7 @@ class GridBuilder:
         dx: float,
         dy: float,
         attributes: Optional[dict | None] = None,
-        registration: GridRegistration = "center",
+        values_at: GridValuesAt = "cell_center",
     ):
         """
         Creates grid with given geoextent and grid cell size (dx, dy).
@@ -98,11 +98,12 @@ class GridBuilder:
             xmin, ymin, xmax, ymax (float): lon min, lat min, lon max and lat max for geo extent
             dx, dy (float): grid cell size for lon and lat, (dx and dy respectively).
             attributes (dict): global attributes for dataset
-            registration: ``"center"`` puts values at cell centres, half a step
-                inside each bbox edge; ``"node"`` puts them on the step's own
-                multiples, so the first and last sit *on* the edges and the
-                cells they stand for reach half a step beyond. Which one a
-                store wants depends on its sources, not on the step.
+            values_at: ``"cell_center"`` puts values at cell centres, half a
+                step inside each bbox edge; ``"grid_line"`` puts them where the
+                grid lines cross — on the step's own multiples — so the first
+                and last sit *on* the bbox edges and the cells they stand for
+                reach half a step beyond. Which one a store wants depends on
+                its sources, not on the step.
         """
         self.xmin = bbox.xmin
         self.ymin = bbox.ymin
@@ -111,7 +112,7 @@ class GridBuilder:
         self.dx = dx
         self.dy = dy
         self.attributes = attributes
-        self.registration: GridRegistration = registration
+        self.values_at: GridValuesAt = values_at
 
     def _axis(self, lo: float, hi: float, step: float) -> NDArray[np.float64]:
         """
@@ -125,7 +126,7 @@ class GridBuilder:
         used so far, 0.25° included.
         """
         cells = int(round((hi - lo) / step))
-        if self.registration == "node":
+        if self.values_at == "grid_line":
             # Endpoints included: the values sit on the bbox edges and the
             # cells they represent overhang it by half a step on each side.
             return lo + np.arange(cells + 1) * step
@@ -334,8 +335,9 @@ def _warn_if_out_of_phase(ds: xr.Dataset, target: xr.Dataset, ratio: float) -> N
     logger.warning(
         f"native grid is the target's resolution ({src_step:.6g}°) but sits "
         f"{phase:.2f} cells out of phase with it, so every value is "
-        f"interpolated from its four neighbours rather than copied. Matching "
-        f"the target's registration to this source would keep it exact."
+        f"interpolated from its four neighbours rather than copied. Putting "
+        f"the target's values where this source's sit (`values_at`) would keep "
+        f"it exact."
     )
 
 

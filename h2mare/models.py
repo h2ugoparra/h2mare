@@ -8,7 +8,7 @@ from typing import Optional
 
 import msgspec
 
-from h2mare.types import GridRegistration, RegridMethod
+from h2mare.types import GridValuesAt, RegridMethod
 
 
 class TimeStep(str, Enum):
@@ -352,13 +352,13 @@ class KeyVarConfigEntry(msgspec.Struct):
     # rasterisation. A variable converted from gridded source files keeps the
     # source's own grid and ignores this.
     cells_per_degree: Optional[int] = None
-    # Where that grid's values sit relative to whole degrees — "center" (the
-    # default, and what every existing store uses) or "node". Independent of
+    # Where that grid's values sit — "cell_center" (the default, and what
+    # every existing store uses) or "grid_line". Independent of
     # the step, and worth choosing deliberately: a variable whose native grid
     # matches the step but not the phase is interpolated onto the half-way
     # point, which averages its four neighbours and costs ~5% of the field's
     # own spatial variability. See "Regridding" in docs/configuration.md.
-    registration: GridRegistration = "center"
+    values_at: GridValuesAt = "cell_center"
 
     def __post_init__(self):
         if self.bbox is not None:
