@@ -1,6 +1,6 @@
 # Compiler
 
-`Compiler` reads per-variable Zarr stores, interpolates them to a common 0.25° daily grid, and writes the merged `h2ds` dataset.
+`Compiler` reads per-variable Zarr stores, regrids them to a common 0.25° daily grid, and writes the merged `h2ds` dataset. The method follows from each store's own resolution — see [Regridding](../configuration.md#regridding).
 
 ```python
 from h2mare.processing.compiler import Compiler
@@ -67,8 +67,8 @@ Variables with no data for a given chunk are skipped with a warning rather than 
 
 | Variable | Behaviour |
 |---|---|
-| `bathy` | Read from the static NetCDF file configured via `data_file` in `config.yaml`; interpolated onto the output grid |
+| `bathy` | Read from the static NetCDF file configured via `data_file` in `config.yaml`; already on the output grid, so the regrid is an identity |
 | `moon` | Lunar illumination computed from `ephem` for each day; broadcast to all grid cells |
-| `o2` | Depth-sliced at 0, 100, 500, and 1000 m before interpolation |
+| `o2` | Depth-sliced at 0, 100, 500, and 1000 m before regridding |
 | `atm-accum-avg` | `dayofyear`, `month`, `quantile` coordinates dropped before merge |
-| `sst` | `sst_fdist` clipped to ≥ 0 after interpolation |
+| `sst` | `sst_fdist` clipped to ≥ 0 after regridding |

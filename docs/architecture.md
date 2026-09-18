@@ -56,13 +56,13 @@ Raw files are opened with xarray, regridded to a daily time axis, and written (o
 **Class:** `Compiler` (`processing/compiler.py`)  
 **Output:** unified `h2ds` Zarr in `$STORE_ROOT/h2ds/`
 
-All per-variable Zarr stores are opened, interpolated to the common 0.25° × 0.25° daily grid defined in `config.yaml`, and merged into a single dataset. Variables without data for a given period are skipped gracefully. The compiled dataset is also backed up to a local copy for fast access.
+All per-variable Zarr stores are opened, regridded to the common 0.25° × 0.25° daily grid defined in `config.yaml`, and merged into a single dataset. How each variable is regridded follows from its own resolution: a store finer than the grid is aggregated by an area-weighted mean, one at the same resolution or finer is interpolated, and a column a mean would destroy — an eddy track ID — is pinned to `nearest` in config. See [Regridding](configuration.md#regridding). Variables without data for a given period are skipped gracefully. The compiled dataset is also backed up to a local copy for fast access.
 
 Special variables handled outside the general path:
 
 - **`bathy`** — read from a static NetCDF file, no time dimension
 - **`moon`** — computed on the fly from the `ephem` library
-- **3-D variables** (`o2`, `thetao`, any var_key with `depth_levels`) — each listed variable is sliced at its configured depths before interpolation; chosen by config rather than by a registry entry
+- **3-D variables** (`o2`, `thetao`, any var_key with `depth_levels`) — each listed variable is sliced at its configured depths before regridding; chosen by config rather than by a registry entry
 
 The `h2ds` store is chunked for **extraction** (time-contiguous: long time block per small spatial tile), which makes point/geometry time series cheap but full-grid single-date reads costly. For interactive visualization, `export_map_zarr` produces a separate **map-optimized** sibling store (`h2ds_map`) chunked the other way — space-contiguous with a small time chunk — so one date's full field reads as a single small chunk. See [Map export](api/map_export.md).
 
