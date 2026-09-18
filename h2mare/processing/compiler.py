@@ -39,10 +39,9 @@ from h2mare.utils.paths import store_root_for
 from h2mare.utils.spatial import GridBuilder
 from h2mare.validators import validate_file_period, validate_var_key
 
-# Output grid resolution in degrees — matches the standard CMEMS/Copernicus
-# 0.25° daily grid used across all compiled h2ds variables.
-DX = 0.25
-DY = 0.25
+#: Grid used when the compiled var_key's config entry declares none: 4 cells
+#: per degree (0.25°), cell-centred. What every existing h2ds store is on.
+DEFAULT_CELLS_PER_DEGREE = 4
 
 # How far back an incremental compile looks for a null day it could refill.
 # The check reads values, so it has to be bounded or every compile would walk
@@ -184,8 +183,6 @@ class Compiler:
         start_date: Optional[DateLike] = None,
         end_date: Optional[DateLike] = None,
         var_keys: Optional[list[str]] = None,
-        dx: float = DX,
-        dy: float = DY,
         zarr_backup: bool = False,
         zarr_backup_dir: Optional[Path] = None,
     ) -> None:
@@ -204,8 +201,6 @@ class Compiler:
                 the store (see above).
             var_keys: Variable keys to include. ``None`` compiles all configured
                 variables (incremental mode).
-            dx: Output grid cell width in degrees. Defaults to 0.25.
-            dy: Output grid cell height in degrees. Defaults to 0.25.
             zarr_backup: Copy written zarr files to the local store. Defaults to False.
             zarr_backup_dir: Override destination for the zarr backup. Defaults to local_store_root.
         """
@@ -238,7 +233,7 @@ class Compiler:
             )
             return
 
-        self.base_grid = GridBuilder(self.bbox, dx, dy).generate_grid()
+        self.base_grid = self._build_base_grid()
         self._check_store_grid()
 
         # time chunks
@@ -322,15 +317,33 @@ class Compiler:
             f"in {time.perf_counter() - t0:.1f}s"
         )
 
+    def _build_base_grid(self) -> xr.Dataset:
+        """
+        The grid this compile writes on, from the compiled var_key's config.
+
+        Declared as a whole number of cells per degree and a place for the
+        values to sit, so the resolution is exact and the phase is deliberate.
+        An entry naming neither gets 0.25° with values at cell centres, which is
+        what every existing h2ds store holds.
+        """
+        cells = self.var_config.cells_per_degree or DEFAULT_CELLS_PER_DEGREE
+        values_at = self.var_config.values_at
+        step = 1 / cells
+        where = "cell centres" if values_at == "cell_center" else "grid lines"
+        logger.info(
+            f"Base grid: 1/{cells}° ({step:.6g}°), values at {where}, over {self.bbox}"
+        )
+        return GridBuilder(self.bbox, step, step, values_at=values_at).generate_grid()
+
     def _check_store_grid(self) -> None:
         """
         Refuse a run whose base grid is not the one the store already holds.
 
-        ``run(dx=...)`` is a free parameter, and the write path would merge a
-        different grid into the store rather than reject it — every variable
-        NaN at the other grid's cells. :func:`check_grid_compatible` is the
-        check that catches it, and it runs there too; doing it here as well
-        turns a wrong ``dx`` into a failure before the first chunk is read
+        The write path would merge a different grid into the store rather than
+        reject it — every variable NaN at the other grid's cells.
+        :func:`check_grid_compatible` is the check that catches it, and it runs
+        there too; doing it here as well turns a changed ``cells_per_degree``
+        or ``values_at`` into a failure before the first chunk is read
         rather than after one has been computed.
         """
         existing = sorted(self.catalog.store_root.glob("*.zarr"))

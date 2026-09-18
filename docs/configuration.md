@@ -68,6 +68,8 @@ either on an existing variable means re-converting it.
 | `compile_depth_slices` | no | **Older form of `depth_levels`**, still accepted: `compile_depth_slices: [0, 100]` means `depth_levels: {<var_key>: [0, 100]}`, so it only fits a store whose single 3-D variable is named like its var_key (`o2`, `thetao`). Setting both is refused. |
 | `derived_vars` | no | Variables computed at convert time and written to the native store, keyed by output name: `{gke: {op: kinetic_energy, source: [ugos, vgos]}}`. `op` is `rolling_std` (one `source`; `window`, an odd number of cells, default 3, gives the square lon/lat box centred on each cell, which uses whatever part of the box holds data) or `kinetic_energy` (`source: [u, v]`, gives `0.5*(u²+v²)`). Sources are named as the var_key's registered processor leaves them (`sst`, not `analysed_sst`). Entries run in order, so one may read an earlier one. Missing sources, a wrong number of them, an even `window` or a misspelt field are refused. By default the result keeps any depth axis its sources have, so a derived 3-D variable needs its own `depth_levels` entry (`ke: [0]` → `ke_0`). To compute and store only some depths, add `depth: [0, 50]`: each level is matched to the nearest source depth (as `depth_levels` does) and written as a 2-D `ke_0`, `ke_50`, so the other levels are never read or stored. Such an entry is listed by those names in `compiled_vars` and must not appear in `depth_levels`; config load refuses that, and refuses two entries or a `depth_levels` column writing the same name. The cost is that changing the levels needs a reconversion, and a per-run `{"ke": [50]}` extraction override does not apply to it (ask for `ke_50` by name). Every output name needs a `variable_attrs` entry like any other. The `sst_std`, `adt_std`, `sla_std` and `gke` layers are declared this way, so removing those entries stops them being written. |
 | `compiled_vars` | no | Exact variable names as they appear in the compiled h2ds Zarr for this var_key, accounting for any renames or derived variables produced during the Convert step (e.g. `sst` → `[sst, analysis_error, sst_std, sst_fdist]`). Used by `h2mare parquet --add-var` to select only the relevant columns from the h2ds Zarr without the caller needing to know internal variable names. |
+| `cells_per_degree` | no | The grid this var_key's own store is written on, as a whole number of cells per degree: `4` is 0.25°, `8` is 0.125°, `12` is 1/12°, `20` is 0.05°. A count rather than a step so the value is exact — `0.083` is not 1/12°, and lays 1084 cells across a 90° span where 1080 belong. Refused at load if it does not divide the bbox into whole cells. Read by the steps that *create* a grid — the compile (`h2ds`) and the eddy rasterisation — and ignored by a variable that keeps its source files' own grid. Defaults to 4. |
+| `values_at` | no | Where that grid's values sit: `cell_center` (the default, and what every existing store uses) puts them at cell centres, half a step inside each bbox edge; `grid_line` puts them where the grid lines cross, on the step's own multiples. Independent of the step — see [Where the values sit](#where-the-values-sit) for which one a given resolution wants. |
 | `regrid` | no | How individual columns are put on the compile base grid, keyed by the column name: `{ac_track: nearest}`. Anything not listed uses `auto`, which compares the variable's native resolution with the base grid and picks `linear` when the grid is the same or finer and an area-weighted mean when it is coarser — the right choice for a continuous field either way. Set `nearest` for a column a mean would destroy: an identifier or a class, or a quantity describing something other than the cell itself. `linear` and `conservative` pin the automatic choice. Names are checked against `compiled_vars` at config load, so a typo is refused rather than silently ignored. See [Regridding](#regridding). |
 
 ### Regridding
@@ -97,6 +99,50 @@ taken across a boundary describes neither eddy. `ac_track` averaged with its
 neighbour names an eddy that does not exist. `ac_dist_km` and `ac_normdist` are
 left on `auto` in the same entry, because those two really are continuous
 fields.
+
+### Where the values sit
+
+A grid needs two things: the step, and where its values sit. `grid_line` and
+`cell_center` are both valid at 0.25° — one puts values at 0.00, 0.25, 0.50, the
+other at 0.125, 0.375, 0.625. The step does not pick between them.
+
+What does is your sources. Registration only matters for a variable whose native
+step **equals** the target step: aligned, it is copied through exactly; half a
+cell off, it is interpolated onto the point between its cells, which averages the
+four around it. A coarsened variable is area-averaged over the target cell
+whatever its phase, and a refined one is being interpolated anyway.
+
+Measured on 2026-03-01 fields, that half-cell average costs, as a fraction of the
+field's own spatial variability:
+
+| Field | RMSE | % of field σ |
+| --- | --- | --- |
+| `u10` daily mean, 0.25° | 0.36 m/s | 5.9% |
+| `o2` surface, 0.25° | 2.4 mmol/m³ | 4.7% |
+| `mld`, 1/12° | 13.9 m | 11.2% |
+| `adt`, 0.125° | 0.011 m | 2.8% |
+
+It is a resolution loss rather than noise, concentrated where the gradients are.
+So the placement worth choosing is the one matching whichever family lands at
+ratio 1 for the step you pick:
+
+| Step | At ratio 1 | Its values sit at |
+| --- | --- | --- |
+| 0.05° | `sst` | cell centres |
+| 1/12° | `thetao`, `mld` | grid lines |
+| 0.1° | `eddies` (our own raster) | grid lines |
+| 0.125° | `ssh` | cell centres |
+| 0.25° | ERA5 ×4, `o2` | grid lines |
+| 0.5° | `waves` | grid lines |
+
+Observation products tend to put values at cell centres, models and reanalyses
+on grid lines. The shipped `h2ds` is 0.25° `cell_center`, so ERA5 and `o2` are
+2×2 averaged; a compile logs a warning naming any variable in that position, so
+the cost is visible rather than assumed.
+
+Changing either key means a new store — the write path refuses to merge one grid
+into another — so give it its own `local_folder` and `dataset_id_rep` and
+recompile.
 
 ### Choosing `store_dtype`
 
