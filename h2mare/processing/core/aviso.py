@@ -36,7 +36,11 @@ from h2mare.types import BBox, DateLike, DateRange, FilePeriod
 from h2mare.utils.datetime_utils import normalize_date
 from h2mare.utils.files_io import filter_raw_files
 from h2mare.utils.paths import resolve_download_path, resolve_store_path
-from h2mare.utils.spatial import GridBuilder, haversine_min_distance_kdtree
+from h2mare.utils.spatial import (
+    GridBuilder,
+    haversine_min_distance_kdtree,
+    to_unit_sphere,
+)
 from h2mare.validators import validate_file_period, validate_var_key
 
 # ====================================================
@@ -96,20 +100,8 @@ def find_nearest_vectorized(
             for each query point. Shape: (N,)
     """
 
-    def to_cartesian(lats: NDArray, lons: NDArray) -> NDArray:
-        lat_rad = np.deg2rad(lats)
-        lon_rad = np.deg2rad(lons)
-        cos_lat = np.cos(lat_rad)
-        return np.column_stack(
-            (
-                cos_lat * np.cos(lon_rad),  # x
-                cos_lat * np.sin(lon_rad),  # y
-                np.sin(lat_rad),  # z
-            )
-        )
-
-    target_cartesian = to_cartesian(target_lats, target_lons)
-    query_cartesian = to_cartesian(query_lats, query_lons)
+    target_cartesian = to_unit_sphere(target_lats, target_lons)
+    query_cartesian = to_unit_sphere(query_lats, query_lons)
 
     tree = cKDTree(target_cartesian)
     _, nearest_indices = tree.query(query_cartesian, workers=-1)
