@@ -253,7 +253,7 @@ def regrid_to(
     cell. Going from 0.05° to 0.25° that is 4 of 25 source cells, or exactly 1
     where the centres coincide. So the direction decides the method:
 
-    * target step <= native step — ``linear``, as before.
+    * target step <= native step — ``linear``.
     * target step > native step — ``conservative``, the area-weighted mean of
       every source cell in the target footprint.
 
