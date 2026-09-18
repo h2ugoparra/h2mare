@@ -67,9 +67,9 @@ def get_store_coverage(var_key: str) -> Optional[DateRange]:
     An unreadable store is not an empty one. Both return ``None`` here — the
     many callers that treat ``None`` as "nothing stored yet" depend on that —
     but the reason is recorded in :data:`_UNREADABLE_STORES` so
-    :func:`resolve_date_range` can say which it was. A locked or damaged store
-    used to present as "no existing data found", sending the reader to look for
-    missing files while the real cause sat on a warning line above.
+    :func:`resolve_date_range` can say which it was. Without that, a locked or
+    damaged store presents as "no existing data found", sending the reader to
+    look for missing files while the real cause sits on a warning line above.
 
     Returns:
         DateRange of stored data, or None if no data exists or it is unreadable.

@@ -177,9 +177,9 @@ def _warn_if_wholly_failed(result: pd.DataFrame, errors: list[Exception]) -> Non
     A few NaN rows are ordinary — geometries outside the grid clip to nothing,
     and that is data, not a fault. Every row failing is not: it means the
     dataset could not be clipped at all, usually because rioxarray cannot
-    identify the spatial dims or there is no CRS. That used to surface only as
-    a DEBUG line per geometry, leaving an all-null column looking like absent
-    data rather than a broken precondition.
+    identify the spatial dims or there is no CRS. Left to the DEBUG line each
+    geometry logs, it reads as an all-null column — absent data rather than a
+    broken precondition.
     """
     if result.empty or not errors:
         return

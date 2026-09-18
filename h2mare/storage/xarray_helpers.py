@@ -541,8 +541,8 @@ def apply_cf_attrs(ds: xr.Dataset, native_var_key: str | None = None) -> xr.Data
 
     Coordinates get :data:`_CF_COORD_ATTRS`. Without them a store is not merely
     under-documented: ``rio.clip`` resolves spatial dims by name and only falls
-    back to lon/lat when they carry CF attributes, which is why geometry
-    extraction against the CDS stores and h2ds used to clip to nothing but NaN.
+    back to lon/lat when they carry CF attributes, so without them geometry
+    extraction clips to nothing but NaN.
 
     Args:
         ds: Dataset to annotate, modified in place and returned.

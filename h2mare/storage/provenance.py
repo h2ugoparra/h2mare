@@ -86,8 +86,7 @@ def merge_records(existing: list[dict], new: list[dict]) -> list[dict]:
 
     Periods are appended to incrementally, so a Zarr written across several runs
     accumulates coverage. Replacing the attribute with only the latest run's
-    records — as the generic converter path used to — would drop the earlier
-    part of the same file.
+    records would drop the earlier part of the same file.
 
     A dataset seen twice keeps the earliest start and the latest end, which is
     all h2ds needs: it merges the spans its sources already worked out and has
@@ -133,9 +132,8 @@ def _supersede(merged: dict[str, dict], new: list[dict]) -> None:
     reprocessed product periodically, and re-downloading the newly-reprocessed
     days means rep now supplies dates nrt supplied before. Merged by widening
     only, both would claim them and the file would go on naming nrt for days it
-    no longer holds from nrt — the staleness the backfill tool used to warn
-    about and tell you to re-convert for. Re-converting is exactly what this is,
-    so it should be enough on its own.
+    no longer holds from nrt. Re-converting those days is what fixes that, so it
+    has to be enough on its own rather than needing a separate repair pass.
 
     A dataset whose start falls inside a new window is pushed past it, and
     dropped when nothing is left. Only windows written by *this* run supersede:

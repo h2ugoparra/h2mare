@@ -23,8 +23,8 @@ def normalize_date(date: DateLike) -> pd.Timestamp:
     Raises:
         ValueError: If *date* is None, NaT, or anything else pandas reads as
             missing. ``pd.Timestamp`` returns NaT for those, and NaT has no
-            ``.normalize()`` — so this used to surface as ``AttributeError:
-            'NaTType' object has no attribute 'normalize'``, which names
+            ``.normalize()``, so unchecked it surfaces as ``AttributeError:
+            'NaTType' object has no attribute 'normalize'`` — which names
             neither the argument nor the caller's mistake.
     """
     ts = pd.Timestamp(date)
