@@ -8,7 +8,7 @@ from typing import Optional
 
 import msgspec
 
-from h2mare.types import RegridMethod
+from h2mare.types import GridRegistration, RegridMethod
 
 
 class TimeStep(str, Enum):
@@ -343,6 +343,22 @@ class KeyVarConfigEntry(msgspec.Struct):
     # is nearest, so it is constant over that eddy's neighbourhood and averaging
     # across a boundary describes no eddy at all.
     regrid: Optional[dict[str, RegridMethod]] = None
+    # The grid this var_key's own store is written on, as a whole number of
+    # cells per degree: 4 is 0.25°, 8 is 0.125°, 12 is 1/12°, 20 is 0.05°. A
+    # count rather than a step so the value is exact — 0.083 is not 1/12, and
+    # lays 1084 cells across a 90° span where 1080 belong.
+    #
+    # Read by the steps that *create* a grid: the compile (h2ds) and the eddy
+    # rasterisation. A variable converted from gridded source files keeps the
+    # source's own grid and ignores this.
+    cells_per_degree: Optional[int] = None
+    # Where that grid's values sit relative to whole degrees — "center" (the
+    # default, and what every existing store uses) or "node". Independent of
+    # the step, and worth choosing deliberately: a variable whose native grid
+    # matches the step but not the phase is interpolated onto the half-way
+    # point, which averages its four neighbours and costs ~5% of the field's
+    # own spatial variability. See "Regridding" in docs/configuration.md.
+    registration: GridRegistration = "center"
 
     def __post_init__(self):
         if self.bbox is not None:
@@ -359,6 +375,30 @@ class KeyVarConfigEntry(msgspec.Struct):
         if self.depth_range is not None:
             if self.depth_range[0] >= self.depth_range[1]:
                 raise ValueError("depth_min must be less than depth_max")
+
+        if self.cells_per_degree is not None:
+            if self.cells_per_degree < 1:
+                raise ValueError(
+                    f"cells_per_degree must be a positive whole number of cells "
+                    f"per degree (4 = 0.25°, 12 = 1/12°); got "
+                    f"{self.cells_per_degree}"
+                )
+            # The grid has to tile the bbox exactly, or its last cell is a
+            # fraction of the others and every area weight computed from the
+            # step is wrong at that edge.
+            if self.bbox is not None:
+                lon_min, lat_min, lon_max, lat_max = self.bbox
+                for lo, hi, axis in (
+                    (lon_min, lon_max, "lon"),
+                    (lat_min, lat_max, "lat"),
+                ):
+                    cells = (hi - lo) * self.cells_per_degree
+                    if abs(cells - round(cells)) > 1e-9:
+                        raise ValueError(
+                            f"cells_per_degree={self.cells_per_degree} does not "
+                            f"divide the bbox's {axis} span ({hi - lo:g}°) into whole "
+                            f"cells ({cells:g}). Adjust the bbox or the count."
+                        )
 
         _validate_depth_keys(
             "depth_levels",

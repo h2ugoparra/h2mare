@@ -46,9 +46,12 @@ from h2mare.validators import validate_file_period, validate_var_key
 # ====================================================
 # ================= EDDIES PROCESSOR =================
 # ====================================================
-# GRID CELL SIZE FOR PROCESSED DATA (IN DEGREES)
-DX = 0.1
-DY = 0.1
+#: Grid the eddy rasterisation uses when config declares none: 10 cells per
+#: degree (0.1°), which is what the existing store holds. The atlas gives eddy
+#: centres as continuous positions, so this is a sampling choice rather than a
+#: source resolution — declare `cells_per_degree` on the eddies entry to change
+#: it, and regenerate the store.
+DEFAULT_CELLS_PER_DEGREE = 10
 
 # Raw var names and respective map for processed vars
 EDDY_VAR_MAP: dict[str, str] = {
@@ -216,8 +219,8 @@ class EDDIESProcessor:
         start_date: Optional[DateLike] = None,
         end_date: Optional[DateLike] = None,
         n_workers: int = 4,
-        dx: float = DX,
-        dy: float = DY,
+        dx: Optional[float] = None,
+        dy: Optional[float] = None,
     ) -> None:
         """
         Process downloaded files and writes.
@@ -226,12 +229,16 @@ class EDDIESProcessor:
             start_date (Optional[DateLike], optional): Start date to process. Defaults to None and get's date from ZarrCatalog.
             end_date (Optional[DateLike], optional): End date to process. Defaults to Noneand get's date from ZarrCatalog.
             n_workers (int, optional): Number of workers for multiprocessing daily files. Defaults to 4.
-            dx, dy: x,y cell size resp., in degrees
+            dx, dy: x,y cell size resp., in degrees. Default to the grid the
+                var_key's config declares (`cells_per_degree`).
         """
 
         logger.info("Starting eddies processing")
 
-        grid = self._get_gridded_data(dx, dy)
+        step = 1 / (self.var_config.cells_per_degree or DEFAULT_CELLS_PER_DEGREE)
+        grid = self._get_gridded_data(
+            dx if dx is not None else step, dy if dy is not None else step
+        )
         records = self._get_downloaded_metadata()
         requested_ranges = self._resolve_all_ranges(records, start_date, end_date)
 
@@ -330,7 +337,12 @@ class EDDIESProcessor:
 
         grid = self._grid_from_store() if self.catalog.exists() else None
         if grid is None:
-            base_grid = GridBuilder(self.bbox, dx=dx, dy=dy).generate_grid()
+            base_grid = GridBuilder(
+                self.bbox,
+                dx=dx,
+                dy=dy,
+                registration=self.var_config.registration,
+            ).generate_grid()
             lat = base_grid.coords["lat"].values
             lon = base_grid.coords["lon"].values
         else:

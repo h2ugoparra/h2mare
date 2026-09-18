@@ -11,7 +11,7 @@ from loguru import logger
 from numpy.typing import NDArray
 from scipy.spatial import KDTree
 
-from h2mare.types import BBox, RegridMethod
+from h2mare.types import BBox, GridRegistration, RegridMethod
 
 _EARTH_RADIUS_KM: float = 6371.0
 
@@ -84,15 +84,25 @@ def haversine_min_distance_kdtree(
 
 class GridBuilder:
     def __init__(
-        self, bbox: BBox, dx: float, dy: float, attributes: Optional[dict | None] = None
+        self,
+        bbox: BBox,
+        dx: float,
+        dy: float,
+        attributes: Optional[dict | None] = None,
+        registration: GridRegistration = "center",
     ):
         """
-        Creates grid with given geoextent and grid cell size (dx, dy). Grid cells are centered.
+        Creates grid with given geoextent and grid cell size (dx, dy).
 
         Args:
             xmin, ymin, xmax, ymax (float): lon min, lat min, lon max and lat max for geo extent
             dx, dy (float): grid cell size for lon and lat, (dx and dy respectively).
             attributes (dict): global attributes for dataset
+            registration: ``"center"`` puts values at cell centres, half a step
+                inside each bbox edge; ``"node"`` puts them on the step's own
+                multiples, so the first and last sit *on* the edges and the
+                cells they stand for reach half a step beyond. Which one a
+                store wants depends on its sources, not on the step.
         """
         self.xmin = bbox.xmin
         self.ymin = bbox.ymin
@@ -101,13 +111,33 @@ class GridBuilder:
         self.dx = dx
         self.dy = dy
         self.attributes = attributes
+        self.registration: GridRegistration = registration
+
+    def _axis(self, lo: float, hi: float, step: float) -> NDArray[np.float64]:
+        """
+        One axis of the grid, from a cell count rather than an accumulation.
+
+        ``np.arange`` decides its length in floating point, so for a step that
+        is not exactly representable the count depends on the bbox: 1/6° over
+        [30, 45] gives 91 cells where 90 belong, while the same step elsewhere
+        is right. A computed count cannot go wrong on one bbox and not another.
+        Identical to what ``arange`` produced for every step the pipeline has
+        used so far, 0.25° included.
+        """
+        cells = int(round((hi - lo) / step))
+        if self.registration == "node":
+            # Endpoints included: the values sit on the bbox edges and the
+            # cells they represent overhang it by half a step on each side.
+            return lo + np.arange(cells + 1) * step
+        return lo + (np.arange(cells) + 0.5) * step
 
     def generate_grid(self) -> xr.Dataset:
-        # Generate the latitude and longitude arrays
-        lat = np.arange(self.ymin + (self.dy / 2), self.ymax + (self.dy / 2), self.dy)
-        lon = np.arange(self.xmin + (self.dx / 2), self.xmax + (self.dx / 2), self.dx)
-
-        return xr.Dataset(coords={"lat": lat, "lon": lon})
+        return xr.Dataset(
+            coords={
+                "lat": self._axis(self.ymin, self.ymax, self.dy),
+                "lon": self._axis(self.xmin, self.xmax, self.dx),
+            }
+        )
 
     def generate_grid_with_attributes(self) -> xr.Dataset:
         grid = self.generate_grid()
@@ -127,6 +157,13 @@ _RATIO_TOL = 0.01
 #: before the axis is refused as irregular. Rounding to 4 decimals moves a label
 #: by at most 5e-5, so this is twice the largest legitimate offset.
 _AXIS_FIT_TOL = 1e-4
+
+#: How far two grids' cell centres may sit apart, in cells, and still count as
+#: the same phase. The case that matters is a half-cell offset (0.5), so
+#: anything under a hundredth of a cell is float noise rather than a different
+#: lattice. Shared with the write path's grid guard, which refuses what this
+#: only warns about.
+PHASE_TOL_CELLS = 0.01
 
 
 def axis_step(values: NDArray[np.float64] | xr.DataArray) -> float:
@@ -259,6 +296,49 @@ def _conservative_regrid(
     return xr.Dataset(out, attrs=ds.attrs)
 
 
+#: Grid pairs already reported by :func:`_warn_if_out_of_phase`. A compile
+#: regrids the same variable once per period file, so without this a 30-year
+#: run says the same thing 30 times per variable.
+_phase_warned: set[tuple[float, float]] = set()
+
+
+def _warn_if_out_of_phase(ds: xr.Dataset, target: xr.Dataset, ratio: float) -> None:
+    """
+    Say so when a variable at the target's own resolution is half a cell off it.
+
+    At ratio 1 an aligned grid is copied through exactly, while an offset one is
+    interpolated onto the point between its cells — which averages the four
+    around it and costs roughly 5% of the field's own spatial variability,
+    concentrated where the gradients are. Neither the store nor the values show
+    it, so the run has to.
+
+    Only the ratio-1 case is reported: a coarsened variable is area-averaged
+    over the target cell whatever its phase, and a refined one is being
+    interpolated anyway.
+    """
+    if abs(ratio - 1) > _RATIO_TOL:
+        return
+
+    src_step = axis_step(ds["lat"].values)
+    offset_cells = (
+        float(target["lat"].values[0]) - float(ds["lat"].values[0])
+    ) / src_step
+    phase = abs(offset_cells - round(offset_cells))
+    if phase <= PHASE_TOL_CELLS:
+        return
+
+    key = (round(src_step, 9), round(float(target["lat"].values[0]), 9))
+    if key in _phase_warned:
+        return
+    _phase_warned.add(key)
+    logger.warning(
+        f"native grid is the target's resolution ({src_step:.6g}°) but sits "
+        f"{phase:.2f} cells out of phase with it, so every value is "
+        f"interpolated from its four neighbours rather than copied. Matching "
+        f"the target's registration to this source would keep it exact."
+    )
+
+
 def regrid_to(
     ds: xr.Dataset,
     target: xr.Dataset,
@@ -327,6 +407,7 @@ def regrid_to(
             f"regrid: {axis_step(ds['lat'].values):.6g}° → "
             f"{axis_step(target['lat'].values):.6g}° (ratio {ratio:.3g}) via {method}"
         )
+        _warn_if_out_of_phase(ds, target, ratio)
 
     if method == "linear":
         out = ds.interp_like(target, method="linear", assume_sorted=True)

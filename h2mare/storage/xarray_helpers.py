@@ -437,11 +437,6 @@ def snap_grid_coords(ds: xr.Dataset, decimals: int = GRID_COORD_DECIMALS) -> xr.
 #: worth catching are whole ratios apart — 0.25° against 1/12° is 3×.
 _STEP_REL_TOL = 1e-4
 
-#: How far the two axes' cell centres may sit out of phase, in cells. The
-#: failure this catches is a half-cell offset (0.5), so anything under a
-#: hundredth of a cell is float noise rather than a different lattice.
-_PHASE_TOL_CELLS = 0.01
-
 
 def _axis_mismatch(stored: np.ndarray, incoming: np.ndarray, name: str) -> str | None:
     """
@@ -454,7 +449,7 @@ def _axis_mismatch(stored: np.ndarray, incoming: np.ndarray, name: str) -> str |
     """
     # Imported here: utils.spatial pulls in scipy and the land mask, which the
     # write path should not load just to compare two axes.
-    from h2mare.utils.spatial import axis_step
+    from h2mare.utils.spatial import PHASE_TOL_CELLS, axis_step
 
     if stored.size < 2 or incoming.size < 2:
         # A single cell has no step to compare, so there is nothing to refuse.
@@ -476,7 +471,7 @@ def _axis_mismatch(stored: np.ndarray, incoming: np.ndarray, name: str) -> str |
         )
 
     offset_cells = (incoming[0] - stored[0]) / stored_step
-    if abs(offset_cells - round(offset_cells)) > _PHASE_TOL_CELLS:
+    if abs(offset_cells - round(offset_cells)) > PHASE_TOL_CELLS:
         return (
             f"'{name}' cells sit out of phase: stored centres start at "
             f"{stored[0]:.6g}°, incoming at {incoming[0]:.6g}°, which is "
