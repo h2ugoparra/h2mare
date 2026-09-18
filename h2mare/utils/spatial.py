@@ -45,14 +45,10 @@ def haversine_min_distance_kdtree(
 
     Points are indexed on the unit sphere (:func:`to_unit_sphere`) and the
     chord the tree returns is converted back to an arc, so both the neighbour
-    chosen and the distance reported are exact.
-
-    It searched ``(lat, lon)`` in radians until 2026-09, which is Euclidean in a
-    plane rather than on a sphere: a degree of longitude counted as 111 km at
-    every latitude, so a distance measured east-west was overstated by
-    ``1/cos(lat)`` — twice the true value at 60°N. Stored distances predating
-    that fix (eddy ``*_dist_km`` / ``*_normdist``, ``sst_fdist``, ``chl_fdist``)
-    carry the error and need recomputing; see ``plans/eddy-distance-metric.md``.
+    chosen and the distance reported are exact. Indexing ``(lat, lon)`` directly
+    would be Euclidean in a plane: a degree of longitude would count as 111 km
+    at every latitude, overstating an east-west distance by ``1/cos(lat)`` —
+    twice the true value at 60°N.
 
     Args:
         coords1: Query points as (lat, lon) pairs in decimal degrees.
