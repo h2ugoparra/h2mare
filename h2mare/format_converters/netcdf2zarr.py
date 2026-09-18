@@ -296,10 +296,10 @@ class Netcdf2Zarr(BaseConverter):
             # Distinguish two ways of getting nothing. A window that matches no
             # downloaded file is a legitimate no-op (already warned about in
             # _group_map). Files that yield no date at all is a fault: every raw
-            # file failed the pattern. That used to be reported as "0 period(s)"
-            # success, after which _cleanup_downloads deleted the files — so a
-            # download that had worked was silently discarded, the store never
-            # changed, and the run exited 0.
+            # file failed the pattern. Reported as a "0 period(s)" success it
+            # would take the downloads with it: _cleanup_downloads deletes the
+            # files, so a download that worked is discarded, the store never
+            # changes, and the run exits 0.
             if self._get_file_date_series().empty:
                 raise RuntimeError(
                     f"[{self.var_key}] {len(self._get_downloaded_files())} "
@@ -726,8 +726,8 @@ class Netcdf2Zarr(BaseConverter):
             ) from e
         finally:
             # Idempotent, so the success path closing early costs nothing; this
-            # is here for the failure path, which previously leaked the handles
-            # and left the store directory locked on Windows.
+            # is here for the failure path, which otherwise leaks the handles
+            # and leaves the store directory locked on Windows.
             _close_all(ds, ds_raw)
 
     # ========= WRITE VERIFICATION =========
@@ -1014,9 +1014,9 @@ class Netcdf2Zarr(BaseConverter):
             str: with year or year/month
 
         The separator is a forward slash, which ``Path`` resolves to a nested
-        directory on every platform. It used to be a literal backslash, so on
-        POSIX ``store_root / "2021\\3"`` named a *single* directory containing
-        a backslash instead of ``2021/3``.
+        directory on every platform. A literal backslash does not: on POSIX
+        ``store_root / "2021\\3"`` names a *single* directory containing a
+        backslash instead of ``2021/3``.
         """
         if isinstance(period, int):
             return str(period)

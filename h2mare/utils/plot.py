@@ -674,10 +674,10 @@ def plot_records_on_field(
             ds = cat.open_dataset(dates=date, bbox=bbox, variables=var)  # type: ignore[arg-type]
         except FileNotFoundError:
             # open_dataset raises for a date the store has no file for; it never
-            # returns None, so the check that used to stand here was unreachable
-            # and the first uncovered record ended the loop instead of being
-            # skipped. Not re-raised with the original message: it lists every
-            # date the file does hold, which is a year of them.
+            # returns None, so catching is the only way to skip an uncovered
+            # record rather than end the loop on it. Not re-raised with the
+            # original message: it lists every date the file does hold, which is
+            # a year of them.
             logger.warning(
                 f"[{cat.var_key}] no data for {pd.to_datetime(date).date()}; "  # type: ignore[arg-type]
                 f"skipping this record."

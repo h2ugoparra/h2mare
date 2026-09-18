@@ -333,9 +333,8 @@ def hourly_radiation(
         {
             "units": units_out,
             "GRIB_units": units_out,
-            # The source says 'accum'; these values no longer are one. Left
-            # unchanged it invites exactly the reading that made this function
-            # difference an already-differenced field for years.
+            # The source says 'accum'; these values are a rate. Left unchanged
+            # it invites a reader to difference an already-differenced field.
             "GRIB_stepType": "avg",
             "long_name": f"Mean rate from accumulated {da.name or ''}".strip(),
         }
@@ -477,7 +476,7 @@ def compute_curl_and_ekman(
     # Mask near the equator to avoid blow-ups. The mask goes on the *denominator*
     # rather than the result: dividing first and discarding after still evaluates
     # curl/0 at lat=0, and dask raises that as a RuntimeWarning at compute time —
-    # far from this line, which is what a blanket warnings filter used to hide.
+    # far from this line, where a blanket warnings filter would swallow it.
     # Dividing by NaN yields NaN silently, so the values are identical.
     equator_mask = np.abs(f_grid["lat"]) < 2.0
     ekman = curl_tau / (rho_w * f_grid.where(~equator_mask))

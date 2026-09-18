@@ -158,11 +158,9 @@ class Compiler:
         Catalog for *var_key*, rooted under this compiler's ``remote_store_root``.
 
         Built explicitly rather than left to resolve from settings so that a
-        relocated store root reaches the compiler's own reads. These catalogs
-        used to default to ``STORE_ROOT``, so a run pointed elsewhere wrote h2ds
-        to the override while reading its sources from the configured root.
-        Identical to the old behaviour whenever the two agree, which is every
-        run that does not relocate anything.
+        relocated store root reaches the compiler's own reads. Left to default
+        to ``STORE_ROOT``, a run pointed elsewhere would write h2ds to the
+        override while reading its sources from the configured root.
 
         ``remote_store_root`` is the *default* root, not the final answer — a
         source variable may name its own in config.yaml, and a compile has to
@@ -646,9 +644,9 @@ class Compiler:
         try:
             shutil.copytree(remote_path, local_path, dirs_exist_ok=True)
         except (PermissionError, OSError) as e:
-            # Return rather than fall through: the success line used to sit
-            # outside this handler, so a failed backup was logged as an error
-            # and then announced as "File copied!" on the very next line.
+            # Return rather than fall through: the success line below sits
+            # outside this handler, so falling through would log a failed backup
+            # as an error and then announce "File copied!" on the next line.
             logger.exception(f"Failed to copy {remote_path} to {local_path}: {e}")
             return
 

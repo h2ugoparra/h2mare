@@ -90,8 +90,8 @@ class DateRange:
         # against it is False, so the ordering check below waves it through and
         # a range of NaT..NaT travels on as if it named real dates. Rejecting it
         # at the one point every construction path goes through also covers the
-        # from_* classmethods — from_pandas has no emptiness check of its own
-        # and used to return NaT to NaT for an empty frame.
+        # from_* classmethods — from_pandas has no emptiness check of its own,
+        # so an empty frame reaches here as NaT to NaT.
         if pd.isna(self.start) or pd.isna(self.end):
             raise ValueError(
                 f"DateRange bounds must be real dates, got start={self.start!r}, "
