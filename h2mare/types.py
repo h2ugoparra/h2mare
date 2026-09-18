@@ -25,6 +25,13 @@ DateLike = str | pd.Timestamp | datetime | date
 #: (``storage.var_routing``) name it, and neither may import the other.
 ReadFrom = Literal["auto", "native", "compiled"]
 
+#: How a variable is put on the compile base grid. ``auto`` compares the native
+#: and target resolutions and picks ``linear`` or ``conservative``; the others
+#: pin the choice. Lives here rather than beside the regridder because the
+#: config model (``models``) validates it too, and must not pull in the
+#: regridder's dependencies to do so.
+RegridMethod = Literal["auto", "linear", "nearest", "conservative"]
+
 
 def to_datetime(value) -> datetime:
     """Coerce date, pd.Timestamp, str, or datetime to stdlib datetime."""

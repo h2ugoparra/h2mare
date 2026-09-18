@@ -8,6 +8,8 @@ from typing import Optional
 
 import msgspec
 
+from h2mare.types import RegridMethod
+
 
 class TimeStep(str, Enum):
     """
@@ -330,6 +332,17 @@ class KeyVarConfigEntry(msgspec.Struct):
     # read an earlier one. A variable derived from a 3-D source keeps its depth
     # axis and needs its own depth_levels entry like any other.
     derived_vars: Optional[dict[str, DerivedVarSpec]] = None
+    # How each variable is put on the compile base grid, keyed by its name at
+    # that point (a compiled column name) — e.g. {ac_track: nearest}. Anything
+    # not listed uses "auto", which compares the native and target resolutions
+    # and interpolates or area-averages accordingly.
+    #
+    # Only needed for a field whose meaning a mean destroys: an identifier or a
+    # class, or a quantity that describes something other than the cell itself.
+    # The eddy columns are the latter — each holds a property of whichever eddy
+    # is nearest, so it is constant over that eddy's neighbourhood and averaging
+    # across a boundary describes no eddy at all.
+    regrid: Optional[dict[str, RegridMethod]] = None
 
     def __post_init__(self):
         if self.bbox is not None:
@@ -457,6 +470,26 @@ def _check_derived_names(var_key: str, var_config: KeyVarConfigEntry) -> None:
             )
 
 
+def _check_regrid_names(var_key: str, var_config: KeyVarConfigEntry) -> None:
+    """
+    Refuse regrid overrides naming a column the var_key does not publish.
+
+    An override is matched by name against the dataset being put on the base
+    grid; one that matches nothing is silently ignored there, so ``ac_trak``
+    would leave the real column averaged and look configured. Only checked
+    where ``compiled_vars`` is declared, which is what says the names exist.
+    """
+    if not var_config.regrid or not var_config.compiled_vars:
+        return
+
+    unknown = sorted(set(var_config.regrid) - set(var_config.compiled_vars))
+    if unknown:
+        raise ValueError(
+            f"'{var_key}': regrid names {unknown}, which it does not publish. "
+            f"Its compiled_vars are {sorted(var_config.compiled_vars)}."
+        )
+
+
 class AppConfig(msgspec.Struct):
     """Complete application configuration."""
 
@@ -466,6 +499,7 @@ class AppConfig(msgspec.Struct):
     def __post_init__(self):
         for var_key, var_config in self.variables.items():
             _check_derived_names(var_key, var_config)
+            _check_regrid_names(var_key, var_config)
 
         # compiled_vars is written by hand and read by Parquet, routing and the
         # CF checks, so a depth column compile produces but compiled_vars omits

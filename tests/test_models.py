@@ -379,6 +379,33 @@ class TestAppConfig:
         with pytest.raises(msgspec.ValidationError, match=r"\['dyn_100'\]"):
             msgspec.convert(raw, AppConfig)
 
+    def test_regrid_naming_an_unpublished_column_is_refused(self):
+        """A typo would leave the real column averaged and look configured."""
+        raw = self._with(
+            compiled_vars=["ac_track", "ac_dist_km"],
+            regrid={"ac_trak": "nearest"},
+        )
+        with pytest.raises(msgspec.ValidationError, match=r"\['ac_trak'\]"):
+            msgspec.convert(raw, AppConfig)
+
+    def test_regrid_accepts_published_columns(self):
+        raw = self._with(
+            compiled_vars=["ac_track", "ac_dist_km"],
+            regrid={"ac_track": "nearest"},
+        )
+        assert msgspec.convert(raw, AppConfig).variables["dyn"].regrid == {
+            "ac_track": "nearest"
+        }
+
+    def test_regrid_rejects_an_unknown_method(self):
+        raw = self._with(compiled_vars=["ac_track"], regrid={"ac_track": "mean"})
+        with pytest.raises(msgspec.ValidationError, match="Invalid enum value 'mean'"):
+            msgspec.convert(raw, AppConfig)
+
+    def test_regrid_without_compiled_vars_skips_the_name_check(self):
+        raw = self._with(regrid={"anything": "nearest"})
+        assert msgspec.convert(raw, AppConfig).variables["dyn"].regrid
+
     def test_consistent_depth_columns_are_accepted(self):
         raw = self._with(
             depth_levels={"thetao": [0, 50]},

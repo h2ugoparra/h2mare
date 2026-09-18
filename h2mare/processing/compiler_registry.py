@@ -73,6 +73,21 @@ def _open_or_warn(
         return None
 
 
+def _to_base_grid(
+    compiler: Compiler, ds: xr.Dataset, var_key: str, **kwargs
+) -> xr.Dataset:
+    """
+    Put *ds* on the compile base grid, honouring the var_key's regrid overrides.
+
+    Every processor goes through here so ``regrid: {ac_track: nearest}`` in
+    config reaches the variable whatever path compiled it.
+    """
+    var_config = compiler.app_config.variables.get(var_key)
+    return regrid_to(
+        ds, compiler.base_grid, methods=getattr(var_config, "regrid", None), **kwargs
+    )
+
+
 # ---------------------------------------------------------------------------
 # Registered processors (one per special-cased variable)
 # ---------------------------------------------------------------------------
@@ -94,7 +109,7 @@ def _compile_bathy(
         lon=slice(compiler.bbox.xmin, compiler.bbox.xmax),
         lat=slice(compiler.bbox.ymin, compiler.bbox.ymax),
     )
-    return regrid_to(ds, compiler.base_grid)
+    return _to_base_grid(compiler, ds, "bathy")
 
 
 def _compile_moon(
@@ -159,7 +174,7 @@ def _compile_depth_var(
     ds = _open_or_warn(catalog, var_key, date_range, compiler.bbox, chunks={"depth": 1})
     if ds is None:
         return None
-    return regrid_to(select_depth_levels(ds, levels, var_key), compiler.base_grid)
+    return _to_base_grid(compiler, select_depth_levels(ds, levels, var_key), var_key)
 
 
 #: Decoded source bytes to aim for per slab of the hourly reduction.
@@ -408,7 +423,7 @@ def _compile_atm_accum_avg(
     # Coords ride along from the climatology alignment (.sel on dayofyear/month)
     # whether the features came off disk or were just computed.
     ds = ds.drop_vars(["dayofyear", "month", "quantile"], errors="ignore")
-    return regrid_to(ds, compiler.base_grid)
+    return _to_base_grid(compiler, ds, "atm-accum-avg")
 
 
 def _daily_atm_instante_for_slab(ds_hourly: xr.Dataset, slab: DateRange) -> xr.Dataset:
@@ -466,7 +481,7 @@ def _compile_atm_instante(
         )
     if ds is None:
         return None
-    return regrid_to(ds, compiler.base_grid)
+    return _to_base_grid(compiler, ds, "atm-instante")
 
 
 #: radiation has no entry here on purpose. Both cadences settle their units at
@@ -506,7 +521,7 @@ def _compile_waves(
     # recombine. swh is a magnitude and interpolates directly.
     components = direction_to_uv(ds["mdts"])
     to_interp = ds[["swh"]].assign(u_ts=components["u_ts"], v_ts=components["v_ts"])
-    out = regrid_to(to_interp, compiler.base_grid)
+    out = _to_base_grid(compiler, to_interp, "waves")
     out["mdts"] = uv_to_direction(out["u_ts"], out["v_ts"])
     out["mdts"].attrs.update(ds["mdts"].attrs)
     return out.drop_vars(["u_ts", "v_ts"])
@@ -523,7 +538,7 @@ def _compile_sst(
     if ds is None:
         return None
     ds = postprocess_sst_fdist(ds)
-    return regrid_to(ds, compiler.base_grid)
+    return _to_base_grid(compiler, ds, "sst")
 
 
 # ---------------------------------------------------------------------------
@@ -590,7 +605,7 @@ def compile_default(
             f"cannot be compiled. Add depth_levels (e.g. {{variable: [0, 100]}}) "
             f"to its config entry."
         )
-    return regrid_to(ds, compiler.base_grid)
+    return _to_base_grid(compiler, ds, var_key)
 
 
 # ---------------------------------------------------------------------------
