@@ -325,10 +325,13 @@ reduces each clip with `.mean()` and nothing else. Their `_std` columns are ther
 | `sst_std` | convert time, 0.05° native | 3×3 ≈ 0.15° | sub-cell texture |
 | `adt_std`, `sla_std` | convert time, 0.125° native | 3×3 ≈ 0.375° | **wider** than the cell |
 
-Both are then placed on the base grid with `interp_like(..., method="linear")` at compile time,
-so the stored 0.25° value is a point sample of the native std field rather than an aggregate over
-the cell. Because the windows differ in physical size, `sst_std` and `adt_std` magnitudes are not
-comparable with each other.
+Both are then placed on the base grid at compile time by the area-weighted mean every coarsened
+variable gets, so the stored 0.25° value is the **mean of the native std layer over the cell**.
+That is the mean of a local spread, not the spread across the cell: it ignores the variance
+*between* windows, so it reads lower than a std computed over the whole 0.25° footprint would.
+The definition is deliberate and fixed — it is the same quantity at every resolution, and it is
+what the archive has always published. Because the windows differ in physical size, `sst_std` and
+`adt_std` magnitudes are not comparable with each other.
 
 `bathy_std` is the exception: `_extract_geometry_bathy` computes mean *and* std of the clipped
 values inside each geometry, on the 15″ hi-res layer. It is a genuine within-polygon spread, and

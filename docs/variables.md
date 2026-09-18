@@ -28,23 +28,23 @@ All variables configured in `config.yaml`. Each key maps to one data stream with
 ### `sst` — Sea Surface Temperature
 - **Dataset (rep):** `METOFFICE-GLO-SST-L4-REP-OBS-SST`
 - **Dataset (nrt):** `METOFFICE-GLO-SST-L4-NRT-OBS-SST-V2`
-- **Resolution:** 0.05°, resampled to 0.25°
+- **Resolution:** 0.05°, area-averaged onto the 0.25° grid
 - **Variables:** analysed SST (°C), analysis error (K), distance to nearest SST front (km)
 
 ### `ssh` — Sea Surface Height
 - **Dataset (rep):** `cmems_obs-sl_glo_phy-ssh_my_allsat-l4-duacs-0.125deg_P1D`
 - **Dataset (nrt):** `cmems_obs-sl_glo_phy-ssh_nrt_allsat-l4-duacs-0.125deg_P1D`
-- **Resolution:** 0.125°, resampled to 0.25°
+- **Resolution:** 0.125°, area-averaged onto the 0.25° grid
 - **Variables:** ADT (m), SLA (m), geostrophic velocities u/v (m s⁻¹), geostrophic kinetic energy (m² s⁻²)
 
 ### `mld` — Mixed Layer Depth
 - **Dataset (rep):** `cmems_mod_glo_phy_my_0.083deg_P1D-m`
-- **Resolution:** 0.083°, resampled to 0.25°
+- **Resolution:** 0.083°, area-averaged onto the 0.25° grid
 - **Variables:** mixed layer depth (m) — depth where density increase corresponds to a 0.2 °C temperature decrease relative to 10 m
 
 ### `chl` — Chlorophyll-a
 - **Dataset (rep):** `cmems_obs-oc_glo_bgc-plankton_my_l4-gapfree-multi-4km_P1D`
-- **Resolution:** 4 km, resampled to 0.25°
+- **Resolution:** 4 km, area-averaged onto the 0.25° grid
 - **Variables:** CHL concentration (mg m⁻³), distance to nearest CHL front (km)
 
 ### `seapodym` — Micronekton (SEAPODYM)

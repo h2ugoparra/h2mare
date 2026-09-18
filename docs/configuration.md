@@ -81,7 +81,13 @@ neither the direction nor the ratio has to be declared:
 | Coarser base grid | area-weighted mean | `sst` 0.05° (5×5 source cells per output cell), `chl` 1/24°, `thetao`/`mld` 1/12° |
 
 The mean skips NaN cells and normalises by the valid area, so a cell that is
-part land still reports the mean of its water rather than nothing.
+part land reports the mean of its water — land contributes nothing to the value
+rather than dragging it. **Any valid area is enough to give a cell a value**, so
+the compiled product reaches as far into the coast as its sources do: on
+2024-02-15 that is 74,993 sea cells for `sst`, against 71,743 under a
+point-sampled interpolation. A cell touching a single 0.05° pixel of ocean is
+therefore real, if noisier than an open-ocean one; `regrid_to`'s `min_coverage`
+can require a minimum valid fraction, and the compile leaves it at 0.
 
 `nearest` is never chosen automatically — a mean is right for almost every
 field, and the exceptions are only visible to someone who knows what the numbers
