@@ -525,6 +525,77 @@ def check_grid_compatible(stored: xr.Dataset, incoming: xr.Dataset) -> None:
         )
 
 
+def depth_mismatch(stored: xr.Dataset, incoming: xr.Dataset) -> str | None:
+    """
+    How *incoming*'s depth levels differ from *stored*'s, or None if they match.
+
+    Depth is compared by *equality*, not by step and phase like the horizontal
+    axes: model levels are irregular by design (0.494, 1.541, 2.646 … metres),
+    so there is no lattice to compare. The tolerance is the one
+    :data:`~h2mare.storage.zarr_reader.AXIS_SNAP_TOL` already sets for depth,
+    imported rather than restated so the two cannot drift apart.
+
+    A dataset without a depth coordinate is not compared: adding a 2-D variable
+    to a store whose other variables have depth, or the reverse, changes no
+    shared axis, because a variable keeps whatever dimensions it was written
+    with.
+
+    Returned rather than raised so the write path can refuse an append and
+    merely warn on a full rewrite from the one comparison.
+    """
+    # Imported here rather than at module scope: zarr_reader imports this module.
+    from h2mare.storage.zarr_reader import AXIS_SNAP_TOL
+
+    if "depth" not in stored.coords or "depth" not in incoming.coords:
+        return None
+
+    old = np.asarray(stored["depth"].values, dtype="float64")
+    new = np.asarray(incoming["depth"].values, dtype="float64")
+
+    if old.shape == new.shape and np.allclose(
+        old, new, rtol=0, atol=AXIS_SNAP_TOL["depth"]
+    ):
+        return None
+    return f"stored {_level_summary(old)}, incoming {_level_summary(new)}"
+
+
+def check_depth_compatible(stored: xr.Dataset, incoming: xr.Dataset) -> None:
+    """
+    Refuse to write one set of depth levels into a store that holds another.
+
+    The same outer join :func:`check_grid_compatible` guards on lat/lon applies
+    to ``depth``, with the same silent result: widening ``depth_range`` and
+    running on means the store's depth axis unions to hold both sets, and every
+    date written before the change reads NaN at the new levels.
+
+    Only for a write that keeps some of the stored data. Incoming data spanning
+    a whole file replaces it, which is how a store is legitimately moved onto
+    new levels — the caller decides which case it is.
+
+    Raises:
+        ValueError: if both carry a depth axis and the two differ.
+    """
+    reason = depth_mismatch(stored, incoming)
+    if reason is None:
+        return
+    raise ValueError(
+        f"Incoming data has different depth levels than the store: {reason}. "
+        f"An append would union the two into one axis holding both, leaving "
+        f"every already-stored date NaN at the levels it was written without. "
+        f"Changing `depth_range` or `depth_levels` means rewriting the store, "
+        f"not extending it: re-run with explicit --start-date/--end-date "
+        f"covering the whole period so each file is replaced, and note that "
+        f"levels the new run does not fetch are dropped."
+    )
+
+
+def _level_summary(levels: np.ndarray, limit: int = 4) -> str:
+    """``depth`` values for a message, abbreviated once there are many."""
+    shown = ", ".join(f"{v:g}" for v in levels[:limit])
+    suffix = f", … ({levels.size} levels)" if levels.size > limit else ""
+    return f"[{shown}{suffix}]"
+
+
 #: Attribute name prefixes carrying the source file's own encoding.
 _SOURCE_ENCODING_PREFIXES = ("GRIB_",)
 

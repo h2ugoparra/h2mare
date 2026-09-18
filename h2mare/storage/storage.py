@@ -16,7 +16,9 @@ import xarray as xr
 from loguru import logger
 
 from h2mare.storage.xarray_helpers import (
+    check_depth_compatible,
     check_grid_compatible,
+    depth_mismatch,
     int16_scale,
     snap_grid_coords,
 )
@@ -164,6 +166,24 @@ def _time_bounds(ds: xr.Dataset) -> tuple[pd.Timestamp, pd.Timestamp]:
     """First and last actual timestamps on *ds*'s time axis."""
     times = ds.time.values
     return pd.Timestamp(times[0]), pd.Timestamp(times[-1])
+
+
+def _replaces_whole_store(ds_old: xr.Dataset, ds_new: xr.Dataset) -> bool:
+    """
+    Whether *ds_new* covers every timestamp *ds_old* holds, so none survives.
+
+    The same condition ``_resolve_overlap`` answers None to — kept as one
+    predicate so a write that discards the stored data and a check that assumes
+    it does cannot disagree. A dataset without a time axis (a static like bathy)
+    replaces nothing.
+    """
+    if "time" not in ds_old.dims or "time" not in ds_new.dims:
+        return False
+    if ds_old.sizes["time"] == 0 or ds_new.sizes["time"] == 0:
+        return False
+    old_first, old_last = _time_bounds(ds_old)
+    new_first, new_last = _time_bounds(ds_new)
+    return new_first <= old_first and new_last >= old_last
 
 
 def _check_packed_range(
@@ -353,6 +373,22 @@ def _append_data(var_key: str, ds_new: xr.Dataset, path: Path) -> None:
     # here, so this is the one place every write is checked.
     try:
         check_grid_compatible(ds_old, ds_new)
+        # Depth is refused only when something of the stored axis would survive
+        # to be unioned with. Incoming data spanning the whole file replaces it
+        # outright (_resolve_overlap returns None for exactly this case), which
+        # is how a store is legitimately moved onto new levels — but it also
+        # drops any level the new run did not fetch, so it is said out loud
+        # rather than left to be discovered in the data.
+        if _replaces_whole_store(ds_old, ds_new):
+            reason = depth_mismatch(ds_old, ds_new)
+            if reason is not None:
+                logger.warning(
+                    f"{path.name}: rewriting onto different depth levels "
+                    f"({reason}). The file is replaced, so levels it held and "
+                    f"this run did not fetch are dropped."
+                )
+        else:
+            check_depth_compatible(ds_old, ds_new)
     except ValueError as e:
         ds_old.close()
         raise ValueError(f"{path.name}: {e}") from None
