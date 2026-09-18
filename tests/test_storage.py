@@ -264,7 +264,12 @@ class TestFastAppend:
         )
         result.close()
 
-    def test_grid_mismatch_falls_back_to_rewrite(self, tmp_path):
+    def test_wider_extent_falls_back_to_rewrite(self, tmp_path):
+        """
+        The fast path appends along time in place, so it can only run when the
+        other axes are identical. A wider bbox on the same lattice is a legal
+        append — the cells at the ends are new — but not one it can do.
+        """
         from h2mare.storage import storage as storage_mod
 
         path = tmp_path / "sst.zarr"
@@ -273,10 +278,10 @@ class TestFastAppend:
         times = pd.date_range("2020-01-06", periods=3, freq="D")
         rng = np.random.default_rng(5)
         ds_new = xr.Dataset(
-            {"sst": (["time", "lat", "lon"], rng.uniform(10, 30, (3, 3, 3)))},
+            {"sst": (["time", "lat", "lon"], rng.uniform(10, 30, (3, 4, 3)))},
             coords={
                 "time": times,
-                "lat": [30.0, 36.0, 40.0],  # differs from stored grid
+                "lat": [30.0, 35.0, 40.0, 45.0],  # same 5° lattice, one cell wider
                 "lon": [-10.0, -5.0, 0.0],
             },
         )

@@ -27,7 +27,11 @@ from h2mare.storage.provenance import (
 )
 from h2mare.storage.recovery import recover_zarr_store
 from h2mare.storage.storage import write_append_zarr
-from h2mare.storage.xarray_helpers import apply_cf_attrs, chunk_dataset
+from h2mare.storage.xarray_helpers import (
+    apply_cf_attrs,
+    check_grid_compatible,
+    chunk_dataset,
+)
 from h2mare.storage.zarr_catalog import ZarrCatalog
 from h2mare.types import BBox, DateLike, DateRange, FilePeriod
 from h2mare.utils.datetime_utils import normalize_date
@@ -235,6 +239,7 @@ class Compiler:
             return
 
         self.base_grid = GridBuilder(self.bbox, dx, dy).generate_grid()
+        self._check_store_grid()
 
         # time chunks
         chunks = split_time_range(requested_range, self.file_period)
@@ -316,6 +321,26 @@ class Compiler:
             f"({requested_range.start.date()} → {requested_range.end.date()}) "
             f"in {time.perf_counter() - t0:.1f}s"
         )
+
+    def _check_store_grid(self) -> None:
+        """
+        Refuse a run whose base grid is not the one the store already holds.
+
+        ``run(dx=...)`` is a free parameter, and the write path would merge a
+        different grid into the store rather than reject it — every variable
+        NaN at the other grid's cells. :func:`check_grid_compatible` is the
+        check that catches it, and it runs there too; doing it here as well
+        turns a wrong ``dx`` into a failure before the first chunk is read
+        rather than after one has been computed.
+        """
+        existing = sorted(self.catalog.store_root.glob("*.zarr"))
+        if not existing:
+            return
+        with xr.open_zarr(existing[-1], consolidated=False) as stored:
+            try:
+                check_grid_compatible(stored, self.base_grid)
+            except ValueError as e:
+                raise ValueError(f"{existing[-1].name}: {e}") from None
 
     # =========== DATE RANGE RESOLUTION ===========
     def _compute_source_coverage(self) -> dict[str, DateRange]:
