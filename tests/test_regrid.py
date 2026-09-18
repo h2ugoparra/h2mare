@@ -164,6 +164,78 @@ class TestNearest:
         np.testing.assert_array_equal(result["lat"].values, target["lat"].values)
 
 
+class TestPerVariableMethods:
+    """One store mixes fields a mean fits with fields it destroys."""
+
+    @staticmethod
+    def _eddy_like() -> xr.Dataset:
+        rng = np.random.default_rng(0)
+        grid = _grid(0.05, n=10)
+        return xr.Dataset(
+            {
+                "track": xr.DataArray(
+                    rng.integers(1, 100_000, size=(10, 10)).astype("float32"),
+                    dims=("lat", "lon"),
+                ),
+                "dist_km": xr.DataArray(
+                    rng.random((10, 10)).astype("float32") * 100, dims=("lat", "lon")
+                ),
+            },
+            coords={"lat": grid["lat"], "lon": grid["lon"]},
+        )
+
+    def test_each_variable_follows_its_own_method(self):
+        ds = self._eddy_like()
+        target = _grid(0.25, n=2)
+
+        result = regrid_to(ds, target, methods={"track": "nearest"})
+
+        ids = ds["track"].values
+        assert set(np.unique(result["track"].values)).issubset(set(np.unique(ids)))
+        expected = ds["dist_km"].values[:5, :5].mean()
+        assert float(result["dist_km"][0, 0]) == pytest.approx(expected, rel=1e-3)
+
+    def test_unlisted_variables_keep_the_automatic_choice(self):
+        ds = self._eddy_like()
+        target = _grid(0.25, n=2)
+
+        overridden = regrid_to(ds, target, methods={"track": "nearest"})
+        plain = regrid_to(ds, target)
+
+        np.testing.assert_allclose(
+            overridden["dist_km"].values, plain["dist_km"].values
+        )
+
+    def test_names_that_match_nothing_are_ignored(self):
+        ds = self._eddy_like()
+        target = _grid(0.25, n=2)
+        result = regrid_to(ds, target, methods={"absent": "nearest"})
+        np.testing.assert_allclose(
+            result["track"].values, regrid_to(ds, target)["track"].values
+        )
+
+    def test_merged_parts_share_one_grid(self):
+        target = GridBuilder(BBox(-80, 0, 10, 70), 0.25, 0.25).generate_grid()
+        grid = _grid(0.05, start=-80.0, n=200)
+        ds = xr.Dataset(
+            {
+                "track": xr.DataArray(
+                    np.ones((200, 200), "float32"), dims=("lat", "lon")
+                ),
+                "dist_km": xr.DataArray(
+                    np.ones((200, 200), "float32"), dims=("lat", "lon")
+                ),
+            },
+            coords={"lat": grid["lat"], "lon": grid["lon"]},
+        )
+
+        result = regrid_to(ds, target, methods={"track": "nearest"})
+
+        assert result.sizes["lat"] == target.sizes["lat"]
+        assert result.sizes["lon"] == target.sizes["lon"]
+        assert np.array_equal(result["lat"].values, target["lat"].values)
+
+
 class TestGridIdentity:
     @pytest.mark.parametrize("step", [0.05, 0.25, 0.5])
     def test_coords_are_bit_identical_to_target(self, step):

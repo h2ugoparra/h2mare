@@ -2,7 +2,7 @@
 Functions for geographic distance calculations, Grid creation and land cover cliping
 """
 
-from typing import Literal, Optional
+from typing import Mapping, Optional
 
 import numpy as np
 import xarray as xr
@@ -11,7 +11,7 @@ from loguru import logger
 from numpy.typing import NDArray
 from scipy.spatial import KDTree
 
-from h2mare.types import BBox
+from h2mare.types import BBox, RegridMethod
 
 _EARTH_RADIUS_KM: float = 6371.0
 
@@ -104,8 +104,6 @@ _RATIO_TOL = 0.01
 #: before the axis is refused as irregular. Rounding to 4 decimals moves a label
 #: by at most 5e-5, so this is twice the largest legitimate offset.
 _AXIS_FIT_TOL = 1e-4
-
-RegridMethod = Literal["auto", "linear", "nearest", "conservative"]
 
 
 def axis_step(values: NDArray[np.float64] | xr.DataArray) -> float:
@@ -243,6 +241,7 @@ def regrid_to(
     target: xr.Dataset,
     *,
     method: RegridMethod = "auto",
+    methods: Optional[Mapping[str, RegridMethod]] = None,
     min_coverage: float = 0.0,
 ) -> xr.Dataset:
     """
@@ -259,12 +258,16 @@ def regrid_to(
       every source cell in the target footprint.
 
     ``nearest`` is never chosen automatically. It is for fields a mean would
-    destroy — an identifier, a class — and has to be asked for.
+    destroy — an identifier, a class — and has to be asked for, per variable,
+    through *methods*: an eddy track ID averaged with its neighbour's names a
+    third eddy that does not exist.
 
     Args:
         ds: Dataset on a rectilinear lat/lon grid, both axes increasing.
         target: Dataset whose ``lat``/``lon`` define the output grid.
-        method: Override the choice described above.
+        method: Override the choice described above, for every variable.
+        methods: Per-variable overrides, keyed by the variable's name in *ds*.
+            Variables not named here follow *method*.
         min_coverage: Fraction of a target cell that must be valid (not NaN) for
             it to carry a value, for the conservative path only. ``0.0`` (the
             default) gives a value to any cell with some valid area.
@@ -273,6 +276,24 @@ def regrid_to(
         *ds* on the target grid, carrying the target's own coordinate objects so
         that separately regridded variables merge rather than union.
     """
+    if methods:
+        groups: dict[RegridMethod, list[str]] = {}
+        for name in ds.data_vars:
+            groups.setdefault(methods.get(str(name), method), []).append(str(name))
+        if len(groups) > 1:
+            # join="exact": each part already carries the target's coordinates,
+            # so anything but an exact match means one of them was not regridded.
+            merged = xr.merge(
+                [
+                    regrid_to(ds[names], target, method=m, min_coverage=min_coverage)
+                    for m, names in groups.items()
+                ],
+                join="exact",
+            )
+            merged.attrs = dict(ds.attrs)
+            return merged
+        method = next(iter(groups), method)
+
     if method == "auto":
         ratio = max(
             axis_step(target["lat"].values) / axis_step(ds["lat"].values),

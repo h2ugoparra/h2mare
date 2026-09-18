@@ -120,10 +120,12 @@ class TestCompileBathy:
         bathy_cfg = MagicMock()
         bathy_cfg.data_file = "bathy.nc"
         bathy_cfg.local_folder = "bathy"
-        # A MagicMock invents any attribute asked of it, so this has to be set
-        # explicitly: without it bathy would appear to declare a store_root of
-        # its own and resolve under a mock instead of remote_store_root.
+        # A MagicMock invents any attribute asked of it, so these have to be set
+        # explicitly: without them bathy would appear to declare a store_root of
+        # its own and resolve under a mock instead of remote_store_root, and to
+        # declare regrid overrides whose method is a mock rather than a name.
         bathy_cfg.store_root = None
+        bathy_cfg.regrid = None
         compiler.app_config.variables["bathy"] = bathy_cfg
 
         fake_ds = _daily_ds("elevation", _DATES).isel(time=0).drop_vars("time")
@@ -944,6 +946,42 @@ class TestCompileDefault:
         # Mean of the 4x4 block behind the first cell, not the centre sample.
         expected = values[0, :4, :4].mean()
         assert float(result["ssh"][0, 0, 0]) == pytest.approx(expected, rel=1e-3)
+
+    def test_config_regrid_override_reaches_the_variable(self, tmp_path):
+        """
+        Regression: eddy columns are properties of the nearest eddy, and both
+        interpolating and averaging them invent a value belonging to no eddy —
+        an averaged track ID names an eddy that does not exist.
+        """
+        compiler = _make_compiler(tmp_path)
+        compiler.app_config.variables["eddies"] = SimpleNamespace(
+            regrid={"ac_track": "nearest"}
+        )
+        step = 0.0625
+        lat = 30.0 - step * 2 + (np.arange(8) + 0.5) * step
+        lon = -10.0 - step * 2 + (np.arange(8) + 0.5) * step
+        rng = np.random.default_rng(0)
+        ids = rng.integers(1, 100_000, size=(1, 8, 8)).astype("float32")
+        ds = xr.Dataset(
+            {
+                "ac_track": xr.DataArray(ids, dims=["time", "lat", "lon"]),
+                "ac_dist_km": xr.DataArray(
+                    rng.random((1, 8, 8)).astype("float32"), dims=["time", "lat", "lon"]
+                ),
+            },
+            coords={"time": _DATES[:1], "lat": lat, "lon": lon},
+        )
+        catalog = _make_catalog(ds)
+        catalog.var_key = "eddies"
+
+        result = compile_default(compiler, catalog, _DR)
+
+        assert result is not None
+        tracks = result["ac_track"].values
+        assert set(np.unique(tracks)).issubset(set(np.unique(ids)))
+        # The continuous column beside it still averages.
+        expected = ds["ac_dist_km"].values[0, :4, :4].mean()
+        assert float(result["ac_dist_km"][0, 0, 0]) == pytest.approx(expected, rel=1e-3)
 
 
 class TestCompileDefaultHourly:

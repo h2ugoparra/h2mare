@@ -154,6 +154,22 @@ variables:
     bbox: [-80, 0, 10, 70]
     trajectory_format: true
     rename_lonlat: true
+    # Each of these holds a property of whichever eddy is nearest, so it is
+    # constant over that eddy's neighbourhood and a mean across a boundary
+    # describes neither eddy — a track ID averaged with its neighbour's names
+    # an eddy that does not exist. dist_km and normdist are left out on
+    # purpose: those two are continuous fields and do average.
+    regrid:
+      ac_track: nearest
+      ac_ndays: nearest
+      ac_amp: nearest
+      ac_speed: nearest
+      ac_speedrad_km: nearest
+      c_track: nearest
+      c_ndays: nearest
+      c_amp: nearest
+      c_speed: nearest
+      c_speedrad_km: nearest
   
   atm-instante:
     local_folder: CDS_Atm_instante
