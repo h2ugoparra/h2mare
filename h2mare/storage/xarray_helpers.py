@@ -431,6 +431,100 @@ def snap_grid_coords(ds: xr.Dataset, decimals: int = GRID_COORD_DECIMALS) -> xr.
     return ds.assign_coords(new_coords) if new_coords else ds
 
 
+#: How far two axes' steps may differ and still count as the same grid, relative
+#: to the step. Labels are rounded to ``GRID_COORD_DECIMALS`` on write, which
+#: moves a measured step by ~1e-6 of itself on a 280-cell axis. The differences
+#: worth catching are whole ratios apart — 0.25° against 1/12° is 3×.
+_STEP_REL_TOL = 1e-4
+
+#: How far the two axes' cell centres may sit out of phase, in cells. The
+#: failure this catches is a half-cell offset (0.5), so anything under a
+#: hundredth of a cell is float noise rather than a different lattice.
+_PHASE_TOL_CELLS = 0.01
+
+
+def _axis_mismatch(stored: np.ndarray, incoming: np.ndarray, name: str) -> str | None:
+    """
+    Why *incoming* is not on the same lattice as *stored*, or None if it is.
+
+    Same lattice means same step and same cell phase; the two need not cover
+    the same extent, because widening a bbox legitimately adds cells at the
+    ends. Different step or phase is not a wider grid but a *second* grid,
+    which an append would union into one axis carrying both.
+    """
+    # Imported here: utils.spatial pulls in scipy and the land mask, which the
+    # write path should not load just to compare two axes.
+    from h2mare.utils.spatial import axis_step
+
+    if stored.size < 2 or incoming.size < 2:
+        # A single cell has no step to compare, so there is nothing to refuse.
+        return None
+
+    try:
+        stored_step = axis_step(stored)
+        incoming_step = axis_step(incoming)
+    except ValueError as e:
+        return (
+            f"'{name}' is not a regular axis ({e}). A stored axis like this is "
+            f"usually one that already carries two grids unioned together."
+        )
+
+    if abs(incoming_step - stored_step) > _STEP_REL_TOL * abs(stored_step):
+        return (
+            f"'{name}' step differs: stored {stored_step:.6g}°, "
+            f"incoming {incoming_step:.6g}°"
+        )
+
+    offset_cells = (incoming[0] - stored[0]) / stored_step
+    if abs(offset_cells - round(offset_cells)) > _PHASE_TOL_CELLS:
+        return (
+            f"'{name}' cells sit out of phase: stored centres start at "
+            f"{stored[0]:.6g}°, incoming at {incoming[0]:.6g}°, which is "
+            f"{offset_cells:.3f} cells apart rather than a whole number"
+        )
+    return None
+
+
+def check_grid_compatible(stored: xr.Dataset, incoming: xr.Dataset) -> None:
+    """
+    Refuse to write data onto a store that is on a different grid.
+
+    An append merges the two with an outer join, which aligns labels that match
+    and *unions* those that do not. Two grids of different resolution therefore
+    produce one axis holding every cell of both, each variable NaN at the other
+    grid's cells — a store that is silently wrong rather than a write that
+    failed. Compiling at a different ``dx`` is the way to reach this, so the
+    check names the remedy: a different grid belongs in its own store.
+
+    Extent is not compared. Widening a bbox adds cells at the ends of the same
+    lattice, which merges correctly and is a supported thing to do.
+
+    Raises:
+        ValueError: if either horizontal axis differs in step or phase.
+    """
+    problems = [
+        reason
+        for name in ("lat", "lon")
+        if name in stored.coords and name in incoming.coords
+        for reason in [
+            _axis_mismatch(
+                np.asarray(stored[name].values, dtype="float64"),
+                np.asarray(incoming[name].values, dtype="float64"),
+                name,
+            )
+        ]
+        if reason is not None
+    ]
+    if problems:
+        raise ValueError(
+            "Incoming data is on a different grid than the store: "
+            + "; ".join(problems)
+            + ". An append would union the two into one axis holding both "
+            "grids. Write this grid to its own store instead — give it its own "
+            "`local_folder` and `dataset_id_rep` in config.yaml."
+        )
+
+
 #: Attribute name prefixes carrying the source file's own encoding.
 _SOURCE_ENCODING_PREFIXES = ("GRIB_",)
 

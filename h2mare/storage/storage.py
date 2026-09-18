@@ -15,7 +15,11 @@ import pandas as pd
 import xarray as xr
 from loguru import logger
 
-from h2mare.storage.xarray_helpers import int16_scale, snap_grid_coords
+from h2mare.storage.xarray_helpers import (
+    check_grid_compatible,
+    int16_scale,
+    snap_grid_coords,
+)
 from h2mare.types import BBox
 
 
@@ -343,6 +347,16 @@ def _append_data(var_key: str, ds_new: xr.Dataset, path: Path) -> None:
         path: file path created by ``ZarrCatalog(var_key).build_file_path()``
     """
     ds_old = xr.open_zarr(path, consolidated=False)
+
+    # Before anything is merged: a store on another grid cannot be appended to,
+    # only unioned with, and the union is silent. Both branches below go through
+    # here, so this is the one place every write is checked.
+    try:
+        check_grid_compatible(ds_old, ds_new)
+    except ValueError as e:
+        ds_old.close()
+        raise ValueError(f"{path.name}: {e}") from None
+
     ds_old_vars = set(ds_old.data_vars)
     ds_new_vars = set(ds_new.data_vars)
 
