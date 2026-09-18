@@ -16,6 +16,25 @@ from h2mare.types import BBox, RegridMethod
 _EARTH_RADIUS_KM: float = 6371.0
 
 
+def to_unit_sphere(lats: NDArray, lons: NDArray) -> NDArray[np.float64]:
+    """
+    Project lat/lon degrees onto the unit sphere as ``(x, y, z)``.
+
+    The one projection every nearest-neighbour search here indexes on. Straight
+    line distance between two points of it (the chord) rises with the angle
+    between them, so the nearest neighbour by chord *is* the nearest by
+    great-circle, and one converts to the other exactly. Searching on
+    ``(lat, lon)`` instead treats a degree of longitude as a degree of latitude,
+    which is only true at the equator.
+    """
+    lat_rad = np.deg2rad(np.asarray(lats, dtype="float64"))
+    lon_rad = np.deg2rad(np.asarray(lons, dtype="float64"))
+    cos_lat = np.cos(lat_rad)
+    return np.column_stack(
+        (cos_lat * np.cos(lon_rad), cos_lat * np.sin(lon_rad), np.sin(lat_rad))
+    )
+
+
 def haversine_min_distance_kdtree(
     coords1: NDArray[np.float64],
     coords2: NDArray[np.float64],
@@ -24,10 +43,12 @@ def haversine_min_distance_kdtree(
     For each point in ``coords1``, compute the great-circle distance (km) to
     the nearest point in ``coords2`` using a KD-tree nearest-neighbour search.
 
-    Points are projected to radians before indexing. The KD-tree uses Euclidean
-    distance on radian coordinates, which approximates the haversine distance
-    closely enough for nearest-neighbour ranking over typical oceanographic
-    spatial scales.
+    Points are indexed on the unit sphere (:func:`to_unit_sphere`) and the
+    chord the tree returns is converted back to an arc, so both the neighbour
+    chosen and the distance reported are exact. Indexing ``(lat, lon)`` directly
+    would be Euclidean in a plane: a degree of longitude would count as 111 km
+    at every latitude, overstating an east-west distance by ``1/cos(lat)`` —
+    twice the true value at 60°N.
 
     Args:
         coords1: Query points as (lat, lon) pairs in decimal degrees.
@@ -54,9 +75,11 @@ def haversine_min_distance_kdtree(
     if coords2.ndim != 2 or coords2.shape[1] != 2:
         raise ValueError(f"coords2 must have shape (M, 2), got {coords2.shape}")
 
-    tree = KDTree(np.radians(coords2))
-    distances, _ = tree.query(np.radians(coords1), k=1)
-    return distances * _EARTH_RADIUS_KM
+    tree = KDTree(to_unit_sphere(coords2[:, 0], coords2[:, 1]))
+    chord, _ = tree.query(to_unit_sphere(coords1[:, 0], coords1[:, 1]), k=1)
+    # Arc from chord on the unit sphere: d = 2R asin(c/2). The clip only guards
+    # a chord of 2 (antipodal) rounding above it and making arcsin undefined.
+    return 2 * _EARTH_RADIUS_KM * np.arcsin(np.clip(chord / 2, 0.0, 1.0))
 
 
 class GridBuilder:
