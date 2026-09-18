@@ -917,6 +917,34 @@ class TestCompileDefault:
         result = compile_default(compiler, catalog, _DR)
         assert isinstance(result, xr.Dataset)
 
+    def test_finer_store_is_aggregated_not_sampled(self, tmp_path):
+        """
+        Regression: a store finer than the base grid was put on it with
+        ``interp_like``, which samples the target cell centre and ignores the
+        rest of the cell — 1 of 25 source cells going 0.05° → 0.25°.
+        """
+        compiler = _make_compiler(tmp_path)
+        # Two base-grid cells' worth of a 4x-finer store. The signal sits in one
+        # corner of the first cell, away from its centre: a linear ramp would
+        # not tell the two methods apart, since bilinear interpolation of a
+        # ramp already equals its mean.
+        step = 0.0625
+        lat = 30.0 - step * 2 + (np.arange(8) + 0.5) * step
+        lon = -10.0 - step * 2 + (np.arange(8) + 0.5) * step
+        values = np.zeros((1, 8, 8), dtype="float32")
+        values[0, 0, 0] = 16.0
+        ds = xr.Dataset(
+            {"ssh": xr.DataArray(values, dims=["time", "lat", "lon"])},
+            coords={"time": _DATES[:1], "lat": lat, "lon": lon},
+        )
+
+        result = compile_default(compiler, _make_catalog(ds), _DR)
+
+        assert result is not None
+        # Mean of the 4x4 block behind the first cell, not the centre sample.
+        expected = values[0, :4, :4].mean()
+        assert float(result["ssh"][0, 0, 0]) == pytest.approx(expected, rel=1e-3)
+
 
 class TestCompileDefaultHourly:
     """
