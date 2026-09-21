@@ -242,7 +242,7 @@ class Compiler:
         written_paths: list[Path] = []
 
         for i, chunk in enumerate(chunks, 1):
-            logger.debug(
+            logger.info(
                 f"Chunk {i}/{len(chunks)}: {chunk.start.date()} -> {chunk.end.date()}"
             )
 

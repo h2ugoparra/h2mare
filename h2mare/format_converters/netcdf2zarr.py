@@ -314,7 +314,8 @@ class Netcdf2Zarr(BaseConverter):
             )
             return False
 
-        for period, paths in file_groups.items():
+        for i, (period, paths) in enumerate(file_groups.items(), 1):
+            logger.info(f"Processing period {i}/{len(file_groups)}: {period}")
             self._process_period(period, paths)
 
         self.catalog.refresh(force=True)
@@ -675,7 +676,6 @@ class Netcdf2Zarr(BaseConverter):
             logger.debug(f"Removed spent download manifest {manifest_path}")
 
     def _process_period(self, period, paths: list[Path]) -> None:
-        logger.info(f"Processing period (year/year-month): {period}")
 
         # Keep the object open_mfdataset returned. process_dataset rebinds its
         # argument, so without this the only reference to it is lost — and
