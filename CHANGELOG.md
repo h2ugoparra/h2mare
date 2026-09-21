@@ -5,6 +5,31 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **Breaking (config):** the bathy entry's `data_file` / `data_file_hires` are
+  replaced by named `layers` (`15s`, `60s`, `0.25deg` → file name) plus
+  `compile_layer` and `extract_layer`. An old config fails at load. Config is
+  now the only place a layer's file name lives.
+- Bathy extraction reads one layer for points and geometries alike, chosen by
+  `extract_layer` or `Extractor(bathy_layer=...)`, instead of the input type
+  deciding the grid (0.25° for csv, 15s for shp).
+- A geometry's `bathy_std` is now the polygon mean of the layer's stored std,
+  the same estimator as for points and as `sst_std`/`adt_std`, rather than a
+  std of depth within the polygon.
+
+### Added
+
+- `scripts/bathymetry.py` builds a 60s layer next to the 15s one, both as tiled
+  Zarr (`etopo2022_<res>_…_bathy-std.zarr`) holding `bathy` and a 3×3 rolling
+  `bathy_std` (the entry's `derived_vars`), with the ETOPO source's global and
+  `z` attributes carried over. `--layers` builds a subset.
+- `archive_raw` is optional and defaults to `false` (delete raw files once
+  converted). Entries that set it are unaffected; set `true` where raw files
+  are costly to download again (the shipped config does for `fsle`, `eddies`).
+
 ## [0.8.1] - 2026-09-14
 
 ### Fixed

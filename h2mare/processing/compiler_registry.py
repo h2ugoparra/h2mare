@@ -19,7 +19,7 @@ from h2mare.storage.xarray_helpers import select_depth_levels
 from h2mare.storage.zarr_catalog import ZarrCatalog
 from h2mare.types import DateRange
 from h2mare.utils.datetime_utils import end_of_day
-from h2mare.utils.paths import store_root_for
+from h2mare.utils.paths import static_layer_path, store_root_for
 from h2mare.utils.spatial import clip_land_data, regrid_to
 
 if TYPE_CHECKING:
@@ -99,12 +99,12 @@ def _compile_bathy(
     date_range: DateRange,
 ) -> xr.Dataset | None:
     var_cfg = compiler.app_config.variables["bathy"]
-    if var_cfg.data_file is None:
-        raise ValueError("bathy config entry is missing required 'data_file' field")
-    # bathy is a plain NetCDF file rather than a catalogued store, so it cannot
+    # bathy is a plain static file rather than a catalogued store, so it cannot
     # go through _catalog_for and has to resolve its own root the same way.
-    bathy_root = store_root_for(var_cfg, compiler.remote_store_root)
-    data_path = bathy_root / var_cfg.local_folder / var_cfg.data_file
+    bathy_dir = (
+        store_root_for(var_cfg, compiler.remote_store_root) / var_cfg.local_folder
+    )
+    data_path = static_layer_path(var_cfg, var_cfg.compile_layer, bathy_dir)
     ds = xr.open_dataset(data_path).sel(
         lon=slice(compiler.bbox.xmin, compiler.bbox.xmax),
         lat=slice(compiler.bbox.ymin, compiler.bbox.ymax),

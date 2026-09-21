@@ -88,5 +88,5 @@ These keys are not downloaded — they are generated during the compile step.
 
 | Key | Description |
 |---|---|
-| `bathy` | Ocean bathymetry from ETOPO 2022 v1 at 0.25°. Mean depth (m) and std per grid cell. Source files are configured via `data_file` (0.25° grid, used by compiler and CSV extraction) and `data_file_hires` (native resolution, used by SHP extraction) in `config.yaml`. |
+| `bathy` | Ocean bathymetry from ETOPO 2022 v1 at 0.25°. Mean depth (m) and std per grid cell. Files are named per layer under `layers` in `config.yaml` and built by `scripts/bathymetry.py`: `15s` and `60s` (native grid, `bathy_std` a 3×3 rolling std) and `0.25deg` (std of the 15s cells in each cell). Compile reads `compile_layer`; extraction reads `extract_layer` or `Extractor(bathy_layer=...)`, for CSV and SHP alike. |
 | `moon` | Lunar illumination (%) computed from the `ephem` library. Same value broadcast across all grid cells per day. |

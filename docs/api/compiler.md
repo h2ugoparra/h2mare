@@ -67,7 +67,7 @@ Variables with no data for a given chunk are skipped with a warning rather than 
 
 | Variable | Behaviour |
 |---|---|
-| `bathy` | Read from the static NetCDF file configured via `data_file` in `config.yaml`; already on the output grid, so the regrid is an identity |
+| `bathy` | Read from the `compile_layer` of its `layers` in `config.yaml` (the 0.25° mean/std netCDF); already on the output grid, so the regrid is an identity |
 | `moon` | Lunar illumination computed from `ephem` for each day; broadcast to all grid cells |
 | `o2` | Depth-sliced at 0, 100, 500, and 1000 m before regridding |
 | `atm-accum-avg` | `dayofyear`, `month`, `quantile` coordinates dropped before merge |

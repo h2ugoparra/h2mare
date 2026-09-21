@@ -2127,3 +2127,104 @@ class TestInterruptedMidCheckpoint:
         _, all_succeeded = extractor._run_impl({"sst": None}, n_workers=1)
 
         assert not all_succeeded
+
+
+# ---------------------------------------------------------------------------
+# bathy: static layers
+# ---------------------------------------------------------------------------
+
+
+class TestExtractBathy:
+    """
+    Both input types read one configured layer, and a geometry's ``bathy_std``
+    is the polygon mean of the layer's precomputed std — not a std of depth
+    within the polygon.
+    """
+
+    # 10 x 10 cells of 0.1 deg centred on 0.0 .. 0.9.
+    _AXIS = np.round(np.arange(10) * 0.1, 1)
+
+    def _write_layer(self, path: Path, sign: float, with_std: bool = True) -> None:
+        i, j = np.meshgrid(np.arange(10), np.arange(10), indexing="ij")
+        data = {"bathy": (["lat", "lon"], sign * (i * 10.0 + j))}
+        if with_std:
+            data["bathy_std"] = (["lat", "lon"], 100.0 + i * 10 + j)
+        xr.Dataset(data, coords={"lat": self._AXIS, "lon": self._AXIS}).to_zarr(path)
+
+    def _config(self, tmp_path: Path, **over) -> SimpleNamespace:
+        (tmp_path / "ETOPO").mkdir()
+        self._write_layer(tmp_path / "ETOPO" / "b15.zarr", sign=1.0)
+        self._write_layer(tmp_path / "ETOPO" / "b60.zarr", sign=-1.0)
+        cfg = SimpleNamespace(
+            local_folder="ETOPO",
+            store_root=None,
+            layers={"15s": "b15.zarr", "60s": "b60.zarr"},
+            extract_layer="15s",
+            compiled_vars=["bathy", "bathy_std"],
+        )
+        for k, v in over.items():
+            setattr(cfg, k, v)
+        return cfg
+
+    def _points(self, tmp_path, cfg, **kwargs) -> pd.DataFrame:
+        df = pd.DataFrame(
+            {"time": ["2020-01-01"] * 2, "lon": [0.21, 0.69], "lat": [0.5, 0.31]}
+        )
+        ext = _extractor(
+            df,
+            app_config=SimpleNamespace(variables={"bathy": cfg}),
+            store_root=tmp_path,
+            **kwargs,
+        )
+        return ext.process_single_varkey("bathy")
+
+    def _polygon(self, tmp_path, cfg, **kwargs) -> pd.DataFrame:
+        # Strictly inside cells 0.2..0.4 on both axes (edges 0.15..0.45), so
+        # all_touched reaches exactly the 3 x 3 cells i, j in {2, 3, 4}.
+        gdf = _make_geodf([box(0.16, 0.16, 0.44, 0.44)], ["2020-01-01"])
+        ext = _extractor(
+            gdf,
+            app_config=SimpleNamespace(variables={"bathy": cfg}),
+            store_root=tmp_path,
+            **kwargs,
+        )
+        return ext.process_single_varkey("bathy")
+
+    def test_points_take_the_nearest_cell_of_the_default_layer(self, tmp_path):
+        out = self._points(tmp_path, self._config(tmp_path))
+
+        # (lat 0.5, lon 0.2) -> i=5, j=2; (lat 0.3, lon 0.7) -> i=3, j=7.
+        assert out["bathy"].tolist() == [52.0, 37.0]
+        assert out["bathy_std"].tolist() == [152.0, 137.0]
+
+    def test_geometry_std_is_the_polygon_mean_of_the_std_layer(self, tmp_path):
+        out = self._polygon(tmp_path, self._config(tmp_path))
+
+        assert out["bathy"].iloc[0] == pytest.approx(33.0)
+        # A std of bathy inside the polygon would be ~8.2; the layer's mean is 133.
+        assert out["bathy_std"].iloc[0] == pytest.approx(133.0)
+
+    @pytest.mark.parametrize("extract", ["_points", "_polygon"])
+    def test_bathy_layer_overrides_config_for_either_input(self, tmp_path, extract):
+        out = getattr(self, extract)(
+            tmp_path, self._config(tmp_path), bathy_layer="60s"
+        )
+
+        assert (out["bathy"] < 0).all()
+
+    def test_extract_layer_from_config_is_the_default(self, tmp_path):
+        out = self._points(tmp_path, self._config(tmp_path, extract_layer="60s"))
+
+        assert (out["bathy"] < 0).all()
+
+    def test_undeclared_bathy_layer_fails_at_construction(self, tmp_path):
+        with pytest.raises(ValueError, match="bathy_layer '30s'"):
+            self._points(tmp_path, self._config(tmp_path), bathy_layer="30s")
+
+    def test_layer_without_std_says_to_rebuild(self, tmp_path):
+        cfg = self._config(tmp_path)
+        self._write_layer(tmp_path / "ETOPO" / "old.zarr", sign=1.0, with_std=False)
+        cfg.layers["old"] = "old.zarr"
+
+        with pytest.raises(ValueError, match="Rebuild"):
+            self._points(tmp_path, cfg, bathy_layer="old")

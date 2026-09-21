@@ -208,12 +208,13 @@ class KeyVarConfigEntry(msgspec.Struct):
     dataset_id_rep: str
     # Provider: "cmems", "aviso", or "cds".
     source: str
-    # Whether this variable's raw NetCDF/GRIB files are archived into the store
-    # (and kept) after conversion, or deleted per-period. Required and explicit:
-    # True keeps raw files, False deletes them.
-    archive_raw: bool
     # Near-real-time dataset identifier. Omit for reanalysis-only products.
     dataset_id_nrt: Optional[str] = None
+    # Whether this variable's raw NetCDF/GRIB files are archived into the store
+    # (and kept) after conversion (True), or deleted per-period (False, the
+    # default). Set True where raw files are costly to fetch again (fsle, eddies):
+    # re-converting a store, e.g. to change store_dtype, re-reads them.
+    archive_raw: bool = False
     # CMEMS only. Chooses the copernicusmarine download API: True (default)
     # downloads via subset() (spatial/variable subset honoring bbox/source_vars);
     # False downloads full original files via get(). Ignored for non-CMEMS
@@ -250,12 +251,17 @@ class KeyVarConfigEntry(msgspec.Struct):
     bbox: Optional[tuple[float, float, float, float]] = None
     # Depth range [min_depth, max_depth] for 3-D variables (e.g. o2, thetao).
     depth_range: Optional[tuple[float, float]] = None
-    # Filename of the static source file at the configured output resolution.
-    # Used by compile-only variables such as bathy.
-    data_file: Optional[str] = None
-    # High-resolution static source file. Used by bathy when extracting at
-    # full native resolution (e.g. from SHP geometries).
-    data_file_hires: Optional[str] = None
+    # Static (time-less) layers a system variable such as bathy is read from,
+    # by name -> file under <store_root>/<local_folder>/ (e.g. {15s: ...zarr,
+    # 0.25deg: ...nc}). The file names live here only: scripts/bathymetry.py
+    # writes them and compile/extract read them. Resolve through
+    # utils/paths.py::static_layer_path.
+    layers: Optional[dict[str, str]] = None
+    # Layer compile reads onto the base grid (a key of `layers`).
+    compile_layer: Optional[str] = None
+    # Default layer for extraction (a key of `layers`), whatever the input
+    # type; Extractor(bathy_layer=...) overrides it for one run.
+    extract_layer: Optional[str] = None
     # Set True for trajectory-format datasets (e.g. eddies) that require
     # spatial binning before they can be stored as a gridded Zarr.
     # The standard open_mfdataset pipeline is bypassed entirely.
@@ -399,6 +405,14 @@ class KeyVarConfigEntry(msgspec.Struct):
                             f"divide the bbox's {axis} span ({hi - lo:g}°) into whole "
                             f"cells ({cells:g}). Adjust the bbox or the count."
                         )
+
+        for field in ("compile_layer", "extract_layer"):
+            layer = getattr(self, field)
+            if layer is not None and layer not in (self.layers or {}):
+                raise ValueError(
+                    f"{field} {layer!r} is not one of the declared layers "
+                    f"{sorted(self.layers or {})}"
+                )
 
         _validate_depth_keys(
             "depth_levels",

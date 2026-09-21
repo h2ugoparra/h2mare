@@ -261,8 +261,18 @@ variables:
     dataset_id_rep: Etopo_v1
     source: noaa
     bbox: [-80, 0, 10, 70]
-    data_file: etopo_0.25deg_80W-10E-0N-70N_mean-std_surface.nc
-    data_file_hires: etopo_15s_80W-10E-0N-70N_surface.zarr
+    # Static layers under <store_root>/ETOPO_Topography/, written by
+    # scripts/bathymetry.py. 15s/60s: native grid, bathy + 3x3 rolling
+    # bathy_std. 0.25deg: mean + std of the 15s cells inside each cell.
+    layers:
+      15s: etopo2022_15s_80W-10E-0N-70N_bathy-std.zarr
+      60s: etopo2022_60s_80W-10E-0N-70N_bathy-std.zarr
+      0.25deg: etopo_0.25deg_80W-10E-0N-70N_mean-std_surface.nc
+    compile_layer: 0.25deg
+    extract_layer: 15s        # Extractor(bathy_layer=...) overrides per run
+    # Applied by scripts/bathymetry.py to the native (15s, 60s) layers only.
+    derived_vars:
+      bathy_std: {op: rolling_std, source: bathy, window: 3}
 
   moon:
     local_folder: MOON_Phases
@@ -1092,6 +1102,16 @@ native_attr_overrides:
       cell_methods: null  # hourly instantaneous
     mdts:
       cell_methods: null
+
+  # The native layers (15s, 60s) written by scripts/bathymetry.py; the shared
+  # table above describes the 0.25deg layer compiled into h2ds.
+  bathy:
+    bathy:
+      comment: ETOPO 2022 v1 surface elevation on its native grid (15 or 60 arc-sec, see product_id), subset to the bathy bbox.
+        Height above the geoid, positive up, so sea floor values are negative.
+    bathy_std:
+      comment: Standard deviation of bathy over a 3x3 window of native cells centred on each cell, indicating how rough or
+        steep the terrain is. Edge cells use the part of the window that holds data.
  
  
 

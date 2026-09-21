@@ -19,7 +19,7 @@ variables:
     dataset_id_rep: <cmems-id>        # reprocessed (multiyear) dataset ID
     dataset_id_nrt: <cmems-id>        # near-real-time dataset ID (optional)
     source: cmems                     # cmems | aviso | cds
-    archive_raw: false                # keep raw files in store (true) or delete after convert (false)
+    archive_raw: false                # optional, default false: keep raw files in store (true) or delete after convert
     pattern: "(\d{4}-\d{2}-\d{2})-(\d{4}-\d{2}-\d{2})"  # filename date pattern
     subset: true                      # CMEMS only: subset() vs get() download API
     bbox: [-80, 0, 10, 70]           # [xmin, ymin, xmax, ymax]
@@ -47,7 +47,7 @@ either on an existing variable means re-converting it.
 | `dataset_id_rep` | yes | Reprocessed dataset identifier |
 | `dataset_id_nrt` | no | Near-real-time dataset identifier. Omit for reanalysis-only products |
 | `source` | yes | Provider: `cmems`, `aviso`, or `cds` |
-| `archive_raw` | yes | Whether to keep this variable's raw NetCDF/GRIB files by moving them into the store after conversion (`true`), or delete them per-period once converted (`false`). |
+| `archive_raw` | no | Whether to keep this variable's raw NetCDF/GRIB files by moving them into the store after conversion (`true`), or delete them per-period once converted (`false`, the default). Set `true` where the raw files are costly to fetch again — the shipped config does for `fsle` and `eddies` — since re-converting a store (for example to change `store_dtype`) re-reads them, and without the archive that means downloading them again. Meaningless for `bathy`, `moon` and `h2ds`, which are never converted. |
 | `pattern` | download vars | Regex matched against each raw filename to extract date component(s). Unmatched optional groups are dropped before parsing. Its capture groups must agree with `filename_date_range`: with `true`, up to **2** groups giving `(start, end)` — one group alone is read as a single day, which is why the shipped patterns make the range tail optional (`(\d{4}-\d{2}-\d{2})(?:-(\d{4}-\d{2}-\d{2}))?`); with `false`, the groups are joined with `-` and parsed as a single date (e.g. `(\d{8})` → `20210115`; `(\d{4})(\d{2})(\d{2})` → `2021-01-15`). Omit for derived/system variables (`bathy`, `moon`, `h2ds`) that are never matched against filenames. |
 | `subset` | CMEMS only | Chooses the CMEMS download API: `true` (default) uses `copernicusmarine.subset()` (spatial/variable subset honoring `bbox`/`source_vars`); `false` uses `copernicusmarine.get()` to fetch full original files. Ignored for non-CMEMS sources. |
 | `merge_time_step` | no | Set to `true` for CDS/ERA5 accumulated or averaged variables whose GRIB files have a 2-D `time × step` coordinate grid instead of a flat `time` axis (e.g. `atm-accum-avg`, `radiation`). Triggers a preprocess step that merges the two dimensions and trims overlapping timestamps at month edges. Default `false`. |
@@ -59,14 +59,15 @@ either on an existing variable means re-converting it.
 | `bbox` | no | Bounding box for subset. If omitted, the full available extent is downloaded |
 | `depth_range` | no | Continuous depth band `[min, max]` (metres) **downloaded** for 3-D variables (e.g. `o2`). Says nothing about which depths are published — that is `depth_levels`. |
 | `depth_levels` | 3-D vars | Discrete depths (metres) each 3-D variable is **published** at, keyed by the variable's name in the store: `{thetao: [0, 50, 100], uo: [0]}`. Each level becomes a column `<variable>_<level>` (`thetao_50`), and these names belong in `compiled_vars` — config load refuses a declared `compiled_vars` that leaves one out. Store variables not listed pass through when they have no depth axis, so one store can mix 2-D and 3-D fields (`zos` beside `thetao`); a variable **with** a depth axis that is not listed is refused rather than averaged over its whole range, as is a listed name the store does not hold. Levels are matched to the store's axis by nearest depth and keep the requested name (`o2_1000` off a 902 m axis). Any var_key with levels is compiled by the depth processor — no registry entry needed. Also the default for extraction, where only the variables requested are sliced. |
-| `data_file` | no | Filename of the static source file at the configured output resolution (e.g. 0.25°). Used by compile-only variables such as `bathy` |
-| `data_file_hires` | no | Filename of the high-resolution static source file. Used by `bathy` when extracting at full native resolution (e.g. from SHP geometries) |
+| `layers` | `bathy` | Static layers the variable is read from, by name → file under `<store_root>/<local_folder>/`: `{15s: etopo2022_15s_….zarr, 60s: etopo2022_60s_….zarr, 0.25deg: etopo_0.25deg_….nc}`. The only place a layer's file name lives — `scripts/bathymetry.py` writes each file there, compile and extraction read it. The native layers (15s, 60s) hold `bathy` plus the entry's `derived_vars` (`bathy_std`, a 3×3 rolling std) and keep the ETOPO source attributes; the 0.25° layer holds the mean and std of the 15s cells inside each cell. |
+| `compile_layer` | `bathy` | Layer compile puts on the base grid — the layer's **name**, a key of `layers`, not its file. |
+| `extract_layer` | no | Default layer for extraction — a key of `layers` — for point and geometry input alike; `Extractor(bathy_layer=...)` overrides it for one run. Without either, extracting `bathy` raises. See [The `bathy` key](#the-bathy-key). |
 | `trajectory_format` | no | Set to `true` for trajectory-format datasets (e.g. `eddies`) that require spatial binning before they can be stored as a gridded Zarr. The standard `open_mfdataset` pipeline is bypassed entirely. Default `false`. |
 | `rename_lonlat` | no | **No longer needed.** Geometry extraction now renames `lon`/`lat` to `x`/`y` for every variable, because `rioxarray`'s clip resolves spatial dims by name and only falls back to `lon`/`lat` when they carry CF attributes — which CMEMS and AVISO stores inherit from source but CDS stores and the compiled h2ds do not. Setting it changes nothing; it is kept so existing config files stay valid. Default `false`. |
 | `extract_depth_levels` | no | Extraction-only depths, same shape as `depth_levels`: `{thetao: [0]}`. Merged per variable — a variable listed here replaces its `depth_levels` entry for extraction, the others keep theirs — and never reaches compile or `compiled_vars`. **Omit it** and extraction returns exactly the columns the variable publishes, agreeing with h2ds and Parquet. A single run can also choose levels without touching config: see [Depth levels](api/extractor.md#depth-levels). |
 | `extract_depth_slices` | no | **Older form of `extract_depth_levels`**, still accepted: a list meaning `{<var_key>: [...]}`. Setting both is refused. |
 | `compile_depth_slices` | no | **Older form of `depth_levels`**, still accepted: `compile_depth_slices: [0, 100]` means `depth_levels: {<var_key>: [0, 100]}`, so it only fits a store whose single 3-D variable is named like its var_key (`o2`, `thetao`). Setting both is refused. |
-| `derived_vars` | no | Variables computed at convert time and written to the native store, keyed by output name: `{gke: {op: kinetic_energy, source: [ugos, vgos]}}`. `op` is `rolling_std` (one `source`; `window`, an odd number of cells, default 3, gives the square lon/lat box centred on each cell, which uses whatever part of the box holds data) or `kinetic_energy` (`source: [u, v]`, gives `0.5*(u²+v²)`). Sources are named as the var_key's registered processor leaves them (`sst`, not `analysed_sst`). Entries run in order, so one may read an earlier one. Missing sources, a wrong number of them, an even `window` or a misspelt field are refused. By default the result keeps any depth axis its sources have, so a derived 3-D variable needs its own `depth_levels` entry (`ke: [0]` → `ke_0`). To compute and store only some depths, add `depth: [0, 50]`: each level is matched to the nearest source depth (as `depth_levels` does) and written as a 2-D `ke_0`, `ke_50`, so the other levels are never read or stored. Such an entry is listed by those names in `compiled_vars` and must not appear in `depth_levels`; config load refuses that, and refuses two entries or a `depth_levels` column writing the same name. The cost is that changing the levels needs a reconversion, and a per-run `{"ke": [50]}` extraction override does not apply to it (ask for `ke_50` by name). Every output name needs a `variable_attrs` entry like any other. The `sst_std`, `adt_std`, `sla_std` and `gke` layers are declared this way, so removing those entries stops them being written. |
+| `derived_vars` | no | Variables computed at convert time and written to the native store, keyed by output name: `{gke: {op: kinetic_energy, source: [ugos, vgos]}}`. `op` is `rolling_std` (one `source`; `window`, an odd number of cells, default 3, gives the square lon/lat box centred on each cell, which uses whatever part of the box holds data) or `kinetic_energy` (`source: [u, v]`, gives `0.5*(u²+v²)`). Sources are named as the var_key's registered processor leaves them (`sst`, not `analysed_sst`). Entries run in order, so one may read an earlier one. Missing sources, a wrong number of them, an even `window` or a misspelt field are refused. By default the result keeps any depth axis its sources have, so a derived 3-D variable needs its own `depth_levels` entry (`ke: [0]` → `ke_0`). To compute and store only some depths, add `depth: [0, 50]`: each level is matched to the nearest source depth (as `depth_levels` does) and written as a 2-D `ke_0`, `ke_50`, so the other levels are never read or stored. Such an entry is listed by those names in `compiled_vars` and must not appear in `depth_levels`; config load refuses that, and refuses two entries or a `depth_levels` column writing the same name. The cost is that changing the levels needs a reconversion, and a per-run `{"ke": [50]}` extraction override does not apply to it (ask for `ke_50` by name). Every output name needs a `variable_attrs` entry like any other. The `sst_std`, `adt_std`, `sla_std` and `gke` layers are declared this way, so removing those entries stops them being written. `bathy` is never converted: its entry (`bathy_std`) is applied by `scripts/bathymetry.py` when it builds the native layers. |
 | `compiled_vars` | no | Exact variable names as they appear in the compiled h2ds Zarr for this var_key, accounting for any renames or derived variables produced during the Convert step (e.g. `sst` → `[sst, analysis_error, sst_std, sst_fdist]`). Used by `h2mare parquet --add-var` to select only the relevant columns from the h2ds Zarr without the caller needing to know internal variable names. |
 | `cells_per_degree` | no | The grid this var_key's own store is written on, as a whole number of cells per degree: `4` is 0.25°, `8` is 0.125°, `12` is 1/12°, `20` is 0.05°. A count rather than a step so the value is exact — `0.083` is not 1/12°, and lays 1084 cells across a 90° span where 1080 belong. Refused at load if it does not divide the bbox into whole cells. Read by the steps that *create* a grid — the compile (`h2ds`) and the eddy rasterisation — and ignored by a variable that keeps its source files' own grid. Defaults to 4. |
 | `values_at` | no | Where that grid's values sit: `cell_center` (the default, and what every existing store uses) puts them at cell centres, half a step inside each bbox edge; `grid_line` puts them where the grid lines cross, on the step's own multiples. Independent of the step — see [Where the values sit](#where-the-values-sit) for which one a given resolution wants. |
@@ -230,6 +231,46 @@ The special `h2ds` variable defines the output grid for the compile step:
 
 The `bbox` here sets the spatial extent of the compiled dataset.
 
+### The `bathy` key
+
+`bathy` is static (no time axis) and never downloaded or converted. It is read
+from named **layers**, files under `<store_root>/<local_folder>/` that
+`scripts/bathymetry.py` builds from the ETOPO 2022 v1 source files kept in that
+same folder:
+
+```yaml
+  bathy:
+    local_folder: ETOPO_Topography
+    source_vars: [z]
+    compiled_vars: [bathy, bathy_std]
+    dataset_id_rep: Etopo_v1
+    source: noaa
+    bbox: [-80, 0, 10, 70]            # extent the layers are built over
+    layers:                           # name -> file
+      15s: etopo2022_15s_80W-10E-0N-70N_bathy-std.zarr
+      60s: etopo2022_60s_80W-10E-0N-70N_bathy-std.zarr
+      0.25deg: etopo_0.25deg_80W-10E-0N-70N_mean-std_surface.nc
+    compile_layer: 0.25deg            # a name from layers, not a file
+    extract_layer: 15s
+    derived_vars:
+      bathy_std: {op: rolling_std, source: bathy, window: 3}
+```
+
+| Layer | Built from | `bathy_std` | Used by |
+|---|---|---|---|
+| `15s`, `60s` | the 15″ tiles / the global 60″ file, subset to `bbox`; tiled Zarr | `derived_vars`: 3×3 rolling std on the native grid (≈ 1.4 km / ≈ 5.5 km) | extraction |
+| `0.25deg` | the `15s` layer, coarsened | std of the 15″ cells inside each 0.25° cell | compile (h2ds) |
+
+The layer names are free-form; `scripts/bathymetry.py` builds `15s`, `60s` and
+`0.25deg` (`--layers` picks some, `0.25deg` needs `15s` first), writing each to
+the file named here — config is the only place a layer's file name lives. The
+native layers keep the ETOPO source's global attributes and `z` attributes, with
+the CF attributes from `variable_attrs` and `native_attr_overrides.bathy` over
+them. `compile_layer` and `extract_layer` must name a declared layer, which
+config load checks. Extraction reads one layer for points and geometries alike:
+a point takes the nearest cell, a geometry the polygon mean of `bathy` and
+`bathy_std` — see [Standard-deviation columns](api/extractor.md#standard-deviation-columns).
+
 ---
 
 ## Global attributes
@@ -305,12 +346,17 @@ native_attr_overrides:
       cell_methods: null  # hourly instantaneous, not a daily mean
 ```
 
-Only the hourly CDS stores need entries, on two counts: they keep ERA5's own
+The hourly CDS stores need entries on two counts: they keep ERA5's own
 units, because the conversion happens on the way into `h2ds`, and they keep
 ERA5's hourly cadence, so a `cell_methods` naming a daily reduction does not
 describe them. `radiation` is deliberately absent — `hourly_radiation` converts
 J m⁻² to W m⁻² at both cadences, and each hourly value is a mean over its own
 interval, so both the units and `time: mean` still hold.
+
+`bathy` has one too: the shared table describes the 0.25° column compiled into
+`h2ds` (std of the 15″ cells inside each cell), while the native 15″/60″ layers
+written by `scripts/bathymetry.py` hold a 3×3 rolling std, so their `comment`s
+are overridden there.
 
 ### Sign conventions
 
