@@ -27,6 +27,7 @@ from h2mare.storage.provenance import write_provenance_for_window
 from h2mare.storage.storage import write_append_zarr
 from h2mare.storage.xarray_helpers import (
     apply_cf_attrs,
+    check_grid_compatible,
     chunk_dataset,
     convert360_180,
     ds_float64_to_float32,
@@ -310,7 +311,11 @@ class EDDIESProcessor:
     # ============== PREPARE DATA ===============
     def _get_gridded_data(self, dx: float, dy: float) -> GridData:
         """
-        Create a base grid with land mask from existing data (if ZarrCatalog exists) else uses ``GridBuilder``.
+        Create a base grid with land mask on the configured grid (``GridBuilder``),
+        taking the store's own axes when it already holds that grid.
+
+        Raises:
+            ValueError: if the store holds a different grid than config declares.
         """
 
         def create_base_grid(
@@ -335,18 +340,34 @@ class EDDIESProcessor:
                 sea_mask,
             )
 
+        base_grid = GridBuilder(
+            self.bbox,
+            dx=dx,
+            dy=dy,
+            values_at=self.var_config.values_at,
+        ).generate_grid()
         grid = self._grid_from_store() if self.catalog.exists() else None
         if grid is None:
-            base_grid = GridBuilder(
-                self.bbox,
-                dx=dx,
-                dy=dy,
-                values_at=self.var_config.values_at,
-            ).generate_grid()
             lat = base_grid.coords["lat"].values
             lon = base_grid.coords["lon"].values
         else:
             lat, lon = grid
+            # The store's axes are reused only when they are the configured
+            # grid — they are what keeps float drift out of the store. On a
+            # changed cells_per_degree / values_at they are not, and reusing
+            # them silently rebuilt the store on its old grid: a full-period
+            # rewrite skips the write path's own grid check.
+            try:
+                check_grid_compatible(
+                    xr.Dataset(coords={"lat": lat, "lon": lon}), base_grid
+                )
+            except ValueError as e:
+                raise ValueError(
+                    f"[{self.var_key}] The store holds a different grid than "
+                    f"config declares: {e} To regenerate it on the configured "
+                    "grid, move its existing *.zarr files out of "
+                    f"{self.catalog.store_root} and convert every period."
+                ) from None
 
         latlon_arr, sea_mask = create_base_grid(lat, lon)
         return GridData(lat, lon, latlon_arr, sea_mask)

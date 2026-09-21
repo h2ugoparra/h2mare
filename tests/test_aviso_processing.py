@@ -387,7 +387,9 @@ def proc_with_store(tmp_path):
         )
         proc = EDDIESProcessor(
             var_key="eddies",
-            app_config=_make_config(),
+            # Grid lines, like the store on disk: the store grid is reused only
+            # when it is the configured one.
+            app_config=_make_config(entry={**_EDDIES_ENTRY, "values_at": "grid_line"}),
             store_root=store_dir,
             download_root=download_dir,
         )
@@ -487,7 +489,7 @@ class TestGetGriddedDataFallback:
             "h2mare.processing.core.aviso.xr.open_zarr",
             return_value=xr.Dataset(coords={"lat": lat, "lon": lon}),
         ):
-            proc._get_gridded_data(dx=0.5, dy=0.5)
+            proc._get_gridded_data(dx=0.1, dy=0.1)
 
         cat.open_dataset.assert_not_called()
 
@@ -503,6 +505,38 @@ class TestGetGriddedDataFallback:
 
         assert not _is_degenerate_axis(grid.lat)
         assert not _is_degenerate_axis(grid.lon)
+
+
+class TestGetGriddedDataConfiguredGrid:
+    """
+    The store grid used to win over config unconditionally, so regenerating the
+    store after changing ``cells_per_degree`` rebuilt it on its old grid, and
+    the full-period rewrite skipped the write path's grid check.
+    """
+
+    def test_changed_resolution_raises(self, proc_with_store):
+        proc, _ = proc_with_store
+        lat, lon = _canonical_axes()
+        with patch(
+            "h2mare.processing.core.aviso.xr.open_zarr",
+            return_value=xr.Dataset(coords={"lat": lat, "lon": lon}),
+        ):
+            with pytest.raises(ValueError, match="different grid than config"):
+                proc._get_gridded_data(dx=1 / 12, dy=1 / 12)
+
+    def test_matching_store_grid_is_reused_as_is(self, proc_with_store):
+        """Same lattice, drifted in the last bits: the store's axes are kept."""
+        proc, _ = proc_with_store
+        lat, lon = _canonical_axes()
+        lat, lon = np.nextafter(lat, lat + 1), np.nextafter(lon, lon + 1)
+        with patch(
+            "h2mare.processing.core.aviso.xr.open_zarr",
+            return_value=xr.Dataset(coords={"lat": lat, "lon": lon}),
+        ):
+            grid = proc._get_gridded_data(dx=0.1, dy=0.1)
+
+        assert np.array_equal(grid.lat, lat)
+        assert np.array_equal(grid.lon, lon)
 
 
 # ---------------------------------------------------------------------------
