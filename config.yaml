@@ -158,8 +158,9 @@ variables:
     # sampling choice, not a source resolution. 12 (1/12°) matches the finest
     # grid h2ds would be compiled to, so the rasterisation never has to be
     # interpolated upwards, and keeps the distance field within ~19% of a small
-    # eddy's radius. The store on disk is still the older 0.1° one — changing
-    # this takes effect when it is regenerated.
+    # eddy's radius. The store on disk is still the older 0.1° one, and convert
+    # refuses to write into it on another grid: move its *.zarr files aside and
+    # convert every period to regenerate it.
     cells_per_degree: 12
     values_at: grid_line
     # Each of these holds a property of whichever eddy is nearest, so it is
