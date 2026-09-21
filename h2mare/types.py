@@ -32,6 +32,13 @@ ReadFrom = Literal["auto", "native", "compiled"]
 #: regridder's dependencies to do so.
 RegridMethod = Literal["auto", "linear", "nearest", "conservative"]
 
+#: Where a grid's values sit. ``cell_center`` puts them at cell centres
+#: (``xmin + (k + 0.5)·step``), ``grid_line`` on the step's own multiples
+#: (``xmin + k·step``), where the grid lines cross. Independent of the step:
+#: both are valid grids at any resolution, and which one a store wants depends
+#: on its sources — see "Where the values sit" in docs/configuration.md.
+GridValuesAt = Literal["cell_center", "grid_line"]
+
 
 def to_datetime(value) -> datetime:
     """Coerce date, pd.Timestamp, str, or datetime to stdlib datetime."""

@@ -154,6 +154,14 @@ variables:
     bbox: [-80, 0, 10, 70]
     trajectory_format: true
     rename_lonlat: true
+    # The atlas gives eddy centres as continuous positions, so this grid is a
+    # sampling choice, not a source resolution. 12 (1/12°) matches the finest
+    # grid h2ds would be compiled to, so the rasterisation never has to be
+    # interpolated upwards, and keeps the distance field within ~19% of a small
+    # eddy's radius. The store on disk is still the older 0.1° one — changing
+    # this takes effect when it is regenerated.
+    cells_per_degree: 12
+    values_at: grid_line
     # Each of these holds a property of whichever eddy is nearest, so it is
     # constant over that eddy's neighbourhood and a mean across a boundary
     # describes neither eddy — a track ID averaged with its neighbour's names
@@ -272,6 +280,13 @@ variables:
     dataset_id_rep: compiled-data-0.25deg-P1D
     source: h2mare
     bbox: [-80, 0, 10, 70]
+    # The compile grid: 4 cells per degree is 0.25°, cell-centred, which is what
+    # this store holds, with the values at cell centres. Changing either key
+    # needs a new store (its own local_folder and dataset_id_rep) — the write
+    # path refuses to merge one grid into another. See "Where the values sit"
+    # in docs/configuration.md.
+    cells_per_degree: 4
+    values_at: cell_center
 
 
 # Fixed root attributes for h2ds. Everything here is a choice - what the
