@@ -376,17 +376,19 @@ class Zarr2Parquet(BaseConverter):
         """
         periods = split_time_range(window, file_period)
         # The chunk count is only informative when the window actually splits;
-        # the per-chunk DEBUG lines below cover that case in full.
+        # the per-chunk lines below cover that case in full.
         chunks = f" ({len(periods)} chunks)" if len(periods) > 1 else ""
         logger.info(f"{label}: {window.start.date()} → {window.end.date()}{chunks}")
 
         _failed = False
-        for period in periods:
+        for i, period in enumerate(periods, 1):
             dt_ini, dt_end = period.start, period.end
             # The window header above already states the range; a per-chunk
             # line only adds information when the window has several chunks.
             if len(periods) > 1:
-                logger.debug(f"  chunk {dt_ini.date()} → {dt_end.date()}")
+                logger.info(
+                    f"  chunk {i}/{len(periods)}: {dt_ini.date()} → {dt_end.date()}"
+                )
             ddf_new: pl.DataFrame | None = None
             try:
                 ds = self.zarr_repo.open_dataset(
