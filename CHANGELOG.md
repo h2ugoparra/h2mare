@@ -26,6 +26,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Zarr (`etopo2022_<res>_…_bathy-std.zarr`) holding `bathy` and a 3×3 rolling
   `bathy_std` (the entry's `derived_vars`), with the ETOPO source's global and
   `z` attributes carried over. `--layers` builds a subset.
+- `archive_raw` is optional and defaults to `false` (delete raw files once
+  converted). Entries that set it are unaffected; set `true` where raw files
+  are costly to download again (the shipped config does for `fsle`, `eddies`).
 
 ## [0.8.1] - 2026-09-14
 

@@ -208,12 +208,13 @@ class KeyVarConfigEntry(msgspec.Struct):
     dataset_id_rep: str
     # Provider: "cmems", "aviso", or "cds".
     source: str
-    # Whether this variable's raw NetCDF/GRIB files are archived into the store
-    # (and kept) after conversion, or deleted per-period. Required and explicit:
-    # True keeps raw files, False deletes them.
-    archive_raw: bool
     # Near-real-time dataset identifier. Omit for reanalysis-only products.
     dataset_id_nrt: Optional[str] = None
+    # Whether this variable's raw NetCDF/GRIB files are archived into the store
+    # (and kept) after conversion (True), or deleted per-period (False, the
+    # default). Set True where raw files are costly to fetch again (fsle, eddies):
+    # re-converting a store, e.g. to change store_dtype, re-reads them.
+    archive_raw: bool = False
     # CMEMS only. Chooses the copernicusmarine download API: True (default)
     # downloads via subset() (spatial/variable subset honoring bbox/source_vars);
     # False downloads full original files via get(). Ignored for non-CMEMS

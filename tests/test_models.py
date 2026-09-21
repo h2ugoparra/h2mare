@@ -43,6 +43,11 @@ class TestKeyVarConfigEntry:
         assert entry.depth_range is None
         assert entry.store_root is None
 
+    def test_archive_raw_defaults_to_false(self):
+        """Optional: omitted means raw files are deleted once converted."""
+        entry = {k: v for k, v in VALID_ENTRY.items() if k != "archive_raw"}
+        assert msgspec.convert(entry, KeyVarConfigEntry).archive_raw is False
+
     @pytest.mark.parametrize(
         "root",
         ["/mnt/other_drive", r"D:\data", r"\\server\share"],
