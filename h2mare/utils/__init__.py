@@ -7,7 +7,12 @@ from .datetime_utils import (
 from .files_io import safe_move_files, safe_rmtree
 from .labels import create_filename_label, create_label_from_dataset
 from .logging import log_time
-from .paths import resolve_download_path, resolve_store_path, store_root_for
+from .paths import (
+    resolve_download_path,
+    resolve_store_path,
+    static_layer_path,
+    store_root_for,
+)
 from .spatial import GridBuilder, clip_land_data, haversine_min_distance_kdtree
 
 # ``.plot`` is deliberately NOT re-exported here. Importing it eagerly made every
@@ -21,6 +26,7 @@ __all__ = [
     "resolve_store_path",
     "resolve_download_path",
     "store_root_for",
+    "static_layer_path",
     "create_filename_label",
     "create_label_from_dataset",
     "safe_move_files",

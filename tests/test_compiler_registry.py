@@ -108,17 +108,20 @@ class TestCompileProcessorsRegistry:
 
 
 class TestCompileBathy:
-    def test_raises_when_data_file_is_none(self, tmp_path):
+    def test_raises_when_compile_layer_is_not_declared(self, tmp_path):
         compiler = _make_compiler(tmp_path)
-        compiler.app_config.variables["bathy"] = MagicMock(data_file=None)
+        compiler.app_config.variables["bathy"] = MagicMock(
+            layers={"15s": "b15.zarr"}, compile_layer=None, store_root=None
+        )
 
-        with pytest.raises(ValueError, match="data_file"):
+        with pytest.raises(ValueError, match="15s"):
             _compile_bathy(compiler, None, _DR)
 
-    def test_opens_file_at_expected_path(self, tmp_path):
+    def test_opens_compile_layer_at_expected_path(self, tmp_path):
         compiler = _make_compiler(tmp_path)
         bathy_cfg = MagicMock()
-        bathy_cfg.data_file = "bathy.nc"
+        bathy_cfg.layers = {"0.25deg": "bathy.nc", "15s": "bathy_15s.zarr"}
+        bathy_cfg.compile_layer = "0.25deg"
         bathy_cfg.local_folder = "bathy"
         # A MagicMock invents any attribute asked of it, so these have to be set
         # explicitly: without them bathy would appear to declare a store_root of

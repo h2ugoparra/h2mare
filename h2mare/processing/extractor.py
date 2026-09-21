@@ -32,7 +32,7 @@ from h2mare.storage.zarr_catalog import ZarrCatalog
 from h2mare.types import BBox, DateRange, ReadFrom
 from h2mare.utils.datetime_utils import end_of_day
 from h2mare.utils.logging import configure_extraction_logging, log_time
-from h2mare.utils.paths import store_root_for
+from h2mare.utils.paths import static_layer_path, store_root_for
 from h2mare.utils.spatial import sel_padded_bbox
 
 #: How the input's own timestamps are read. ``auto`` infers it from the data;
@@ -257,58 +257,6 @@ def _extract_geometry(
         nan_result.update({var: float("nan") for var in data_vars})
     else:
         nan_result[single_var_name] = float("nan")
-
-    return nan_result
-
-
-def _extract_geometry_bathy(
-    id: str, geom, ds: xr.DataArray | xr.Dataset, index_col: str
-) -> dict:
-    """
-    Extract bathymetry data (mean and std over the clipped geometry) and
-    return as dictionary for a single geometry row. As in
-    :func:`_extract_geometry`, failures return NaNs without retrying.
-
-    Args:
-        id (str): index value of the geometry row.
-        geom (): geometry of the geometry row.
-        ds (xr.DataArray | xr.Dataset): in-memory xarray object.
-
-    Returns:
-        dict: dictionary with index, variable names and extracted values.
-    """
-    is_dataset = isinstance(ds, xr.Dataset)
-    data_vars: list[str] = [str(v) for v in ds.data_vars] if is_dataset else []
-    single_var_name: str = str(ds.name) if (not is_dataset and ds.name) else "value"
-
-    try:
-        clipped = ds.rio.clip([geom], drop=True, all_touched=True)
-        mean_ds = clipped.mean(dim=None)
-        std_ds = clipped.std(dim=None)
-
-        result: dict = {index_col: id}
-
-        if is_dataset:
-            for var in clipped.data_vars:
-                result[f"{var}"] = mean_ds[var].item()
-                result[f"{var}_std"] = std_ds[var].item()
-        else:
-            result[single_var_name] = mean_ds.item()
-            result[f"{single_var_name}_std"] = std_ds.item()
-
-        return result
-
-    except (OSError, ValueError, RuntimeError) as e:
-        # Per-geometry detail only — see _extract_geometry.
-        logger.debug(f"Extraction failed for id={id}: {e}")
-
-    # --- Return NaNs for failed geometry to preserve structure ---
-    nan_result: dict = {index_col: id}
-    if is_dataset:
-        nan_result.update({var: float("nan") for var in data_vars})
-    else:
-        nan_result[single_var_name] = float("nan")
-        nan_result[f"{single_var_name}_std"] = float("nan")
 
     return nan_result
 
@@ -613,6 +561,7 @@ class Extractor:
         crs: int | None = 4326,
         time_cadence: TimeCadence = "auto",
         read_from: ReadFrom = "auto",
+        bathy_layer: Optional[str] = None,
         log_file: Optional[Union[str, Path]] = None,
     ):
         """
@@ -648,6 +597,10 @@ class Extractor:
                 store is on the 0.25° base grid and carries the pipeline's units
                 (ERA5 ``msl`` in hPa), while an hourly native store holds the raw
                 source as published (``msl`` in Pa).
+            bathy_layer (str, optional): bathy layer to extract from, a key of
+                ``layers`` in the bathy config entry (e.g. ``"15s"``, ``"60s"``).
+                Defaults to that entry's ``extract_layer``. Applies to csv and
+                shp inputs alike.
             log_file (str | Path, optional): Extraction log file for this session.
                 Defaults to LOGS_DIR/extractor.log (first Extractor in the
                 process decides; subsequent values are ignored).
@@ -664,6 +617,18 @@ class Extractor:
         self.read_from: ReadFrom = read_from
 
         self.app_config = app_config or get_settings().app_config
+
+        # Checked here rather than when bathy is reached, so a misspelt layer
+        # fails before any other var_key is extracted.
+        bathy_cfg = self.app_config.variables.get("bathy")
+        if bathy_layer is not None and bathy_layer not in (
+            getattr(bathy_cfg, "layers", None) or {}
+        ):
+            raise ValueError(
+                f"bathy_layer {bathy_layer!r} is not one of the bathy layers "
+                f"{sorted(getattr(bathy_cfg, 'layers', None) or {})}"
+            )
+        self.bathy_layer = bathy_layer
 
         self.store_root = (
             Path(store_root) if store_root is not None else get_settings().STORE_ROOT
@@ -1127,9 +1092,9 @@ class Extractor:
             if rename:
                 ds = ds.rename(rename)
 
-            # Strictly before ensure_crs, as _extract_bathy and
-            # extract_from_dataset already are. write_crs names the grid-mapping
-            # coordinate after the one the variables' `grid_mapping` attribute
+            # Strictly before ensure_crs, as extract_from_dataset already is.
+            # write_crs names the grid-mapping coordinate after the one the
+            # variables' `grid_mapping` attribute
             # already points at — but it can only find that attribute by walking
             # variables that have resolvable spatial dims. On a store whose
             # lon/lat carry no CF attributes (the compiled h2ds), that walk finds
@@ -1777,104 +1742,72 @@ class Extractor:
         self, data: pd.DataFrame | gpd.GeoDataFrame, n_workers: int = 8
     ) -> pd.DataFrame:
         """
-        Extract bathymetry data for geometries (shp - original 15s res, calculates mean and std where the geom touches)
-        and points (csv - from coarser 0.25deg res with mean and std already calculated).
+        Extract bathymetry from one static layer, whatever the input type.
+
+        The layer is ``self.bathy_layer`` or else ``extract_layer`` from config,
+        a key of the bathy ``layers``. Each layer holds ``bathy`` and a
+        precomputed ``bathy_std`` (built by ``scripts/bathymetry.py``), so points
+        take the nearest cell and geometries the polygon mean of both — the same
+        estimator either way, and the same one the other ``_std`` columns use.
         """
         vkey = "bathy"
         var_cfg = self.app_config.variables[vkey]
-        store_root = self._store_dir(var_cfg)
-
-        if self.input_type == "shp":
-            if var_cfg.data_file_hires is None:
-                raise ValueError(
-                    "bathy config entry is missing required 'data_file_hires' field"
-                )
-            data_path = store_root / var_cfg.data_file_hires
-        elif self.input_type == "csv":
-            if var_cfg.data_file is None:
-                raise ValueError(
-                    "bathy config entry is missing required 'data_file' field"
-                )
-            data_path = store_root / var_cfg.data_file
-
-        else:
-            raise ValueError(f"Unsupported input_type: {self.input_type!r}")
+        layer = self.bathy_layer or var_cfg.extract_layer
+        data_path = static_layer_path(var_cfg, layer, self._store_dir(var_cfg))
 
         bounds = self._define_bbox(data)
 
         # Same two lines the store-backed paths log, so a run reads the same
         # whichever var_key produced it. The path carries the file name rather
-        # than stopping at the root: bathy is a single file picked by input type
-        # — the hi-res tiled zarr for geometries, the 0.25 deg netCDF for points
-        # — so the root alone would not say which of the two was read. There is
-        # no date range to report in its place; the layer is static.
-        logger.info(f"Extracting {vkey} data from {data_path}")
+        # than stopping at the root, since the layer decides which file is read.
+        # There is no date range to report in its place; the layer is static.
+        logger.info(f"Extracting {vkey} data from layer {layer!r}: {data_path}")
         logger.info(f"{data.shape[0]} samples | static, no time axis | {bounds}")
 
-        # The hi-res layer (shp path) is a spatially-tiled Zarr store; the 0.25°
-        # layer (csv path) stays netCDF. Open by suffix so the bbox .sel() below
-        # reads only the overlapping tiles instead of the full grid.
+        # Native layers are spatially-tiled Zarr stores, the 0.25° layer is
+        # netCDF. Both stay lazy, so only the tiles the input touches are read.
         if data_path.suffix == ".zarr":
             ds = xr.open_zarr(data_path)
         else:
             ds = xr.open_dataset(data_path)
-        ds_bbox = BBox.from_dataset(ds)
 
-        if not bounds.overlaps(ds_bbox):
+        wanted = _declared_vars(var_cfg) or [str(v) for v in ds.data_vars]
+        missing = [v for v in wanted if v not in ds.data_vars]
+        if missing:
+            raise ValueError(
+                f"[{vkey}] layer {layer!r} ({data_path.name}) holds "
+                f"{sorted(map(str, ds.data_vars))}, not {missing}. Rebuild it with "
+                f"scripts/bathymetry.py."
+            )
+        ds = ds[wanted]
+
+        if not bounds.overlaps(BBox.from_dataset(ds)):
             logger.warning(
                 f"Data input bbox does not overlap with store data for {vkey}"
             )
 
-        if isinstance(data, gpd.GeoDataFrame):
-            ds = (
-                ds.sel(
-                    lon=slice(bounds.xmin, bounds.xmax),
-                    lat=slice(bounds.ymin, bounds.ymax),
-                ).rename({"z": "bathy", "lon": "x", "lat": "y"})
-            ).compute()
+        if self.input_type == "shp":
+            return self._extract(data, ds, n_workers)
 
-            ds = self.ensure_crs(data, ds)
-
-            tasks = [
-                (id, geom, ds, self.index_col)
-                for id, geom in zip(data.index, data.geometry)
-            ]
-
-            out = []
-            with ThreadPoolExecutor(max_workers=n_workers) as executor:
-                futures = [
-                    executor.submit(_extract_geometry_bathy, *task) for task in tasks
-                ]
-                for future in as_completed(futures):
-                    result = future.result()
-                    if result is not None:
-                        out.append(result)
-
-        else:
-            ds = (
-                ds.sel(
-                    lon=slice(bounds.xmin, bounds.xmax),
-                    lat=slice(bounds.ymin, bounds.ymax),
-                )
-            ).compute()
-
-            out = ds.sel(
+        # Not extract_from_csv: its KDTree holds every grid cell, which at 15″
+        # is hundreds of millions of points. The layers are regular grids, so a
+        # vectorised nearest .sel finds the cells and reads only their tiles.
+        valid = data[data["lon"].notna() & data["lat"].notna()]
+        coords = {self.index_col: valid.index}
+        out = (
+            ds.sel(
                 lon=xr.DataArray(
-                    data["lon"].values,
-                    dims=self.index_col,
-                    coords={self.index_col: data.index},
+                    valid["lon"].to_numpy(), dims=self.index_col, coords=coords
                 ),
                 lat=xr.DataArray(
-                    data["lat"].values,
-                    dims=self.index_col,
-                    coords={self.index_col: data.index},
+                    valid["lat"].to_numpy(), dims=self.index_col, coords=coords
                 ),
                 method="nearest",
-            ).to_dataframe()
-
-        if isinstance(out, list):
-            return pd.DataFrame(out).set_index(self.index_col)
-        return out
+            )
+            .compute()
+            .to_dataframe()
+        )
+        return out.reindex(data.index)
 
     def _slice_depth(
         self,

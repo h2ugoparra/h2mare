@@ -35,6 +35,7 @@ Extractor(
     crs=4326,             # EPSG code for geometry extraction (SHP only)
     time_cadence="auto",  # "auto" | "daily" | "hourly"    — see Cadence
     read_from="auto",     # "auto" | "native" | "compiled" — see Cadence
+    bathy_layer=None,     # default: extract_layer of the bathy config entry
     log_file=None,        # default: LOGS_DIR/extractor.log
 )
 ```
@@ -51,6 +52,7 @@ Extractor(
 | `crs` | `4326` | EPSG code that geometries are reprojected to (SHP/geometry input only). |
 | `time_cadence` | `"auto"` | How `time_col` is read: `"daily"` truncates to midnight, `"hourly"` keeps the precision, `"auto"` infers. See [Cadence](#cadence). |
 | `read_from` | `"auto"` | Which store each `var_key` is read from: its own Zarr (`"native"`), the compiled h2ds (`"compiled"`), or per-`var_key` (`"auto"`). See [Cadence](#cadence). |
+| `bathy_layer` | `extract_layer` in config | Which bathy layer (a key of its `layers`, e.g. `"15s"`, `"60s"`, `"0.25deg"`) `bathy` is read from, for points and geometries alike. An undeclared name raises at construction. See [Standard-deviation columns](#standard-deviation-columns). |
 | `log_file` | `LOGS_DIR/extractor.log` | Extraction log file. The first `Extractor` in the process fixes this; later values are ignored. |
 
 ---
@@ -310,7 +312,7 @@ Columns are the **input columns carried through**, plus one column per extracted
 | Input | Carried-through columns | Extracted columns |
 |---|---|---|
 | CSV / points | `time`, `lon`, `lat` | one column per variable (e.g. `sst`, `tisr`); depth-sliced variables expand to `var_<depth>` |
-| SHP / geometries | `time`, `geometry` | one column per variable; `bathy` additionally yields a `bathy_std` column (mean / std over each geometry) |
+| SHP / geometries | `time`, `geometry` | one column per variable (polygon mean) |
 
 ### Standard-deviation columns
 
@@ -333,11 +335,13 @@ The definition is deliberate and fixed — it is the same quantity at every reso
 what the archive has always published. Because the windows differ in physical size, `sst_std` and
 `adt_std` magnitudes are not comparable with each other.
 
-`bathy_std` is the exception: `_extract_geometry_bathy` computes mean *and* std of the clipped
-values inside each geometry, on the 15″ hi-res layer. It is a genuine within-polygon spread, and
-the only column in the table that is.
+`bathy_std` follows the same rule. Each native bathy layer stores a 3×3 rolling std built by
+`scripts/bathymetry.py` (≈ 1.4 km at 15″, ≈ 5.5 km at 60″), so a point takes the nearest cell's
+value and a geometry the polygon mean of that layer — the same estimator for CSV and SHP, chosen
+by `bathy_layer` rather than by input type. The 0.25° layer (what h2ds holds) is different again:
+the std of all 15″ cells inside each 0.25° cell. The 15″ and 60″ values are not on a common scale.
 
-Averaging a stored std layer is the deliberate choice for the others. A within-polygon std is
+Averaging a stored std layer is the deliberate choice. A within-polygon std is
 polygon-size dependent — a polygon touching one 0.25° cell yields `0` or `NaN`, a large one is
 dominated by the regional gradient — so it is not comparable across rows of differing geometry
 size, whereas the layer mean is defined even for a single-cell polygon and stays on a fixed

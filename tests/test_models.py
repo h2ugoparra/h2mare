@@ -191,6 +191,37 @@ class TestKeyVarConfigEntry:
 # ---------------------------------------------------------------------------
 
 
+class TestStaticLayers:
+    """compile_layer / extract_layer must name one of the declared layers."""
+
+    _LAYERS = {"15s": "b15.zarr", "0.25deg": "b025.nc"}
+
+    def test_declared_layers_accepted(self):
+        entry = msgspec.convert(
+            {
+                **VALID_ENTRY,
+                "layers": self._LAYERS,
+                "compile_layer": "0.25deg",
+                "extract_layer": "15s",
+            },
+            KeyVarConfigEntry,
+        )
+        assert entry.layers == self._LAYERS
+        assert entry.extract_layer == "15s"
+
+    @pytest.mark.parametrize("field", ["compile_layer", "extract_layer"])
+    def test_undeclared_layer_rejected(self, field):
+        with pytest.raises(ValueError, match=f"{field} '60s'"):
+            msgspec.convert(
+                {**VALID_ENTRY, "layers": self._LAYERS, field: "60s"},
+                KeyVarConfigEntry,
+            )
+
+    def test_layer_without_layers_rejected(self):
+        with pytest.raises(ValueError, match="extract_layer"):
+            msgspec.convert({**VALID_ENTRY, "extract_layer": "15s"}, KeyVarConfigEntry)
+
+
 def _entry(**depth) -> KeyVarConfigEntry:
     return msgspec.convert({**VALID_ENTRY, **depth}, KeyVarConfigEntry)
 

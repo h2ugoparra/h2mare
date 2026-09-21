@@ -3,11 +3,13 @@
 from unittest.mock import MagicMock, patch
 
 import msgspec
+import pytest
 
 from h2mare.models import AppConfig
 from h2mare.utils.paths import (
     resolve_download_path,
     resolve_store_path,
+    static_layer_path,
     store_root_for,
 )
 
@@ -174,3 +176,15 @@ class TestStoreRootFor:
         settings = _settings(tmp_path, store_root=tmp_path / "from_env")
         with patch("h2mare.utils.paths.get_settings", return_value=settings):
             assert store_root_for(stub) == tmp_path / "from_env"  # type: ignore[arg-type]
+
+
+class TestStaticLayerPath:
+    def test_joins_the_layer_file_onto_the_store_dir(self, tmp_path):
+        cfg = _var_config(layers={"15s": "b15.zarr", "60s": "b60.zarr"})
+        assert static_layer_path(cfg, "60s", tmp_path) == tmp_path / "b60.zarr"
+
+    @pytest.mark.parametrize("layer", ["30s", None])
+    def test_undeclared_layer_names_the_declared_ones(self, tmp_path, layer):
+        cfg = _var_config(layers={"15s": "b15.zarr"})
+        with pytest.raises(ValueError, match=r"\['15s'\]"):
+            static_layer_path(cfg, layer, tmp_path)
