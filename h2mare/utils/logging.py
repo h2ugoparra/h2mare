@@ -37,7 +37,18 @@ LOG_FILE_FORMAT = (
 # Third-party loggers that flood the logs at INFO.
 _NOISY_LOGGERS = ("urllib3.connectionpool",)
 
+# Third-party loggers that print to the console themselves *and* propagate to
+# root — once root is intercepted, every record would appear twice. Their own
+# handlers are dropped so loguru is the only printer. They are installed at
+# import, which the CLI does before configure_logging runs.
+_SELF_PRINTING_LOGGERS = ("copernicusmarine", "arcosparse")
+
 _configured = False
+
+
+def _drop_self_printing_handlers() -> None:
+    for name in _SELF_PRINTING_LOGGERS:
+        _stdlib_logging.getLogger(name).handlers.clear()
 
 
 class _InterceptHandler(_stdlib_logging.Handler):
@@ -170,6 +181,7 @@ def configure_logging(
     )
     for name in _NOISY_LOGGERS:
         _stdlib_logging.getLogger(name).setLevel(_stdlib_logging.ERROR)
+    _drop_self_printing_handlers()
 
     _configured = True
 

@@ -84,6 +84,30 @@ class TestInterceptHandler:
 
         assert any("custom level message" in line for line in captured)
 
+    def test_self_printing_library_emits_once(self, capfd):
+        """copernicusmarine ships its own stderr handler *and* propagates, so
+        with root intercepted each toolbox line was printed twice."""
+        import copernicusmarine  # noqa: F401 — installs its handler at import
+
+        from h2mare.utils.logging import _drop_self_printing_handlers
+
+        lg = stdlib_logging.getLogger("copernicusmarine")
+        saved = lg.handlers[:]
+        captured: list[str] = []
+        sink_id = logger.add(captured.append, format="{message}")
+        root = stdlib_logging.getLogger()
+        root.addHandler(intercept := _InterceptHandler())
+        try:
+            _drop_self_printing_handlers()
+            lg.info("Selected dataset version")
+        finally:
+            root.removeHandler(intercept)
+            logger.remove(sink_id)
+            lg.handlers = saved
+
+        assert sum("Selected dataset version" in line for line in captured) == 1
+        assert "Selected dataset version" not in capfd.readouterr().err
+
 
 class TestLogTime:
     def test_returns_function_result(self):

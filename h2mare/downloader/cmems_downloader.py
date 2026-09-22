@@ -93,7 +93,6 @@ def download_subset(
         # (scheduled runs) every refresh persists as its own line.
         disable_progress_bar=not sys.stderr.isatty(),
     )
-    logger.debug(f"Downloaded to {output_dir}")
 
 
 def _generate_date_patterns(
@@ -232,7 +231,6 @@ def download_original(
             overwrite=True,
             disable_progress_bar=not sys.stderr.isatty(),
         )
-    logger.debug(f"Downloaded to {output_dir}")
 
 
 class CMEMSDownloader(BaseDownloader):
