@@ -8,6 +8,7 @@ import json
 import multiprocessing as mp
 import re
 import shutil
+import time
 from dataclasses import dataclass
 from functools import partial
 from multiprocessing.pool import Pool
@@ -279,10 +280,12 @@ class EDDIESProcessor:
             freq="D",
         )
 
-        with mp.Pool(processes=n_workers) as pool:
+        with mp.Pool(
+            processes=n_workers, initializer=_init_worker, initargs=(grid,)
+        ) as pool:
             for _, period_dates in _group_dates(all_dates, self.file_period):
                 self._convert_period(
-                    pool, records, requested_ranges, period_dates, grid, n_workers
+                    pool, records, requested_ranges, period_dates, n_workers
                 )
 
     def _convert_period(
@@ -291,7 +294,6 @@ class EDDIESProcessor:
         records: list[tuple[str, DateRange, Path]],
         requested_ranges: dict[Path, DateRange],
         period_dates: pd.DatetimeIndex,
-        grid: GridData,
         n_workers: int,
     ) -> None:
         """
@@ -347,6 +349,7 @@ class EDDIESProcessor:
         try:
             staged = False
             for _, batch_dates in _group_dates(period_dates, FilePeriod.MONTH):
+                t0 = time.perf_counter()
                 parts = []
                 for eddy_type_str, ds_raw, sel_dates in raws:
                     days = batch_dates[batch_dates.isin(sel_dates)]
@@ -356,12 +359,13 @@ class EDDIESProcessor:
                         obs=(ds_raw.time >= days[0]) & (ds_raw.time <= days[-1])
                     )
                     ds_part = self._process_period(
-                        pool, ds_batch_raw, eddy_type_str, grid, days
+                        pool, ds_batch_raw, eddy_type_str, days
                     )
                     if ds_part is not None:
                         parts.append(ds_part)
                 if not parts:
                     continue
+                t_raster = time.perf_counter() - t0
 
                 batch = xr.merge(parts, join="outer")
                 assert isinstance(batch, xr.Dataset)
@@ -371,10 +375,11 @@ class EDDIESProcessor:
                         batch[name] = xr.full_like(template, np.nan, dtype=np.float32)
 
                 if staged:
-                    batch.to_zarr(stage, append_dim="time")
+                    batch.to_zarr(stage, append_dim="time", consolidated=False)
                 else:
                     batch.to_zarr(
                         stage,
+                        consolidated=False,
                         encoding={
                             str(name): {"chunks": _stage_chunks(da)}
                             for name, da in batch.data_vars.items()
@@ -382,6 +387,11 @@ class EDDIESProcessor:
                     )
                     staged = True
                 del parts, batch
+                logger.info(
+                    f"[{self.var_key}] {batch_dates[0]:%Y-%m}: rasterised "
+                    f"{len(batch_dates)} days in {t_raster:.1f}s, merged and "
+                    f"staged in {time.perf_counter() - t0 - t_raster:.1f}s"
+                )
 
             if staged:
                 self._write_staged(stage)
@@ -742,8 +752,10 @@ class EDDIESProcessor:
                     & (ds.time <= dates.end)
                 )
             )
-
-        return ds.persist()
+            # Load, not persist: persist is a no-op on non-dask data, which
+            # left every pool task re-reading this subset from the full-atlas
+            # file through a boolean index over its whole obs axis.
+            return ds.load()
 
     # ================== PROCESS DATA ============
     def _process_period(
@@ -751,29 +763,22 @@ class EDDIESProcessor:
         pool: Pool,
         ds_raw: xr.Dataset,
         eddy_type_str: str,
-        grid: GridData,
         dates: pd.DatetimeIndex,
     ) -> xr.Dataset | None:
-        """Process the given days on *pool* and return a concatenated Dataset."""
+        """
+        Process the given days on *pool* and return a concatenated Dataset.
 
-        # Flattened query-point coordinates depend only on the fixed grid, so
-        # build them once here instead of per day inside each worker.
-        all_lats = np.repeat(grid.lat, len(grid.lon))
-        all_lons = np.tile(grid.lon, len(grid.lat))
-
-        worker = partial(
-            _process_daily_static,
-            ds=ds_raw,
-            eddy_type_str=eddy_type_str,
-            latlon1_arr=grid.latlon_arr,
-            lat1=grid.lat,
-            lon1=grid.lon,
-            sea_mask=grid.sea_mask,
-            all_lats=all_lats,
-            all_lons=all_lons,
-        )
-
-        results = pool.map(worker, dates)
+        The grid is already in every worker (``_init_worker``), so each task
+        carries only its own day's observations — handing the grid and the
+        whole batch to every task pickled tens of MB per task.
+        """
+        obs_days = ds_raw["time"].values
+        tasks = [
+            (date, ds_raw.isel(obs=np.flatnonzero(obs_days == date.to_datetime64())))
+            for date in dates
+        ]
+        worker = partial(_process_daily_static, eddy_type_str=eddy_type_str)
+        results = pool.starmap(worker, tasks)
 
         daily = [r for r in results if r is not None]
         if not daily:
@@ -787,21 +792,33 @@ class EDDIESProcessor:
         return xr.concat(daily, dim="time", join="outer")
 
 
+#: The grid each pool worker rasterises onto, installed once by _init_worker.
+_WORKER_GRID: dict[str, NDArray] = {}
+
+
+def _init_worker(grid: GridData) -> None:
+    """Pool initializer: keep the grid (and its flattened query points) in the worker."""
+    _WORKER_GRID.update(
+        lat1=grid.lat,
+        lon1=grid.lon,
+        latlon1_arr=grid.latlon_arr,
+        sea_mask=grid.sea_mask,
+        all_lats=np.repeat(grid.lat, len(grid.lon)),
+        all_lons=np.tile(grid.lon, len(grid.lat)),
+    )
+
+
 def _process_daily_static(
     date: pd.Timestamp,
+    ds_day: xr.Dataset,
     *,
-    ds: xr.Dataset,
     eddy_type_str: str,
-    latlon1_arr: NDArray,
-    lat1: NDArray,
-    lon1: NDArray,
-    sea_mask: NDArray,
-    all_lats: NDArray,
-    all_lons: NDArray,
 ) -> xr.Dataset | None:
-    """Process daily files statically to avoid pickel class function."""
+    """Rasterise one day's eddy observations onto the worker's grid."""
+    lat1, lon1 = _WORKER_GRID["lat1"], _WORKER_GRID["lon1"]
+    latlon1_arr, sea_mask = _WORKER_GRID["latlon1_arr"], _WORKER_GRID["sea_mask"]
+    all_lats, all_lons = _WORKER_GRID["all_lats"], _WORKER_GRID["all_lons"]
     try:
-        ds_day = ds.sel(obs=(ds.time == date))
         lat2 = ds_day["latitude"].values
         lon2 = ds_day["longitude"].values
         latlon2_arr = np.column_stack((lat2, lon2))
