@@ -4,7 +4,6 @@
 variables:
   sst:
     local_folder: CMEMS_SST
-    archive_raw: false
     source_vars: [analysed_sst, analysis_error]
     compiled_vars: [sst, analysis_error, sst_std, sst_fdist]
     dataset_id_rep: METOFFICE-GLO-SST-L4-REP-OBS-SST
@@ -19,7 +18,6 @@ variables:
 
   ssh:
     local_folder: CMEMS_SSH
-    archive_raw: false
     source_vars: [adt, sla, ugos, vgos]
     compiled_vars: [adt, sla, ugos, vgos, adt_std, sla_std, gke]
     dataset_id_rep: cmems_obs-sl_glo_phy-ssh_my_allsat-l4-duacs-0.125deg_P1D
@@ -36,7 +34,6 @@ variables:
 
   mld:
     local_folder: CMEMS_MLD
-    archive_raw: false
     source_vars: [mlotst]
     compiled_vars: [mld]
     dataset_id_rep: cmems_mod_glo_phy_my_0.083deg_P1D-m
@@ -48,7 +45,6 @@ variables:
 
   thetao:
     local_folder: CMEMS_Thetao
-    archive_raw: false
     source_vars: [thetao]
     compiled_vars: [thetao_100, thetao_200, thetao_500, thetao_1000]
     dataset_id_rep: cmems_mod_glo_phy_my_0.083deg_P1D-m
@@ -61,6 +57,15 @@ variables:
     compile_depth_slices: [100, 200, 500, 1000]
 
   chl:
+    local_folder: CMEMS_Chla_4km_daily
+    source_vars: [CHL]
+    compiled_vars: [chl, chl_fdist]
+    dataset_id_rep: cmems_obs-oc_glo_bgc-plankton_my_l4-gapfree-multi-4km_P1D
+    source: cmems
+    pattern: (\d{4}-\d{2}-\d{2})(?:-(\d{4}-\d{2}-\d{2}))?
+    subset: true
+    filename_date_range: true
+    bbox: [-80, 0, 10, 70]
     # Confirmed empty at source, not lost in transit: re-downloading each
     # of these from CMEMS returns a normal 14.6 MB file in which all
     # 3,628,800 pixels are fill. Neighbouring days come back ~60% finite
@@ -75,20 +80,10 @@ variables:
       - '2000-11-17'
       - '2001-11-18'
       - '2002-12-31'
-    local_folder: CMEMS_Chla_4km_daily
-    archive_raw: false
-    source_vars: [CHL]
-    compiled_vars: [chl, chl_fdist]
-    dataset_id_rep: cmems_obs-oc_glo_bgc-plankton_my_l4-gapfree-multi-4km_P1D
-    source: cmems
-    pattern: (\d{4}-\d{2}-\d{2})(?:-(\d{4}-\d{2}-\d{2}))?
-    subset: true
-    filename_date_range: true
-    bbox: [-80, 0, 10, 70]
+    
 
   seapodym:
     local_folder: CMEMS_2nd_productivity/mnkc
-    archive_raw: false
     source_vars: [mnkc_epi, mnkc_umeso, mnkc_mumeso, npp, zooc, zeu, mnkc_lmeso, mnkc_hmlmeso, mnkc_mlmeso]
     compiled_vars: [mnkc_epi, mnkc_umeso, mnkc_mumeso, npp, zooc, zeu,mnkc_lmeso, mnkc_hmlmeso, mnkc_mlmeso]
     dataset_id_rep: cmems_mod_glo_bgc_my_0.083deg-lmtl_P1D-i
@@ -99,7 +94,6 @@ variables:
 
   o2:
     local_folder: CMEMS_Biochemical
-    archive_raw: false
     source_vars: [o2]
     compiled_vars: [o2_0, o2_100, o2_500, o2_1000]
     dataset_id_rep: cmems_mod_glo_bgc_my_0.25deg_P1D-m
@@ -112,11 +106,6 @@ variables:
     compile_depth_slices: [0, 100, 500, 1000]
     
   fsle:
-    # AVISO never published this day: the remote NRT listing jumps
-    # nrt_..._20250601_... -> nrt_..._20250603_..., so there is no file to
-    # fetch and no way to fill the gap. Recorded so the checks stop
-    # reporting an unfixable day on every run.
-    known_gaps: ['2025-06-02']
     local_folder: AVISO_FSLE
     archive_raw: true
     source_vars: [fsle_max]
@@ -127,6 +116,12 @@ variables:
     pattern: _(\d{8})_*
     bbox: [-80, 0, 10, 70]
     rename_lonlat: true
+    # AVISO never published this day: the remote NRT listing jumps
+    # nrt_..._20250601_... -> nrt_..._20250603_..., so there is no file to
+    # fetch and no way to fill the gap. Recorded so the checks stop
+    # reporting an unfixable day on every run.
+    known_gaps: ['2025-06-02']
+  
 
   eddies:
     local_folder: AVISO_Eddy_Trajectory
@@ -182,7 +177,6 @@ variables:
   
   atm-instante:
     local_folder: CDS_Atm_instante
-    archive_raw: false
     time_step: hourly
     store_dtype: int16
     source_vars: [
@@ -200,7 +194,6 @@ variables:
 
   atm-accum-avg:
     local_folder: CDS_Atm_accum
-    archive_raw: false
     time_step: hourly
     store_dtype: int16
     source_vars: [
@@ -222,7 +215,6 @@ variables:
 
   radiation:
     local_folder: CDS_Radiation
-    archive_raw: false
     time_step: hourly
     store_dtype: int16
     source_vars: [
@@ -240,7 +232,6 @@ variables:
 
   waves:
     local_folder: CDS_Waves
-    archive_raw: false
     time_step: hourly
     store_dtype: int16  
     source_vars: [
@@ -256,7 +247,6 @@ variables:
 
   bathy:
     local_folder: ETOPO_Topography
-    archive_raw: false
     source_vars: [z]
     compiled_vars: [bathy, bathy_std]
     dataset_id_rep: Etopo_v1
@@ -277,7 +267,6 @@ variables:
 
   moon:
     local_folder: MOON_Phases
-    archive_raw: false
     source_vars: [moon_phase]
     compiled_vars: [moon_phase]
     dataset_id_rep: ephem4.2
@@ -285,7 +274,6 @@ variables:
 
   h2ds:
     local_folder: h2ds
-    archive_raw: false
     source_vars: []
     compiled_vars: []
     dataset_id_rep: compiled-data-0.25deg-P1D
