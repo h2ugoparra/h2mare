@@ -1,7 +1,5 @@
 """Tests for processing/core/cmems.py — pure dataset transform functions."""
 
-from unittest.mock import patch
-
 import numpy as np
 import pandas as pd
 import xarray as xr
@@ -24,16 +22,6 @@ def _make_times(n=2):
 
 def _spatial_coords():
     return {"lat": np.array([30.0, 35.0, 40.0]), "lon": np.array([-10.0, -5.0, 0.0])}
-
-
-def _fake_fdist_ds(var_name: str, times, coords) -> xr.Dataset:
-    da = xr.DataArray(
-        np.ones((len(times), 3, 3)),
-        dims=["time", "lat", "lon"],
-        coords={"time": times, **coords},
-        name=var_name,
-    )
-    return da.to_dataset()
 
 
 # ---------------------------------------------------------------------------
@@ -96,7 +84,7 @@ class TestProcessSsh:
 
 
 # ---------------------------------------------------------------------------
-# process_sst  (FrontProcessor mocked — too heavy for unit tests)
+# process_sst
 # ---------------------------------------------------------------------------
 
 
@@ -110,35 +98,24 @@ class TestProcessSst:
         )
 
     def test_renames_analysed_sst_to_sst(self):
-        ds = self._make_ds()
-        fake_fdist = _fake_fdist_ds("sst_fdist", _make_times(1), _spatial_coords())
-        with patch("h2mare.processing.core.cmems.FrontProcessor") as MockFP:
-            MockFP.return_value.from_dataset.return_value = fake_fdist
-            result = process_sst(ds)
+        result = process_sst(self._make_ds())
         assert "sst" in result
         assert "analysed_sst" not in result
 
     def test_converts_kelvin_to_celsius(self):
-        ds = self._make_ds()
-        fake_fdist = _fake_fdist_ds("sst_fdist", _make_times(1), _spatial_coords())
-        with patch("h2mare.processing.core.cmems.FrontProcessor") as MockFP:
-            MockFP.return_value.from_dataset.return_value = fake_fdist
-            result = process_sst(ds)
+        result = process_sst(self._make_ds())
         # 300 K − 273.15 = 26.85 °C
         np.testing.assert_allclose(result["sst"].values, 300.0 - 273.15, rtol=1e-4)
 
-    def test_leaves_sst_std_to_config(self):
-        """sst_std comes from sst's derived_vars now."""
-        ds = self._make_ds()
-        fake_fdist = _fake_fdist_ds("sst_fdist", _make_times(1), _spatial_coords())
-        with patch("h2mare.processing.core.cmems.FrontProcessor") as MockFP:
-            MockFP.return_value.from_dataset.return_value = fake_fdist
-            result = process_sst(ds)
-        assert "sst_std" not in result
+    def test_leaves_the_derived_layers_to_config(self):
+        """sst_std comes from derived_vars and sst_fdist from boa_fronts; both
+        are applied after the processor, by the convert step."""
+        result = process_sst(self._make_ds())
+        assert set(map(str, result.data_vars)) == {"sst"}
 
 
 # ---------------------------------------------------------------------------
-# process_chl  (FrontProcessor mocked)
+# process_chl
 # ---------------------------------------------------------------------------
 
 
@@ -152,10 +129,11 @@ class TestProcessChl:
         )
 
     def test_renames_chl_uppercase_to_lowercase(self):
-        ds = self._make_ds()
-        fake_fdist = _fake_fdist_ds("chl_fdist", _make_times(1), _spatial_coords())
-        with patch("h2mare.processing.core.cmems.FrontProcessor") as MockFP:
-            MockFP.return_value.from_dataset.return_value = fake_fdist
-            result = process_chl(ds)
+        result = process_chl(self._make_ds())
         assert "chl" in result
         assert "CHL" not in result
+
+    def test_leaves_the_front_layer_to_config(self):
+        """chl_fdist comes from boa_fronts, after the processor."""
+        result = process_chl(self._make_ds())
+        assert set(map(str, result.data_vars)) == {"chl"}

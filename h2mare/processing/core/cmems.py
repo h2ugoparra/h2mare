@@ -7,7 +7,6 @@ from typing import Optional
 import xarray as xr
 
 from h2mare.models import KeyVarConfigEntry
-from h2mare.processing.core.fronts import FrontProcessor
 from h2mare.storage.xarray_helpers import ds_float64_to_float32
 
 
@@ -31,15 +30,18 @@ def process_chl(
     var_config: Optional[KeyVarConfigEntry] = None,
     var_key: str | None = None,
 ) -> xr.Dataset:
-    """Process chlorophyll dataset"""
+    """
+    Prepare the chlorophyll dataset for its front-distance layer.
+
+    ``chl_fdist`` is declared in config (``boa_fronts``) and detected after
+    this returns; the chunking here is what the detection stages from.
+    """
     _var = "chl"
-    ds = (
+    return (
         ds.rename_vars({"CHL": _var})
         .astype("float32")
         .chunk({"time": 1, "lat": 500, "lon": 500})
     )
-    ds_fdist = FrontProcessor(_var).from_dataset(ds)
-    return xr.merge([ds, ds_fdist], join="outer")
 
 
 def process_sst(
@@ -47,17 +49,18 @@ def process_sst(
     var_config: Optional[KeyVarConfigEntry] = None,
     var_key: str | None = None,
 ) -> xr.Dataset:
-    """Process sea surface temperature downloaded dataset"""
+    """
+    Process sea surface temperature downloaded dataset.
+
+    ``sst_std`` and ``sst_fdist`` are both declared in config — ``derived_vars``
+    and ``boa_fronts`` — and computed after this returns.
+    """
     _var = "sst"
     ds = ds.rename_vars({"analysed_sst": _var})
     ds[_var] = (
         (ds[_var] - 273.15).astype("float32").chunk({"time": 1, "lat": 500, "lon": 500})
     )
-
-    # Run front detection process (lazy). sst_std is declared in config
-    # (derived_vars) and computed after this returns.
-    ds_fdist = FrontProcessor(_var).from_dataset(ds)
-    return xr.merge([ds, ds_fdist], join="outer")
+    return ds
 
 
 def process_mld(

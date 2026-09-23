@@ -408,6 +408,73 @@ class TestProcessDataset:
 
 
 # ---------------------------------------------------------------------------
+# boa_fronts
+#
+# Front detection is applied here rather than inside the cmems processors, so
+# that any var_key can declare a layer by naming it in config.
+# ---------------------------------------------------------------------------
+
+
+_FRONTS = {"sst_fdist": {"source": "sst", "threshold": 0.4}}
+
+
+@pytest.mark.usefixtures("interim_dir", "serial_pool")
+class TestProcessDatasetFronts:
+    def _ds(self):
+        """Open ocean, so the land mask leaves cells to measure from."""
+        field = np.zeros((2, 6, 6))
+        field[:, :, 3:] = 5.0
+        return xr.Dataset(
+            {"analysed_sst": (["time", "lat", "lon"], field)},
+            coords={
+                "time": pd.date_range("2020-01-01", periods=2, freq="D"),
+                "lat": np.linspace(30.0, 32.0, 6),
+                "lon": np.linspace(-40.0, -38.0, 6),
+            },
+        )
+
+    def _rename(self):
+        return {"sst": lambda d, *_: d.rename_vars({"analysed_sst": "sst"})}
+
+    def test_fronts_read_the_processor_output(self, tmp_path):
+        """`source` names the variable as the processor leaves it — sst, not
+        analysed_sst."""
+        entry = {**_SST_ENTRY_SUBSET, "boa_fronts": _FRONTS}
+        n2z = _make_converter(tmp_path, entry=entry)
+        with patch.dict(
+            "h2mare.format_converters.netcdf2zarr.PROCESSORS", self._rename()
+        ):
+            result = n2z.process_dataset(self._ds())
+        assert "sst_fdist" in result
+        assert np.isfinite(result["sst_fdist"].values).any()
+
+    def test_a_derived_layer_can_read_a_front_layer(self, tmp_path):
+        """Fronts are applied before derived_vars, so the ordering holds one
+        way only."""
+        entry = {
+            **_SST_ENTRY_SUBSET,
+            "boa_fronts": _FRONTS,
+            "derived_vars": {
+                "sst_fdist_std": {"op": "rolling_std", "source": "sst_fdist"}
+            },
+        }
+        n2z = _make_converter(tmp_path, entry=entry)
+        with patch.dict(
+            "h2mare.format_converters.netcdf2zarr.PROCESSORS", self._rename()
+        ):
+            result = n2z.process_dataset(self._ds())
+        assert "sst_fdist_std" in result
+
+    def test_a_var_key_without_the_key_gets_no_layer(self, tmp_path):
+        n2z = _make_converter(tmp_path, entry=_SST_ENTRY_SUBSET)
+        with patch.dict(
+            "h2mare.format_converters.netcdf2zarr.PROCESSORS", self._rename()
+        ):
+            result = n2z.process_dataset(self._ds())
+        assert set(map(str, result.data_vars)) == {"sst"}
+
+
+# ---------------------------------------------------------------------------
 # run() date window
 #
 # Re-converting one period from raw files already on disk needs a window:
@@ -1185,3 +1252,63 @@ class TestCleanupDownloadsScope:
         conv.run()
 
         assert not conv.download_root.exists()
+
+
+# ---------------------------------------------------------------------------
+# Front staging lifecycle
+#
+# Detection stages a period's layer to disk and hands it back lazily, so the
+# staging has to outlive process_dataset and die with the period — a full copy
+# of a period costs real disk.
+# ---------------------------------------------------------------------------
+
+
+_TESTVAR_FRONTS = {"testvar_fdist": {"source": "testvar", "threshold": 0.4}}
+
+
+@pytest.mark.usefixtures("serial_pool")
+class TestFrontStaging:
+    def test_the_layer_reaches_the_store(self, tmp_path, interim_dir):
+        conv = _period_converter(tmp_path, boa_fronts=_TESTVAR_FRONTS)
+
+        conv._process_period(2020, _write_raw_days(conv, _JAN))
+
+        ds = xr.open_zarr(conv.catalog.build_file_path.return_value)
+        try:
+            assert "testvar_fdist" in ds.data_vars
+            assert len(ds.time) == len(_JAN)
+            # The staging layout must not follow the layer into the store: it
+            # is staged a day at a time, and the store is chunked for reading.
+            assert (
+                ds["testvar_fdist"].encoding["chunks"]
+                == ds["testvar"].encoding["chunks"]
+            )
+        finally:
+            ds.close()
+
+    def test_staging_is_cleared_once_the_period_is_written(self, tmp_path, interim_dir):
+        conv = _period_converter(tmp_path, boa_fronts=_TESTVAR_FRONTS)
+
+        conv._process_period(2020, _write_raw_days(conv, _JAN))
+
+        assert list(interim_dir.glob(".testvar_*")) == []
+
+    def test_staging_is_cleared_when_the_period_fails(self, tmp_path, interim_dir):
+        """The write verification rejects the period; the staging still goes."""
+        conv = _period_converter(tmp_path, boa_fronts=_TESTVAR_FRONTS)
+        paths = _write_raw_days(conv, _JAN.drop(pd.Timestamp("2020-01-05")))
+
+        with pytest.raises(RuntimeError):
+            conv._process_period(2020, paths)
+
+        assert list(interim_dir.glob(".testvar_*")) == []
+
+    def test_a_run_sweeps_what_a_killed_run_left(self, tmp_path, interim_dir):
+        conv = _period_converter(tmp_path, boa_fronts=_TESTVAR_FRONTS)
+        _write_raw_days(conv, _JAN)
+        leftover = interim_dir / ".testvar_testvar_fdist.zarr.stage"
+        leftover.mkdir(parents=True)
+
+        conv.run()
+
+        assert not leftover.exists()
