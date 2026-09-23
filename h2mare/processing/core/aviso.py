@@ -7,8 +7,11 @@ from __future__ import annotations
 import json
 import multiprocessing as mp
 import re
+import shutil
+import time
 from dataclasses import dataclass
 from functools import partial
+from multiprocessing.pool import Pool
 from pathlib import Path
 from typing import Iterator, Literal, Optional
 
@@ -70,6 +73,21 @@ OUTPUT_VAR_SCALINGS: dict[str, float] = {
 
 EDDY_TYPE_MAP: dict[str, str] = {"anticyclonic": "ac", "cyclonic": "c"}
 
+# Suffixes of the variables each eddy type is written with (`<type>_<suffix>`):
+# the mapped source variables, less effective_radius (used only to derive
+# normdist), plus the two distance fields.
+_OUTPUT_SUFFIXES: tuple[str, ...] = tuple(
+    s for k, s in EDDY_VAR_MAP.items() if k != "effective_radius"
+) + ("dist_km", "normdist")
+
+#: Pool size when neither the caller nor the var_key's config sets `n_workers`.
+DEFAULT_N_WORKERS = 4
+
+
+def _stage_chunks(da: xr.DataArray) -> tuple[int, ...]:
+    """Staging zarr chunks: a month of time, spatial tiles as the store uses."""
+    return tuple(31 if d == "time" else min(256, n) for d, n in da.sizes.items())
+
 
 @dataclass(frozen=True)
 class GridData:
@@ -84,6 +102,7 @@ def find_nearest_vectorized(
     query_lons: NDArray,
     target_lats: NDArray,
     target_lons: NDArray,
+    workers: int = -1,
 ) -> NDArray[np.intp]:
     """
     For each (lat, lon) query point, find the index of the nearest point
@@ -98,6 +117,8 @@ def find_nearest_vectorized(
         query_lons: Longitudes of grid points to query. Shape: (N,)
         target_lats: Latitudes of eddy centers. Shape: (M,)
         target_lons: Longitudes of eddy centers. Shape: (M,)
+        workers: Threads for the query (cKDTree semantics; -1 = all cores).
+            Pass 1 when already running inside a process pool.
 
     Returns:
         NDArray[np.intp]: Indices into target arrays of the nearest point
@@ -108,7 +129,7 @@ def find_nearest_vectorized(
     query_cartesian = to_unit_sphere(query_lats, query_lons)
 
     tree = cKDTree(target_cartesian)
-    _, nearest_indices = tree.query(query_cartesian, workers=-1)
+    _, nearest_indices = tree.query(query_cartesian, workers=workers)
 
     return nearest_indices
 
@@ -219,7 +240,7 @@ class EDDIESProcessor:
         self,
         start_date: Optional[DateLike] = None,
         end_date: Optional[DateLike] = None,
-        n_workers: int = 4,
+        n_workers: Optional[int] = None,
         dx: Optional[float] = None,
         dy: Optional[float] = None,
     ) -> None:
@@ -229,10 +250,12 @@ class EDDIESProcessor:
         Args:
             start_date (Optional[DateLike], optional): Start date to process. Defaults to None and get's date from ZarrCatalog.
             end_date (Optional[DateLike], optional): End date to process. Defaults to Noneand get's date from ZarrCatalog.
-            n_workers (int, optional): Number of workers for multiprocessing daily files. Defaults to 4.
+            n_workers (Optional[int]): Number of workers for multiprocessing daily files.
+                Defaults to the var_key's `n_workers` in config, else DEFAULT_N_WORKERS.
             dx, dy: x,y cell size resp., in degrees. Default to the grid the
                 var_key's config declares (`cells_per_degree`).
         """
+        n_workers = n_workers or self.var_config.n_workers or DEFAULT_N_WORKERS
 
         logger.info("Starting eddies processing")
 
@@ -257,56 +280,148 @@ class EDDIESProcessor:
             freq="D",
         )
 
-        for _, period_dates in _group_dates(all_dates, self.file_period):
-            ds_list = []
+        with mp.Pool(
+            processes=n_workers, initializer=_init_worker, initargs=(grid,)
+        ) as pool:
+            for _, period_dates in _group_dates(all_dates, self.file_period):
+                self._convert_period(
+                    pool, records, requested_ranges, period_dates, n_workers
+                )
 
-            for record in records:
-                eddy_type, _, path = record
-                eddy_type_str = EDDY_TYPE_MAP[eddy_type]
-                year_range = requested_ranges.get(path)
+    def _convert_period(
+        self,
+        pool: Pool,
+        records: list[tuple[str, DateRange, Path]],
+        requested_ranges: dict[Path, DateRange],
+        period_dates: pd.DatetimeIndex,
+        n_workers: int,
+    ) -> None:
+        """
+        Rasterise one file period month by month, then write it in one go.
 
-                # Files outside the requested range carry no window at all
-                if year_range is None:
+        A day is ~25 MB per eddy type on the 1/12° grid, so collecting a whole
+        year before writing — as this used to — held ~9 GB per type in this
+        process and copied it twice more in concat and merge. Each month is
+        instead written to a staging zarr beside the store, and the period is
+        written from it lazily: memory stays near one month's worth, while the
+        store sees the same single write (and chunk layout) as before. Writing
+        each month straight into the store would instead fix the first month's
+        length as the file's time chunk, and rewrite the file once per month
+        when re-converting an existing period.
+        """
+        raws: list[tuple[str, xr.Dataset, pd.DatetimeIndex]] = []
+        for eddy_type, _, path in records:
+            window = requested_ranges.get(path)
+            # Files outside the requested range carry no window at all
+            if window is None:
+                continue
+            sel_dates = period_dates[
+                (period_dates >= pd.to_datetime(window.start))
+                & (period_dates <= pd.to_datetime(window.end))
+            ]
+            if len(sel_dates) == 0:
+                continue
+            logger.info(
+                f"Processing {eddy_type.upper()} | {len(sel_dates)} days | {n_workers} workers"
+            )
+            ds_raw = self._prepare_raw_dataset(
+                path, DateRange(sel_dates[0], sel_dates[-1])
+            )
+            raws.append((EDDY_TYPE_MAP[eddy_type], ds_raw, sel_dates))
+
+        if not raws:
+            return
+
+        # Every month must carry the same variables to append to the staging
+        # zarr; a type with no data in some month is filled with NaN there,
+        # which is what the outer merge of whole periods used to produce.
+        out_names = [
+            f"{t}_{s}"
+            for t in sorted({t for t, _, _ in raws})
+            for s in _OUTPUT_SUFFIXES
+        ]
+
+        stage = self.catalog.store_root / (
+            f".{self.var_key}_{period_dates[0]:%Y%m%d}.zarr.stage"
+        )
+        shutil.rmtree(stage, ignore_errors=True)
+        stage.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            staged = False
+            for _, batch_dates in _group_dates(period_dates, FilePeriod.MONTH):
+                t0 = time.perf_counter()
+                parts = []
+                for eddy_type_str, ds_raw, sel_dates in raws:
+                    days = batch_dates[batch_dates.isin(sel_dates)]
+                    if len(days) == 0:
+                        continue
+                    ds_batch_raw = ds_raw.sel(
+                        obs=(ds_raw.time >= days[0]) & (ds_raw.time <= days[-1])
+                    )
+                    ds_part = self._process_period(
+                        pool, ds_batch_raw, eddy_type_str, days
+                    )
+                    if ds_part is not None:
+                        parts.append(ds_part)
+                if not parts:
                     continue
+                t_raster = time.perf_counter() - t0
 
-                # Skip if this record doesn't cover this year
-                sel_dates = period_dates[
-                    (period_dates >= pd.to_datetime(year_range.start))
-                    & (period_dates <= pd.to_datetime(year_range.end))
-                ]
-                if len(sel_dates) == 0:
-                    continue
+                batch = xr.merge(parts, join="outer")
+                assert isinstance(batch, xr.Dataset)
+                template = next(iter(batch.data_vars.values()))
+                for name in out_names:
+                    if name not in batch:
+                        batch[name] = xr.full_like(template, np.nan, dtype=np.float32)
 
+                if staged:
+                    batch.to_zarr(stage, append_dim="time", consolidated=False)
+                else:
+                    batch.to_zarr(
+                        stage,
+                        consolidated=False,
+                        encoding={
+                            str(name): {"chunks": _stage_chunks(da)}
+                            for name, da in batch.data_vars.items()
+                        },
+                    )
+                    staged = True
+                del parts, batch
                 logger.info(
-                    f"Processing {eddy_type.upper()} | {len(sel_dates)} days | {n_workers} workers"
+                    f"[{self.var_key}] {batch_dates[0]:%Y-%m}: rasterised "
+                    f"{len(batch_dates)} days in {t_raster:.1f}s, merged and "
+                    f"staged in {time.perf_counter() - t0 - t_raster:.1f}s"
                 )
 
-                ds_raw = self._prepare_raw_dataset(
-                    path, DateRange(sel_dates[0], sel_dates[-1])
-                )
-                ds_year = self._process_period(
-                    ds_raw, eddy_type_str, grid, sel_dates, n_workers
-                )
+            if staged:
+                self._write_staged(stage)
+        finally:
+            shutil.rmtree(stage, ignore_errors=True)
 
-                if ds_year is not None:
-                    ds_list.append(ds_year)
-
-            if ds_list:
-                merged = xr.merge(ds_list, join="outer")
-                assert isinstance(merged, xr.Dataset)
-                ds_merged = chunk_dataset(merged)
-                path = ZarrCatalog(self.var_key).build_file_path(
-                    ds_merged, self.date_format
-                )
-                write_append_zarr(self.var_key, ds_merged, path)
-                written = DateRange(
-                    pd.to_datetime(ds_merged.time.min().values),
-                    pd.to_datetime(ds_merged.time.max().values),
-                )
-                self._write_provenance(path, written)
-                del ds_list, ds_merged
-
-        # logger.success("Completed!")
+    def _write_staged(self, stage: Path) -> None:
+        """Write a staged period to the store, as one dataset, lazily."""
+        ds_staged = xr.open_zarr(stage, consolidated=False)
+        try:
+            # The staging layout and time units must not leak into the store:
+            # the period is written as if it had been built in memory.
+            for v in ds_staged.variables:
+                ds_staged[v].encoding = {}
+            # The trajectory path bypasses NetcdfToZarr.process_dataset, so this
+            # is where the eddies store gets its metadata.
+            ds_merged = chunk_dataset(
+                apply_cf_attrs(ds_staged, native_var_key="eddies")
+            )
+            path = ZarrCatalog(self.var_key).build_file_path(
+                ds_merged, self.date_format
+            )
+            write_append_zarr(self.var_key, ds_merged, path)
+            written = DateRange(
+                pd.to_datetime(ds_merged.time.min().values),
+                pd.to_datetime(ds_merged.time.max().values),
+            )
+            self._write_provenance(path, written)
+        finally:
+            ds_staged.close()
 
     # ============== PREPARE DATA ===============
     def _get_gridded_data(self, dx: float, dy: float) -> GridData:
@@ -637,70 +752,73 @@ class EDDIESProcessor:
                     & (ds.time <= dates.end)
                 )
             )
-
-        return ds.persist()
+            # Load, not persist: persist is a no-op on non-dask data, which
+            # left every pool task re-reading this subset from the full-atlas
+            # file through a boolean index over its whole obs axis.
+            return ds.load()
 
     # ================== PROCESS DATA ============
     def _process_period(
         self,
+        pool: Pool,
         ds_raw: xr.Dataset,
         eddy_type_str: str,
-        grid: GridData,
         dates: pd.DatetimeIndex,
-        n_workers: int,
     ) -> xr.Dataset | None:
-        """Process all days in a period and return a concatenated Dataset."""
+        """
+        Process the given days on *pool* and return a concatenated Dataset.
 
-        # Flattened query-point coordinates depend only on the fixed grid, so
-        # build them once here instead of per day inside each worker.
-        all_lats = np.repeat(grid.lat, len(grid.lon))
-        all_lons = np.tile(grid.lon, len(grid.lat))
-
-        worker = partial(
-            _process_daily_static,
-            ds=ds_raw,
-            eddy_type_str=eddy_type_str,
-            latlon1_arr=grid.latlon_arr,
-            lat1=grid.lat,
-            lon1=grid.lon,
-            sea_mask=grid.sea_mask,
-            all_lats=all_lats,
-            all_lons=all_lons,
-        )
-
-        with mp.Pool(processes=n_workers) as pool:
-            results = pool.map(worker, dates)
+        The grid is already in every worker (``_init_worker``), so each task
+        carries only its own day's observations — handing the grid and the
+        whole batch to every task pickled tens of MB per task.
+        """
+        obs_days = ds_raw["time"].values
+        tasks = [
+            (date, ds_raw.isel(obs=np.flatnonzero(obs_days == date.to_datetime64())))
+            for date in dates
+        ]
+        worker = partial(_process_daily_static, eddy_type_str=eddy_type_str)
+        results = pool.starmap(worker, tasks)
 
         daily = [r for r in results if r is not None]
         if not daily:
             logger.warning(
-                f"No valid results for {eddy_type_str} in year {dates[0].year}"
+                f"No valid results for {eddy_type_str} in "
+                f"{dates[0]:%Y-%m-%d}..{dates[-1]:%Y-%m-%d}"
             )
             return None
 
         # Explicit join: xarray's concat default changes from "outer" to "exact".
-        ds_year = xr.concat(daily, dim="time", join="outer")
-        # The trajectory path bypasses NetcdfToZarr.process_dataset, so this is
-        # where the eddies store gets its metadata. Same helper, so it also
-        # picks up the coordinate attributes the old local _set_attrs never set.
-        return apply_cf_attrs(ds_year, native_var_key="eddies")
+        return xr.concat(daily, dim="time", join="outer")
+
+
+#: The grid each pool worker rasterises onto, installed once by _init_worker.
+_WORKER_GRID: dict[str, NDArray] = {}
+
+
+def _init_worker(grid: GridData) -> None:
+    """Pool initializer: keep the grid (and its flattened query points) in the worker."""
+    _WORKER_GRID.update(
+        lat1=grid.lat,
+        lon1=grid.lon,
+        latlon1_arr=grid.latlon_arr,
+        sea_mask=grid.sea_mask,
+        all_lats=np.repeat(grid.lat, len(grid.lon)),
+        all_lons=np.tile(grid.lon, len(grid.lat)),
+    )
 
 
 def _process_daily_static(
     date: pd.Timestamp,
+    ds_day: xr.Dataset,
     *,
-    ds: xr.Dataset,
     eddy_type_str: str,
-    latlon1_arr: NDArray,
-    lat1: NDArray,
-    lon1: NDArray,
-    sea_mask: NDArray,
-    all_lats: NDArray,
-    all_lons: NDArray,
 ) -> xr.Dataset | None:
-    """Process daily files statically to avoid pickel class function."""
+    """Rasterise one day's eddy observations onto the worker's grid."""
+    lat1, lon1 = _WORKER_GRID["lat1"], _WORKER_GRID["lon1"]
+    latlon1_arr, sea_mask = _WORKER_GRID["latlon1_arr"], _WORKER_GRID["sea_mask"]
+    all_lats, all_lons = _WORKER_GRID["all_lats"], _WORKER_GRID["all_lons"]
     try:
-        ds_day = ds.sel(obs=(ds.time == date))
         lat2 = ds_day["latitude"].values
         lon2 = ds_day["longitude"].values
         latlon2_arr = np.column_stack((lat2, lon2))
@@ -711,7 +829,11 @@ def _process_daily_static(
         dist_grid[sea_mask] = min_dist
 
         # --- Vectorised nearest-neighbour lookup ---
-        nearest_indices = find_nearest_vectorized(all_lats, all_lons, lat2, lon2)
+        # One thread: this already runs once per pool worker, and all-cores
+        # here oversubscribed the CPU n_workers times over.
+        nearest_indices = find_nearest_vectorized(
+            all_lats, all_lons, lat2, lon2, workers=1
+        )
         nearest_data = ds_day.isel(obs=nearest_indices)
 
         # --- Build output variables from map ---

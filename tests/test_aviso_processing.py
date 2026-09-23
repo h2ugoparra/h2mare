@@ -1,5 +1,6 @@
 """Tests for processing/core/aviso.py — pure functions and EDDIESProcessor helpers."""
 
+from multiprocessing.pool import Pool
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -634,3 +635,129 @@ class TestPreferRep:
         assert pd.Timestamp(out[tmp_path / "b_c.nc"].start) == pd.Timestamp(
             "2020-01-01"
         )
+
+
+# ---------------------------------------------------------------------------
+# EDDIESProcessor.run — month-batched conversion
+# ---------------------------------------------------------------------------
+
+
+def _write_atlas(path: Path, start: str, end: str, seed: int) -> None:
+    """A tiny eddy trajectory file: three eddies a day, lon stored 0–360."""
+    rng = np.random.default_rng(seed)
+    days = pd.date_range(start, end, freq="D")
+    n = len(days) * 3
+    obs = {
+        "time": ("obs", np.repeat(days.values, 3) + np.timedelta64(6, "h")),
+        "latitude": ("obs", rng.uniform(21, 29, n)),
+        "longitude": ("obs", rng.uniform(-39, -31, n) + 360),
+        "track": ("obs", rng.integers(1, 100, n).astype(np.float64)),
+        "effective_radius": ("obs", rng.uniform(30e3, 90e3, n)),
+        "speed_radius": ("obs", rng.uniform(20e3, 60e3, n)),
+        "amplitude": ("obs", rng.uniform(0.01, 0.2, n)),
+        "speed_average": ("obs", rng.uniform(0.05, 0.5, n)),
+        "observation_number": ("obs", rng.integers(0, 50, n).astype(np.float64)),
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    xr.Dataset(obs).to_netcdf(path)
+
+
+class TestRunBatchesByMonth:
+    """
+    A period is rasterised a month at a time and written once.
+
+    Collecting a whole year of daily grids before writing held ~9 GB per eddy
+    type in the main process (plus concat/merge copies) and ran out of memory.
+    """
+
+    @pytest.fixture(scope="class")
+    def converted(self, tmp_path_factory):
+        tmp_path = tmp_path_factory.mktemp("eddies_run")
+        downloads = tmp_path / "downloads"
+        store = tmp_path / "store"
+        store.mkdir()
+        _write_atlas(
+            downloads / "rep" / "Anticyclonic_20210101_20210228.nc",
+            "2021-01-01",
+            "2021-02-28",
+            0,
+        )
+        # Cyclonic stops after January: February must still carry c_* (as NaN).
+        _write_atlas(
+            downloads / "rep" / "Cyclonic_20210101_20210131.nc",
+            "2021-01-01",
+            "2021-01-31",
+            1,
+        )
+
+        entry = _EDDIES_ENTRY | {
+            "source_vars": [
+                "time",
+                "latitude",
+                "longitude",
+                *_EDDIES_ENTRY["source_vars"],
+            ],
+            "bbox": (-40, 20, -30, 30),
+            "cells_per_degree": 1,
+            "n_workers": 1,
+        }
+        out_path = store / "aviso_eddies_2021.zarr"
+        seen_dates: list[int] = []
+        real_process_period = EDDIESProcessor._process_period
+
+        def spy(self, *args):
+            seen_dates.append(
+                max(len(a) for a in args if isinstance(a, pd.DatetimeIndex))
+            )
+            return real_process_period(self, *args)
+
+        with (
+            patch("h2mare.processing.core.aviso.ZarrCatalog") as MockCat,
+            patch(
+                "h2mare.processing.core.aviso.resolve_date_range",
+                side_effect=lambda _k, s, e: DateRange(s, e),
+            ),
+            patch.object(EDDIESProcessor, "_process_period", spy),
+            patch("h2mare.processing.core.aviso.mp.Pool", wraps=Pool) as pool_cls,
+        ):
+            MockCat.return_value.exists.return_value = False
+            MockCat.return_value.store_root = store
+            MockCat.return_value.build_file_path.return_value = out_path
+            proc = EDDIESProcessor(
+                var_key="eddies",
+                app_config=_make_config(entry=entry),
+                store_root=store,
+                download_root=downloads,
+            )
+            proc.run("2021-01-01", "2021-02-28")
+
+        return out_path, seen_dates, pool_cls, store
+
+    def test_pool_gets_at_most_a_month(self, converted):
+        _, seen_dates, _, _ = converted
+        assert seen_dates and max(seen_dates) <= 31
+
+    def test_period_written_once_with_period_chunks(self, converted):
+        out_path, _, _, _ = converted
+        with xr.open_zarr(out_path, consolidated=False) as ds:
+            assert ds.sizes["time"] == 59
+            # The file's time chunk follows the period, not the staging month.
+            assert ds["ac_amp"].chunks[0][0] == 59
+            assert {"ac_amp", "ac_normdist", "c_amp", "c_dist_km"} <= set(ds.data_vars)
+            jan, feb = ds["c_amp"].sel(time="2021-01"), ds["c_amp"].sel(time="2021-02")
+            assert np.isfinite(jan.values).any()
+            assert np.isnan(feb.values).all()
+            assert ds["ac_amp"].attrs  # CF attrs applied on the final write
+
+    def test_staging_is_removed(self, converted):
+        _, _, _, store = converted
+        assert [p.name for p in store.iterdir()] == ["aviso_eddies_2021.zarr"]
+
+    def test_n_workers_from_config(self, converted):
+        _, _, pool_cls, _ = converted
+        assert pool_cls.call_args.kwargs["processes"] == 1
+
+
+def test_n_workers_must_be_positive():
+    with pytest.raises(ValueError, match="n_workers"):
+        _make_config(entry=_EDDIES_ENTRY | {"n_workers": 0})

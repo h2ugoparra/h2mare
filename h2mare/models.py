@@ -365,8 +365,16 @@ class KeyVarConfigEntry(msgspec.Struct):
     # point, which averages its four neighbours and costs ~5% of the field's
     # own spatial variability. See "Regridding" in docs/configuration.md.
     values_at: GridValuesAt = "cell_center"
+    # Worker processes for a trajectory variable's rasterisation (eddies), one
+    # day per task. None uses the processor's default. Each worker holds the
+    # period's raw observations plus one day's grids, so lowering it trims
+    # memory only modestly — it mostly trades speed for CPU.
+    n_workers: Optional[int] = None
 
     def __post_init__(self):
+        if self.n_workers is not None and self.n_workers < 1:
+            raise ValueError(f"n_workers must be at least 1; got {self.n_workers}")
+
         if self.bbox is not None:
             lon_min, lat_min, lon_max, lat_max = self.bbox
             if not (-180 <= lon_min <= 180 and -180 <= lon_max <= 180):
