@@ -11,7 +11,7 @@ import shutil
 import time
 from dataclasses import dataclass
 from functools import partial
-from multiprocessing.pool import Pool
+from multiprocessing.pool import AsyncResult, Pool
 from pathlib import Path
 from typing import Iterator, Literal, Optional
 
@@ -42,7 +42,7 @@ from h2mare.utils.files_io import filter_raw_files
 from h2mare.utils.paths import resolve_download_path, resolve_store_path
 from h2mare.utils.spatial import (
     GridBuilder,
-    haversine_min_distance_kdtree,
+    nearest_on_sphere,
     to_unit_sphere,
 )
 from h2mare.validators import validate_file_period, validate_var_key
@@ -79,6 +79,12 @@ EDDY_TYPE_MAP: dict[str, str] = {"anticyclonic": "ac", "cyclonic": "c"}
 _OUTPUT_SUFFIXES: tuple[str, ...] = tuple(
     s for k, s in EDDY_VAR_MAP.items() if k != "effective_radius"
 ) + ("dist_km", "normdist")
+
+#: One month handed to the pool: its dates, and one (type, days, result) per
+#: eddy type still being rasterised.
+_BatchJobs = tuple[
+    "pd.DatetimeIndex", list[tuple[str, "pd.DatetimeIndex", "AsyncResult"]]
+]
 
 #: Pool size when neither the caller nor the var_key's config sets `n_workers`.
 DEFAULT_N_WORKERS = 4
@@ -347,56 +353,114 @@ class EDDIESProcessor:
         shutil.rmtree(stage, ignore_errors=True)
         stage.parent.mkdir(parents=True, exist_ok=True)
         try:
+            # One month is staged while the next is already being rasterised:
+            # the staging write is the main process's alone, and the pool sat
+            # idle through it otherwise.
             staged = False
+            pending: _BatchJobs | None = None
             for _, batch_dates in _group_dates(period_dates, FilePeriod.MONTH):
-                t0 = time.perf_counter()
-                parts = []
-                for eddy_type_str, ds_raw, sel_dates in raws:
-                    days = batch_dates[batch_dates.isin(sel_dates)]
-                    if len(days) == 0:
-                        continue
-                    ds_batch_raw = ds_raw.sel(
-                        obs=(ds_raw.time >= days[0]) & (ds_raw.time <= days[-1])
-                    )
-                    ds_part = self._process_period(
-                        pool, ds_batch_raw, eddy_type_str, days
-                    )
-                    if ds_part is not None:
-                        parts.append(ds_part)
-                if not parts:
-                    continue
-                t_raster = time.perf_counter() - t0
-
-                batch = xr.merge(parts, join="outer")
-                assert isinstance(batch, xr.Dataset)
-                template = next(iter(batch.data_vars.values()))
-                for name in out_names:
-                    if name not in batch:
-                        batch[name] = xr.full_like(template, np.nan, dtype=np.float32)
-
-                if staged:
-                    batch.to_zarr(stage, append_dim="time", consolidated=False)
-                else:
-                    batch.to_zarr(
-                        stage,
-                        consolidated=False,
-                        encoding={
-                            str(name): {"chunks": _stage_chunks(da)}
-                            for name, da in batch.data_vars.items()
-                        },
-                    )
-                    staged = True
-                del parts, batch
-                logger.info(
-                    f"[{self.var_key}] {batch_dates[0]:%Y-%m}: rasterised "
-                    f"{len(batch_dates)} days in {t_raster:.1f}s, merged and "
-                    f"staged in {time.perf_counter() - t0 - t_raster:.1f}s"
-                )
+                jobs = self._submit_batch(pool, raws, batch_dates)
+                if pending is not None:
+                    staged = self._stage_batch(pending, out_names, stage, staged)
+                pending = jobs
+            if pending is not None:
+                staged = self._stage_batch(pending, out_names, stage, staged)
 
             if staged:
                 self._write_staged(stage)
         finally:
             shutil.rmtree(stage, ignore_errors=True)
+
+    def _submit_batch(
+        self,
+        pool: Pool,
+        raws: list[tuple[str, xr.Dataset, pd.DatetimeIndex]],
+        batch_dates: pd.DatetimeIndex,
+    ) -> _BatchJobs:
+        """
+        Hand one month's days to *pool*, per eddy type, without waiting.
+
+        The grid is already in every worker (``_init_worker``), so each task
+        carries only its own day's observations — handing the grid and the
+        whole batch to every task pickled tens of MB per task.
+        """
+        jobs = []
+        for eddy_type_str, ds_raw, sel_dates in raws:
+            days = batch_dates[batch_dates.isin(sel_dates)]
+            if len(days) == 0:
+                continue
+            ds_batch = ds_raw.sel(
+                obs=(ds_raw.time >= days[0]) & (ds_raw.time <= days[-1])
+            )
+            obs_days = ds_batch["time"].values
+            tasks = [
+                (d, ds_batch.isel(obs=np.flatnonzero(obs_days == d.to_datetime64())))
+                for d in days
+            ]
+            worker = partial(_process_daily_static, eddy_type_str=eddy_type_str)
+            jobs.append((eddy_type_str, days, pool.starmap_async(worker, tasks)))
+        return batch_dates, jobs
+
+    def _stage_batch(
+        self,
+        pending: _BatchJobs,
+        out_names: list[str],
+        stage: Path,
+        staged: bool,
+    ) -> bool:
+        """Wait for one month's days, merge them and append them to *stage*."""
+        batch_dates, jobs = pending
+        t0 = time.perf_counter()
+        parts = [
+            part
+            for part in (self._collect_days(t, d, j) for t, d, j in jobs)
+            if part is not None
+        ]
+        if not parts:
+            return staged
+        t_collect = time.perf_counter() - t0
+
+        batch = xr.merge(parts, join="outer")
+        assert isinstance(batch, xr.Dataset)
+        template = next(iter(batch.data_vars.values()))
+        for name in out_names:
+            if name not in batch:
+                batch[name] = xr.full_like(template, np.nan, dtype=np.float32)
+
+        if staged:
+            batch.to_zarr(stage, append_dim="time", consolidated=False)
+        else:
+            batch.to_zarr(
+                stage,
+                consolidated=False,
+                encoding={
+                    str(name): {"chunks": _stage_chunks(da)}
+                    for name, da in batch.data_vars.items()
+                },
+            )
+        del parts, batch
+        logger.info(
+            f"[{self.var_key}] {batch_dates[0]:%Y-%m}: collected "
+            f"{len(batch_dates)} days in {t_collect:.1f}s, merged and staged "
+            f"in {time.perf_counter() - t0 - t_collect:.1f}s"
+        )
+        return True
+
+    @staticmethod
+    def _collect_days(
+        eddy_type_str: str, dates: pd.DatetimeIndex, job: AsyncResult
+    ) -> xr.Dataset | None:
+        """Collect one submitted eddy type's days as a single Dataset."""
+        daily = [r for r in job.get() if r is not None]
+        if not daily:
+            logger.warning(
+                f"No valid results for {eddy_type_str} in "
+                f"{dates[0]:%Y-%m-%d}..{dates[-1]:%Y-%m-%d}"
+            )
+            return None
+
+        # Explicit join: xarray's concat default changes from "outer" to "exact".
+        return xr.concat(daily, dim="time", join="outer")
 
     def _write_staged(self, stage: Path) -> None:
         """Write a staged period to the store, as one dataset, lazily."""
@@ -758,38 +822,6 @@ class EDDIESProcessor:
             return ds.load()
 
     # ================== PROCESS DATA ============
-    def _process_period(
-        self,
-        pool: Pool,
-        ds_raw: xr.Dataset,
-        eddy_type_str: str,
-        dates: pd.DatetimeIndex,
-    ) -> xr.Dataset | None:
-        """
-        Process the given days on *pool* and return a concatenated Dataset.
-
-        The grid is already in every worker (``_init_worker``), so each task
-        carries only its own day's observations — handing the grid and the
-        whole batch to every task pickled tens of MB per task.
-        """
-        obs_days = ds_raw["time"].values
-        tasks = [
-            (date, ds_raw.isel(obs=np.flatnonzero(obs_days == date.to_datetime64())))
-            for date in dates
-        ]
-        worker = partial(_process_daily_static, eddy_type_str=eddy_type_str)
-        results = pool.starmap(worker, tasks)
-
-        daily = [r for r in results if r is not None]
-        if not daily:
-            logger.warning(
-                f"No valid results for {eddy_type_str} in "
-                f"{dates[0]:%Y-%m-%d}..{dates[-1]:%Y-%m-%d}"
-            )
-            return None
-
-        # Explicit join: xarray's concat default changes from "outer" to "exact".
-        return xr.concat(daily, dim="time", join="outer")
 
 
 #: The grid each pool worker rasterises onto, installed once by _init_worker.
@@ -801,10 +833,11 @@ def _init_worker(grid: GridData) -> None:
     _WORKER_GRID.update(
         lat1=grid.lat,
         lon1=grid.lon,
-        latlon1_arr=grid.latlon_arr,
         sea_mask=grid.sea_mask,
-        all_lats=np.repeat(grid.lat, len(grid.lon)),
-        all_lons=np.tile(grid.lon, len(grid.lat)),
+        # Projected once: the search is over the same grid every day.
+        query_xyz=to_unit_sphere(
+            np.repeat(grid.lat, len(grid.lon)), np.tile(grid.lon, len(grid.lat))
+        ),
     )
 
 
@@ -816,24 +849,18 @@ def _process_daily_static(
 ) -> xr.Dataset | None:
     """Rasterise one day's eddy observations onto the worker's grid."""
     lat1, lon1 = _WORKER_GRID["lat1"], _WORKER_GRID["lon1"]
-    latlon1_arr, sea_mask = _WORKER_GRID["latlon1_arr"], _WORKER_GRID["sea_mask"]
-    all_lats, all_lons = _WORKER_GRID["all_lats"], _WORKER_GRID["all_lons"]
+    sea_mask = _WORKER_GRID["sea_mask"]
     try:
         lat2 = ds_day["latitude"].values
         lon2 = ds_day["longitude"].values
-        latlon2_arr = np.column_stack((lat2, lon2))
 
-        # --- Distance to nearest eddy center ---
-        min_dist = haversine_min_distance_kdtree(latlon1_arr, latlon2_arr)
-        dist_grid = np.full((len(lat1), len(lon1)), np.nan)
-        dist_grid[sea_mask] = min_dist
-
-        # --- Vectorised nearest-neighbour lookup ---
-        # One thread: this already runs once per pool worker, and all-cores
-        # here oversubscribed the CPU n_workers times over.
-        nearest_indices = find_nearest_vectorized(
-            all_lats, all_lons, lat2, lon2, workers=1
+        # --- Nearest eddy centre per cell: which one, and how far ---
+        # One search for both. One thread: this already runs once per pool
+        # worker, and all-cores here oversubscribed the CPU n_workers times.
+        distance, nearest_indices = nearest_on_sphere(
+            _WORKER_GRID["query_xyz"], lat2, lon2, workers=1
         )
+        dist_grid = np.where(sea_mask, distance.reshape(len(lat1), len(lon1)), np.nan)
         nearest_data = ds_day.isel(obs=nearest_indices)
 
         # --- Build output variables from map ---
