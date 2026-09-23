@@ -676,6 +676,10 @@ class TestRunBatchesByMonth:
         downloads = tmp_path / "downloads"
         store = tmp_path / "store"
         store.mkdir()
+        # Left by a run killed mid-write, for a period this one never touches.
+        stale = store / ".eddies_19990101.zarr.stage"
+        stale.mkdir()
+        (stale / "zarr.json").write_text("{}")
         _write_atlas(
             downloads / "rep" / "Anticyclonic_20210101_20210228.nc",
             "2021-01-01",
@@ -752,6 +756,10 @@ class TestRunBatchesByMonth:
     def test_staging_is_removed(self, converted):
         _, _, _, store = converted
         assert [p.name for p in store.iterdir()] == ["aviso_eddies_2021.zarr"]
+
+    def test_stale_staging_from_a_killed_run_is_removed(self, converted):
+        _, _, _, store = converted
+        assert not (store / ".eddies_19990101.zarr.stage").exists()
 
     def test_n_workers_from_config(self, converted):
         _, _, pool_cls, _ = converted
