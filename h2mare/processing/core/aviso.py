@@ -387,8 +387,7 @@ class EDDIESProcessor:
         """
         for leftover in self.catalog.store_root.glob(f".{self.var_key}_*.zarr.stage"):
             logger.warning(
-                f"[{self.var_key}] Removing {leftover.name}, left by an "
-                "interrupted run"
+                f"[{self.var_key}] Removing {leftover.name}, left by an interrupted run"
             )
             shutil.rmtree(leftover, ignore_errors=True)
 
