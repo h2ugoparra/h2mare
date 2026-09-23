@@ -264,6 +264,7 @@ class EDDIESProcessor:
         n_workers = n_workers or self.var_config.n_workers or DEFAULT_N_WORKERS
 
         logger.info("Starting eddies processing")
+        self._clear_stale_staging()
 
         step = 1 / (self.var_config.cells_per_degree or DEFAULT_CELLS_PER_DEGREE)
         grid = self._get_gridded_data(
@@ -370,6 +371,26 @@ class EDDIESProcessor:
                 self._write_staged(stage)
         finally:
             shutil.rmtree(stage, ignore_errors=True)
+
+    def _clear_stale_staging(self) -> None:
+        """
+        Remove staging directories left behind by an interrupted run.
+
+        Each period deletes its own on the way out, and again before it starts,
+        so anything still here was left by a run that died outright (a kill, a
+        power cut) — for a period this run may not touch. They are full copies
+        of a period, so leaving them costs real disk.
+
+        This assumes no second conversion of the same var_key is running
+        alongside, which would already be unsafe: both would write the same
+        period file.
+        """
+        for leftover in self.catalog.store_root.glob(f".{self.var_key}_*.zarr.stage"):
+            logger.warning(
+                f"[{self.var_key}] Removing {leftover.name}, left by an "
+                "interrupted run"
+            )
+            shutil.rmtree(leftover, ignore_errors=True)
 
     def _submit_batch(
         self,
