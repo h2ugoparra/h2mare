@@ -197,9 +197,20 @@ def BOA_application(data_xarray: xr.DataArray, threshold: float):
 # ==============================================
 
 
+def stage_root(var_key: str) -> Path:
+    """
+    Directory holding *var_key*'s staging stores.
+
+    One per var_key rather than a shared directory of prefixed names, so the
+    sweep is scoped by directory: ``sst`` must not be able to clear a
+    hypothetical ``sst_global``'s staging on its way past.
+    """
+    return get_settings().INTERIM_DIR / f".{var_key}_fronts"
+
+
 def stage_path(var_key: str, name: str) -> Path:
     """Staging store one layer of *var_key* is written to."""
-    return get_settings().INTERIM_DIR / f".{var_key}_{name}{_STAGE_SUFFIX}"
+    return stage_root(var_key) / f"{name}{_STAGE_SUFFIX}"
 
 
 def clear_staging(var_key: str) -> int:
@@ -214,12 +225,13 @@ def clear_staging(var_key: str) -> int:
     var_key is running alongside, which would already be unsafe: both would
     write the same period file.
     """
-    removed = 0
-    for leftover in get_settings().INTERIM_DIR.glob(f".{var_key}_*{_STAGE_SUFFIX}"):
-        logger.debug(f"[{var_key}] Removing front staging {leftover.name}")
-        shutil.rmtree(leftover, ignore_errors=True)
-        removed += 1
-    return removed
+    root = stage_root(var_key)
+    if not root.exists():
+        return 0
+    staged = len(list(root.glob(f"*{_STAGE_SUFFIX}")))
+    logger.debug(f"[{var_key}] Removing front staging {root.name} ({staged} layer(s))")
+    shutil.rmtree(root, ignore_errors=True)
+    return staged
 
 
 def _month_batches(times: pd.DatetimeIndex) -> Iterator[pd.DatetimeIndex]:

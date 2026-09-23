@@ -12,6 +12,7 @@ import xarray as xr
 
 from h2mare.format_converters.netcdf2zarr import Netcdf2Zarr
 from h2mare.models import AppConfig
+from h2mare.processing.core.fronts import stage_path
 from h2mare.types import DateRange, FilePeriod
 
 # ---------------------------------------------------------------------------
@@ -1306,7 +1307,7 @@ class TestFrontStaging:
     def test_a_run_sweeps_what_a_killed_run_left(self, tmp_path, interim_dir):
         conv = _period_converter(tmp_path, boa_fronts=_TESTVAR_FRONTS)
         _write_raw_days(conv, _JAN)
-        leftover = interim_dir / ".testvar_testvar_fdist.zarr.stage"
+        leftover = stage_path("testvar", "testvar_fdist")
         leftover.mkdir(parents=True)
 
         conv.run()
