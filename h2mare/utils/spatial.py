@@ -35,6 +35,38 @@ def to_unit_sphere(lats: NDArray, lons: NDArray) -> NDArray[np.float64]:
     )
 
 
+def nearest_on_sphere(
+    query_xyz: NDArray[np.float64],
+    target_lats: NDArray,
+    target_lons: NDArray,
+    *,
+    workers: int = 1,
+) -> tuple[NDArray[np.float64], NDArray[np.intp]]:
+    """
+    Nearest target point for each query point: its distance in km and its index.
+
+    Takes the query points already projected (:func:`to_unit_sphere`) because a
+    caller searching the same grid every day projects it once and reuses it.
+    Distance and index come from a single search — asking for them separately
+    builds and queries the same tree twice.
+
+    Args:
+        query_xyz: Query points on the unit sphere. Shape ``(N, 3)``.
+        target_lats, target_lons: Target points in decimal degrees. Shape ``(M,)``.
+        workers: Threads for the query (-1 = all cores). Pass 1 inside a process pool.
+
+    Returns:
+        Great-circle distance in km to the nearest target, shape ``(N,)``, and
+        that target's index into ``target_lats``/``target_lons``, shape ``(N,)``.
+    """
+    tree = KDTree(to_unit_sphere(target_lats, target_lons))
+    chord, index = tree.query(query_xyz, k=1, workers=workers)
+    # Arc from chord on the unit sphere: d = 2R asin(c/2). The clip only guards
+    # a chord of 2 (antipodal) rounding above it and making arcsin undefined.
+    distance = 2 * _EARTH_RADIUS_KM * np.arcsin(np.clip(chord / 2, 0.0, 1.0))
+    return np.asarray(distance, dtype=np.float64), np.asarray(index, dtype=np.intp)
+
+
 def haversine_min_distance_kdtree(
     coords1: NDArray[np.float64],
     coords2: NDArray[np.float64],
@@ -75,11 +107,10 @@ def haversine_min_distance_kdtree(
     if coords2.ndim != 2 or coords2.shape[1] != 2:
         raise ValueError(f"coords2 must have shape (M, 2), got {coords2.shape}")
 
-    tree = KDTree(to_unit_sphere(coords2[:, 0], coords2[:, 1]))
-    chord, _ = tree.query(to_unit_sphere(coords1[:, 0], coords1[:, 1]), k=1)
-    # Arc from chord on the unit sphere: d = 2R asin(c/2). The clip only guards
-    # a chord of 2 (antipodal) rounding above it and making arcsin undefined.
-    return 2 * _EARTH_RADIUS_KM * np.arcsin(np.clip(chord / 2, 0.0, 1.0))
+    distance, _ = nearest_on_sphere(
+        to_unit_sphere(coords1[:, 0], coords1[:, 1]), coords2[:, 0], coords2[:, 1]
+    )
+    return distance
 
 
 class GridBuilder:

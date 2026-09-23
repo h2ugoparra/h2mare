@@ -703,13 +703,13 @@ class TestRunBatchesByMonth:
         }
         out_path = store / "aviso_eddies_2021.zarr"
         seen_dates: list[int] = []
-        real_process_period = EDDIESProcessor._process_period
+        real_submit = EDDIESProcessor._submit_batch
 
         def spy(self, *args):
             seen_dates.append(
                 max(len(a) for a in args if isinstance(a, pd.DatetimeIndex))
             )
-            return real_process_period(self, *args)
+            return real_submit(self, *args)
 
         with (
             patch("h2mare.processing.core.aviso.ZarrCatalog") as MockCat,
@@ -717,7 +717,7 @@ class TestRunBatchesByMonth:
                 "h2mare.processing.core.aviso.resolve_date_range",
                 side_effect=lambda _k, s, e: DateRange(s, e),
             ),
-            patch.object(EDDIESProcessor, "_process_period", spy),
+            patch.object(EDDIESProcessor, "_submit_batch", spy),
             patch("h2mare.processing.core.aviso.mp.Pool", wraps=Pool) as pool_cls,
         ):
             MockCat.return_value.exists.return_value = False
