@@ -141,4 +141,6 @@ def interim_dir(tmp_path, monkeypatch) -> Path:
 @pytest.fixture
 def serial_pool(monkeypatch):
     """Run front detection in-process rather than across a pool."""
-    monkeypatch.setattr("h2mare.processing.core.fronts.mp.Pool", SerialPool)
+    monkeypatch.setattr(
+        "h2mare.processing.core.fronts._pool", lambda n_workers: SerialPool(n_workers)
+    )

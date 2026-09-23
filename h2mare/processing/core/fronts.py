@@ -234,6 +234,25 @@ def clear_staging(var_key: str) -> int:
     return staged
 
 
+def _pool(n_workers: int) -> Pool:
+    """
+    Worker pool for one period's detection, started by **spawn**.
+
+    Not the platform default: on Linux that is ``fork``, and the process
+    forked here has just written the source staging Zarr, so the child
+    inherits dask's and Zarr's thread state without the threads that hold it
+    — the first read inside a worker then blocks forever. It hung CI for the
+    full six-hour job limit.
+
+    Spawn is also what this has always done where it runs in production
+    (Windows has no fork), so every platform now behaves like the one the
+    stores were built on. The cost is that each worker re-imports h2mare and
+    the pool's payload is pickled per task, which is a second or two against
+    a period of detection.
+    """
+    return mp.get_context("spawn").Pool(processes=n_workers)
+
+
 def _month_batches(times: pd.DatetimeIndex) -> Iterator[pd.DatetimeIndex]:
     """*times* split into calendar months, in axis order."""
     months = times.to_period("M")
@@ -374,7 +393,7 @@ class FrontProcessor:
         )
         t0 = time.perf_counter()
         try:
-            with mp.Pool(processes=self.n_workers) as pool:
+            with _pool(self.n_workers) as pool:
                 appending = False
                 for batch in _month_batches(times):
                     self._stage_batch(pool, worker, batch, layer_stage, appending)

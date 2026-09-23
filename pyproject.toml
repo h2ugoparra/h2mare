@@ -85,6 +85,7 @@ dev = [
     "pyright>=1.1.410",
     "pytest>=9.0.3",
     "pytest-cov>=7.1.0",
+    "pytest-timeout>=2.4.0",
     "ruff>=0.9.0",
     "tox>=4.30.3",
     "tox-uv>=1.28.1",
@@ -125,6 +126,11 @@ filterwarnings = [
     # against numpy 2.4.
     "ignore:numpy.ndarray size changed:RuntimeWarning",
 ]
+# A hung test is not a slow test: front detection deadlocked in a forked worker
+# and pytest sat there until the GitHub Actions six-hour job limit killed all
+# three test jobs. The whole suite runs in ~150s, and the slowest single test is
+# well under a minute, so this only ever fires on something that has stopped.
+timeout = 300
 
 [tool.tox]
 legacy_tox_ini = """
