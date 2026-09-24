@@ -331,7 +331,12 @@ global_attrs:
   geospatial_lat_units: degrees_north
   geospatial_lon_resolution: 0.25
   geospatial_lon_units: degrees_east
-  comment: For variables with less than 0.25 spatial resolution (all except o2), upscalling was done using xarray interp function with linear method
+  comment: >-
+    Each variable is put on the 0.25 degree grid by comparing its native resolution with the
+    target: a finer source is area-averaged over the source cells its target cell covers, and
+    a source at the same resolution or coarser is interpolated bilinearly. The eddy identifier
+    and attribute columns (track, ndays, amp, speed, speedrad_km) take the value of the nearest
+    source cell instead, because a mean of two eddies describes neither.
 
 variable_attrs:
 # SST
