@@ -84,7 +84,11 @@ def _to_base_grid(
     """
     var_config = compiler.app_config.variables.get(var_key)
     return regrid_to(
-        ds, compiler.base_grid, methods=getattr(var_config, "regrid", None), **kwargs
+        ds,
+        compiler.base_grid,
+        methods=getattr(var_config, "regrid", None),
+        label=var_key,
+        **kwargs,
     )
 
 
