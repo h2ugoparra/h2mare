@@ -316,6 +316,7 @@ class EDDIESProcessor:
         length as the file's time chunk, and rewrite the file once per month
         when re-converting an existing period.
         """
+        t0 = time.perf_counter()
         raws: list[tuple[str, xr.Dataset, pd.DatetimeIndex]] = []
         for eddy_type, _, path in records:
             window = requested_ranges.get(path)
@@ -369,6 +370,13 @@ class EDDIESProcessor:
 
             if staged:
                 self._write_staged(stage)
+                # One line per period, like front detection's: the per-month
+                # lines below it are debug, so an ordinary run reports what it
+                # converted and how long the period took, not its bookkeeping.
+                logger.success(
+                    f"[{self.var_key}] {period_dates[0]:%Y}: {len(period_dates)} "
+                    f"day(s) in {time.perf_counter() - t0:.1f}s"
+                )
         finally:
             shutil.rmtree(stage, ignore_errors=True)
 
@@ -459,7 +467,10 @@ class EDDIESProcessor:
                 },
             )
         del parts, batch
-        logger.info(
+        # Debug: a year is twelve of these, and the period's own SUCCESS line
+        # is what a run needs to see. Turn them up when a period is slow and
+        # the question is which half — the pool or the staging write — is.
+        logger.debug(
             f"[{self.var_key}] {batch_dates[0]:%Y-%m}: collected "
             f"{len(batch_dates)} days in {t_collect:.1f}s, merged and staged "
             f"in {time.perf_counter() - t0 - t_collect:.1f}s"
