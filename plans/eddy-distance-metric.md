@@ -1,6 +1,8 @@
 # Distance metric defect: `*_dist_km`, `*_normdist`, `sst_fdist`, `chl_fdist`
 
 Status: code fixed on `fix/eddy-distance-metric`; **stored data not yet repaired**.
+Step 3's tool exists as of 2026-09-24 — `scripts/recompute_fronts.py`, dry run by
+default — and its survey confirms the defect in the stored layers (§4a).
 Written 2026-09-18. Found while checking whether the 0.1° eddies store needed
 regenerating for the regrid work (`plans/regrid.md`) — it does not, but it needs
 regenerating for this.
@@ -103,6 +105,30 @@ version did differently is unknown. This is not caused by the regrid work and
 not by the metric alone. It is a second reason to regenerate rather than trust
 the existing arrays.
 
+## 4a. What the fdist survey measured (2026-09-24)
+
+`scripts/recompute_fronts.py <var_key>` re-detects a few days per store file and
+compares them against what is stored. Sampled days from 1998, 2021 and 2026:
+
+- **The front pixels agree.** chl matches exactly on every day sampled (1998 and
+  2026: same count stored and recomputed, every pixel shared), as does sst for
+  2026. Detection is reproducible from the store's own field; what differs is
+  the distance measured from those fronts, which is the defect in §1.
+- **Every latitude band overstates**, which is the planar metric's signature —
+  it can only ever be too long. chl 1998-01-01, stored vs recomputed mean:
+  0–20°N +1.3%, 20–40°N +6.0%, 40–60°N +3.4%, 60–70°N +1.4%, whole bbox +1.9%.
+  Smaller than §2's synthetic table because the error is geometric: a cell whose
+  nearest front is mostly north of it is barely affected, and above 60°N in
+  January the nearest front is hundreds of km away and mostly meridional.
+- **sst's older files also disagree on detection**, which chl's do not: 1998 and
+  2021 recompute ~1,500–1,900 *extra* front pixels per day out of ~700–850k
+  (0.2%), with essentially every stored front still found (~100–200 missing).
+  2026 has none of this. No input variant reproduces the older set — neither
+  float64, nor the field put back in Kelvin, so it is not the °C conversion —
+  which makes it the same shape of problem as §4: those layers were written by
+  a code or data vintage that is no longer reachable. It does not block the
+  repair, since recomputing replaces them wholesale.
+
 ## 5. Repair plan
 
 Ordered, because each step invalidates the next one's input.
@@ -116,9 +142,16 @@ Ordered, because each step invalidates the next one's input.
    Verify afterwards by recomputing one day and expecting an exact match, which
    is the check that fails today.
 3. **Recompute `sst_fdist` and `chl_fdist`.** These live in the sst and chl
-   native stores, so this is a reconversion of those layers across the whole
-   archive — the expensive step. Worth confirming first whether the fdist layers
-   can be rewritten in place rather than reconverting sst/chl wholesale.
+   native stores. They **can** be rewritten in place — the open question here is
+   answered: `scripts/recompute_fronts.py <var_key> --apply` re-detects from the
+   store's own field and writes only the layers, and the store's merge keeps
+   every variable the incoming dataset does not carry, so `sst`,
+   `analysis_error` and `sst_std` are untouched. No re-download and no
+   reconversion of sst/chl: the raw files are long deleted (`archive_raw` is
+   False for both), which would otherwise have made this ~29 years of
+   downloading per variable. Still the expensive step in compute — one BOA pass
+   and one KD-tree query per day over ~21k days — so run it per year
+   (`--years`) rather than in one go, and dry-run first.
 4. **Recompile h2ds**, which the regrid work needs anyway
    (`plans/regrid.md` phase A). Doing 2–3 first means one recompile covers both.
 5. **Rebuild Parquet** from the recompiled h2ds.
