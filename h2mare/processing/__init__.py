@@ -7,7 +7,7 @@ from .core.cds import (
     process_waves,
 )
 from .core.cmems import process_chl, process_mld, process_ssh, process_sst
-from .core.fronts import FrontProcessor
+from .core.fronts import FrontProcessor, apply_boa_fronts
 from .extractor import Extractor, ensure_row_id
 
 __all__ = [
@@ -16,6 +16,7 @@ __all__ = [
     "Compiler",
     "EDDIESProcessor",
     "FrontProcessor",
+    "apply_boa_fronts",
     "process_fsle",
     "process_chl",
     "process_mld",

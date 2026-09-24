@@ -15,6 +15,9 @@ variables:
     bbox: [-80, 0, 10, 70]
     derived_vars:
       sst_std: {op: rolling_std, source: sst, window: 3}
+    # Belkin & O'Reilly (2009): threshold in the source's units, here °C.
+    boa_fronts:
+      sst_fdist: {source: sst, threshold: 0.4}
 
   ssh:
     local_folder: CMEMS_SSH
@@ -66,6 +69,9 @@ variables:
     subset: true
     filename_date_range: true
     bbox: [-80, 0, 10, 70]
+    # Belkin & O'Reilly (2009): threshold in the source's units, here mg.m-3.
+    boa_fronts:
+      chl_fdist: {source: chl, threshold: 0.06}
     # Confirmed empty at source, not lost in transit: re-downloading each
     # of these from CMEMS returns a normal 14.6 MB file in which all
     # 3,628,800 pixels are fill. Neighbouring days come back ~60% finite

@@ -106,6 +106,41 @@ class DerivedVarSpec(msgspec.Struct, forbid_unknown_fields=True):
             raise ValueError(f"{self.op.value} takes no window; got {self.window}")
 
 
+class BOAFrontSpec(msgspec.Struct, forbid_unknown_fields=True):
+    """
+    One front-distance layer detected with the Belkin–O'Reilly algorithm (BOA).
+
+    Named for the algorithm because its one parameter belongs to it: BOA
+    smooths the field, takes a Sobel gradient magnitude and calls every cell
+    above ``threshold`` a front pixel. Another detector would take different
+    parameters entirely, so it gets its own config key and its own spec rather
+    than a mode flag here.
+
+    See ``processing/core/fronts.py`` and Belkin & O'Reilly (2009),
+    *An algorithm for oceanic front detection in chlorophyll and SST
+    satellite imagery*, J. Marine Systems 78.
+    """
+
+    # Variable the fronts are detected in, named as the var_key's processor
+    # leaves it (``sst``, not ``analysed_sst``). Must be a 2-D field over
+    # time/lat/lon: BOA reads one lat×lon slab per day.
+    source: str
+    # Gradient-magnitude cut, in ``source``'s own units — 0.4 °C for sst,
+    # 0.06 mg.m-3 for chl (Belkin & O'Reilly 2009). Not transferable between
+    # variables, and meaningless to a different detection algorithm.
+    threshold: float
+    # Worker processes, one day per task. None uses fronts.DEFAULT_N_WORKERS.
+    n_workers: Optional[int] = None
+
+    def __post_init__(self):
+        if self.threshold <= 0:
+            raise ValueError(
+                f"threshold must be a positive gradient magnitude; got {self.threshold}"
+            )
+        if self.n_workers is not None and self.n_workers < 1:
+            raise ValueError(f"n_workers must be at least 1; got {self.n_workers}")
+
+
 def step_freq(var_config) -> str:
     """
     Pandas frequency alias matching a variable's cadence — ``"h"`` or ``"D"``.
@@ -338,6 +373,19 @@ class KeyVarConfigEntry(msgspec.Struct):
     # read an earlier one. A variable derived from a 3-D source keeps its depth
     # axis and needs its own depth_levels entry like any other.
     derived_vars: Optional[dict[str, DerivedVarSpec]] = None
+    # Front-distance layers detected at convert time with the Belkin–O'Reilly
+    # algorithm, keyed by the name each is written under — e.g.
+    # {sst_fdist: {source: sst, threshold: 0.4}}. Every cell gets the
+    # great-circle distance (km) to the nearest front pixel found that day.
+    #
+    # Keyed by output name, like derived_vars, so a store carrying several
+    # fields can publish a layer for each of them; `source` names the variable
+    # as the var_key's processor leaves it. Applied just before derived_vars,
+    # so a derived layer may read an fdist but not the other way round.
+    #
+    # Daily stores only: detection schedules one field per day, and an hourly
+    # axis has 24 of them. The threshold is BOA's own — see BOAFrontSpec.
+    boa_fronts: Optional[dict[str, BOAFrontSpec]] = None
     # How each variable is put on the compile base grid, keyed by its name at
     # that point (a compiled column name) — e.g. {ac_track: nearest}. Anything
     # not listed uses "auto", which compares the native and target resolutions
@@ -532,6 +580,49 @@ def _check_derived_names(var_key: str, var_config: KeyVarConfigEntry) -> None:
             )
 
 
+def _check_front_entries(var_key: str, var_config: KeyVarConfigEntry) -> None:
+    """
+    Refuse boa_fronts entries that overwrite another column, or an hourly store.
+
+    A front layer is assigned into the dataset by name, so a name another
+    mechanism already writes would silently win or lose depending on the order
+    they run in. The cadence check is here rather than in the convert step
+    because it is knowable at load: detection reads one lat×lon field per day,
+    and an hourly axis offers 24, so the layer would describe whichever hour
+    the selection happened to land on.
+    """
+    if not var_config.boa_fronts:
+        return
+
+    if var_config.time_step is not TimeStep.DAILY:
+        raise ValueError(
+            f"'{var_key}': boa_fronts needs a daily store; this one is "
+            f"{var_config.time_step.value}. Front detection reads one field "
+            f"per day."
+        )
+
+    taken: dict[str, str] = {}
+    for name, spec in (var_config.derived_vars or {}).items():
+        for out in spec.output_names(name):
+            taken[out] = "derived_vars"
+    for purpose in ("compile", "extract"):
+        levels = depth_levels_for(var_key, var_config, purpose)
+        for out in depth_column_names(levels):
+            taken[out] = "depth levels"
+
+    for name, spec in var_config.boa_fronts.items():
+        if name == spec.source:
+            raise ValueError(
+                f"'{var_key}': boa_fronts.{name} writes over its own source; "
+                f"give the layer a name of its own (e.g. '{spec.source}_fdist')."
+            )
+        if name in taken:
+            raise ValueError(
+                f"'{var_key}': '{name}' is written both by boa_fronts and by "
+                f"{taken[name]}; keep one."
+            )
+
+
 def _check_regrid_names(var_key: str, var_config: KeyVarConfigEntry) -> None:
     """
     Refuse regrid overrides naming a column the var_key does not publish.
@@ -561,6 +652,7 @@ class AppConfig(msgspec.Struct):
     def __post_init__(self):
         for var_key, var_config in self.variables.items():
             _check_derived_names(var_key, var_config)
+            _check_front_entries(var_key, var_config)
             _check_regrid_names(var_key, var_config)
 
         # compiled_vars is written by hand and read by Parquet, routing and the

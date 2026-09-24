@@ -18,6 +18,7 @@ from loguru import logger
 from h2mare.config import AppConfig, get_settings
 from h2mare.format_converters.base import BaseConverter
 from h2mare.models import StoreDtype, step_freq
+from h2mare.processing.core.fronts import apply_boa_fronts, clear_staging
 from h2mare.processing.derived import apply_derived_vars
 from h2mare.processing.registry import PROCESSORS
 from h2mare.storage.audit import format_date_blocks, known_gap_days
@@ -279,6 +280,13 @@ class Netcdf2Zarr(BaseConverter):
         # detection reads the store, so a half-written store is not trusted and
         # data stranded in a backup is restored.
         recover_zarr_store(self.store_root)
+
+        # Front staging is cleared per period; anything still here was left by
+        # a run that died outright, and is a full copy of a period's layer.
+        if clear_staging(self.var_key):
+            logger.warning(
+                f"[{self.var_key}] Removed front staging left by an interrupted run"
+            )
 
         # Trajectory-format variables (e.g. eddies) require spatial binning
         # before zarr storage — bypass the standard open_mfdataset pipeline.
@@ -729,6 +737,11 @@ class Netcdf2Zarr(BaseConverter):
             # is here for the failure path, which otherwise leaks the handles
             # and leaves the store directory locked on Windows.
             _close_all(ds, ds_raw)
+            # The front layers were read out of here by the write above, so the
+            # staging has served its purpose either way. After the closes: a
+            # period's layer is a full copy of it, and nothing should still be
+            # reading one when it goes.
+            clear_staging(self.var_key)
 
     # ========= WRITE VERIFICATION =========
 
@@ -899,7 +912,12 @@ class Netcdf2Zarr(BaseConverter):
         if processor:
             ds = processor(ds, self.var_config, self.var_key)
 
-        # After the processor, so derived_vars name variables as it leaves them.
+        # After the processor, so boa_fronts and derived_vars both name
+        # variables as it leaves them (sst, not analysed_sst). Fronts first, so
+        # a derived layer may read a front distance but not the other way
+        # round. Detection stages each layer to disk; _process_period clears
+        # the staging once the period has been written.
+        ds = apply_boa_fronts(ds, self.var_config.boa_fronts, self.var_key)
         ds = apply_derived_vars(ds, self.var_config.derived_vars, self.var_key)
 
         # Snap lon/lat to a canonical grid so float-noise drift between a source's
