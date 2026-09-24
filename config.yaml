@@ -3,7 +3,7 @@
 # -----------------------
 variables:
   sst:
-    local_folder: CMEMS_SST
+    local_folder: CMEMS_SST_010_011
     source_vars: [analysed_sst, analysis_error]
     compiled_vars: [sst, analysis_error, sst_std, sst_fdist]
     dataset_id_rep: METOFFICE-GLO-SST-L4-REP-OBS-SST
@@ -20,7 +20,7 @@ variables:
       sst_fdist: {source: sst, threshold: 0.4}
 
   ssh:
-    local_folder: CMEMS_SSH
+    local_folder: CMEMS_PHY_008_047
     source_vars: [adt, sla, ugos, vgos]
     compiled_vars: [adt, sla, ugos, vgos, adt_std, sla_std, gke]
     dataset_id_rep: cmems_obs-sl_glo_phy-ssh_my_allsat-l4-duacs-0.125deg_P1D
@@ -60,7 +60,7 @@ variables:
     compile_depth_slices: [100, 200, 500, 1000]
 
   chl:
-    local_folder: CMEMS_Chla_4km_daily
+    local_folder: CMEMS_BGC_009_104
     source_vars: [CHL]
     compiled_vars: [chl, chl_fdist]
     dataset_id_rep: cmems_obs-oc_glo_bgc-plankton_my_l4-gapfree-multi-4km_P1D
@@ -89,7 +89,7 @@ variables:
     
 
   seapodym:
-    local_folder: CMEMS_2nd_productivity/mnkc
+    local_folder: CMEMS_BGC_001_033/mnkc
     source_vars: [mnkc_epi, mnkc_umeso, mnkc_mumeso, npp, zooc, zeu, mnkc_lmeso, mnkc_hmlmeso, mnkc_mlmeso]
     compiled_vars: [mnkc_epi, mnkc_umeso, mnkc_mumeso, npp, zooc, zeu,mnkc_lmeso, mnkc_hmlmeso, mnkc_mlmeso]
     dataset_id_rep: cmems_mod_glo_bgc_my_0.083deg-lmtl_P1D-i
@@ -130,7 +130,7 @@ variables:
   
 
   eddies:
-    local_folder: AVISO_Eddy_Trajectory
+    local_folder: AVISO_EDDIES/META3.2
     archive_raw: true
     source_vars: [
       time,
@@ -180,9 +180,10 @@ variables:
       c_amp: nearest
       c_speed: nearest
       c_speedrad_km: nearest
+    n_workers: 4
   
   atm-instante:
-    local_folder: CDS_Atm_instante
+    local_folder: ERA5_SINGLE_LEVELS/instant
     time_step: hourly
     store_dtype: int16
     source_vars: [
@@ -199,7 +200,7 @@ variables:
     bbox: [-80, 0, 10, 70]
 
   atm-accum-avg:
-    local_folder: CDS_Atm_accum
+    local_folder: ERA5_SINGLE_LEVELS/accum
     time_step: hourly
     store_dtype: int16
     source_vars: [
@@ -220,7 +221,7 @@ variables:
     bbox: [-80, 0, 10, 70]
 
   radiation:
-    local_folder: CDS_Radiation
+    local_folder: ERA5_SINGLE_LEVELS/radiation
     time_step: hourly
     store_dtype: int16
     source_vars: [
@@ -237,7 +238,7 @@ variables:
     bbox: [-80, 0, 10, 70]
 
   waves:
-    local_folder: CDS_Waves
+    local_folder: ERA5_SINGLE_LEVELS/waves
     time_step: hourly
     store_dtype: int16  
     source_vars: [
@@ -252,7 +253,7 @@ variables:
     bbox: [-80, 0, 10, 70]
 
   bathy:
-    local_folder: ETOPO_Topography
+    local_folder: ETOPO/2022
     source_vars: [z]
     compiled_vars: [bathy, bathy_std]
     dataset_id_rep: Etopo_v1
@@ -331,7 +332,12 @@ global_attrs:
   geospatial_lat_units: degrees_north
   geospatial_lon_resolution: 0.25
   geospatial_lon_units: degrees_east
-  comment: For variables with less than 0.25 spatial resolution (all except o2), upscalling was done using xarray interp function with linear method
+  comment: >-
+    Each variable is put on the 0.25 degree grid by comparing its native resolution with the
+    target: a finer source is area-averaged over the source cells its target cell covers, and
+    a source at the same resolution or coarser is interpolated bilinearly. The eddy identifier
+    and attribute columns (track, ndays, amp, speed, speedrad_km) take the value of the nearest
+    source cell instead, because a mean of two eddies describes neither.
 
 variable_attrs:
 # SST
