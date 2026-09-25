@@ -393,6 +393,49 @@ def rename_dims(ds: xr.Dataset) -> xr.Dataset:
     return ds.rename(mapping)
 
 
+def rename_source_vars(
+    ds: xr.Dataset, renames: dict[str, str] | None, var_key: str = ""
+) -> xr.Dataset:
+    """
+    Rename source variables to the names their var_key publishes them under.
+
+    Driven by ``source_renames`` in config (``{analysed_sst: sst}``), which is
+    the map between a var_key's ``source_vars`` and its ``compiled_vars``.
+
+    A rename whose source is gone but whose target is already there is a no-op,
+    so a dataset that has been through here once can pass again. A rename whose
+    source is missing outright raises: config names a variable the file does not
+    have, which would otherwise surface much later as a column nothing wrote.
+
+    Args:
+        ds: Dataset as opened, with its source variable names.
+        renames: Source name -> published name. None or empty returns ``ds``.
+        var_key: Identity label for the error message only.
+
+    Returns:
+        The dataset with the renames applied.
+
+    Raises:
+        ValueError: A rename names a variable the dataset does not hold, under
+            either name.
+    """
+    if not renames:
+        return ds
+
+    label = f"[{var_key}] " if var_key else ""
+    mapping: dict[str, str] = {}
+    for src, out in renames.items():
+        if src in ds.variables:
+            mapping[src] = out
+        elif out not in ds.variables:
+            raise ValueError(
+                f"{label}source_renames maps '{src}' -> '{out}', but the dataset "
+                f"holds neither. It has {sorted(map(str, ds.data_vars))}."
+            )
+
+    return ds.rename_vars(mapping) if mapping else ds
+
+
 # Decimal places lon/lat labels are rounded to. The finest grid in the pipeline
 # is CMEMS' 1/12° (~0.0833°) product; its cells sit ~5500× farther apart than
 # the ~1.5e-5° float noise a source introduces when it reprocesses/re-grids a

@@ -442,6 +442,62 @@ class TestAppConfig:
         raw = self._with(regrid={"anything": "nearest"})
         assert msgspec.convert(raw, AppConfig).variables["dyn"].regrid
 
+    def test_source_renames_onto_a_published_name_is_accepted(self):
+        raw = self._with(
+            source_renames={"mlotst": "mld"},
+            compiled_vars=["mld"],
+        )
+        assert msgspec.convert(raw, AppConfig).variables["dyn"].source_renames == {
+            "mlotst": "mld"
+        }
+
+    def test_source_renames_onto_an_unpublished_name_is_refused(self):
+        """The map is the link between source_vars and compiled_vars; a target
+        nothing publishes means one of the two is wrong."""
+        raw = self._with(source_renames={"mlotst": "mdl"}, compiled_vars=["mld"])
+        with pytest.raises(msgspec.ValidationError, match=r"\['mdl'\]"):
+            msgspec.convert(raw, AppConfig)
+
+    def test_a_renamed_source_left_in_compiled_vars_is_refused(self):
+        """compiled_vars keeping the old name names a column no store holds."""
+        raw = self._with(
+            source_renames={"mlotst": "mld"},
+            compiled_vars=["mld", "mlotst"],
+        )
+        with pytest.raises(msgspec.ValidationError, match=r"\['mlotst'\] ?, which"):
+            msgspec.convert(raw, AppConfig)
+
+    def test_source_renames_onto_a_depth_sliced_name_is_accepted(self):
+        """A renamed 3-D variable is published as its depth columns."""
+        raw = self._with(
+            source_renames={"to": "thetao"},
+            depth_levels={"thetao": [0]},
+            compiled_vars=["thetao_0"],
+        )
+        assert msgspec.convert(raw, AppConfig).variables["dyn"].source_renames
+
+    def test_a_self_mapping_rename_is_refused(self):
+        raw = self._with(source_renames={"mld": "mld"})
+        with pytest.raises(msgspec.ValidationError, match="onto itself"):
+            msgspec.convert(raw, AppConfig)
+
+    def test_two_sources_onto_one_name_are_refused(self):
+        raw = self._with(source_renames={"mlotst": "mld", "mlotst_cvg": "mld"})
+        with pytest.raises(msgspec.ValidationError, match=r"more than one source"):
+            msgspec.convert(raw, AppConfig)
+
+    def test_a_rename_colliding_with_a_derived_layer_is_refused(self):
+        raw = self._with(
+            source_renames={"mld_stdev": "mld_std"},
+            derived_vars={"mld_std": {"op": "rolling_std", "source": "mld"}},
+        )
+        with pytest.raises(msgspec.ValidationError, match=r"\['mld_std'\]"):
+            msgspec.convert(raw, AppConfig)
+
+    def test_source_renames_without_compiled_vars_skips_the_name_check(self):
+        raw = self._with(source_renames={"mlotst": "anything"})
+        assert msgspec.convert(raw, AppConfig).variables["dyn"].source_renames
+
     def test_consistent_depth_columns_are_accepted(self):
         raw = self._with(
             depth_levels={"thetao": [0, 50]},

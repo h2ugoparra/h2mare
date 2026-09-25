@@ -35,6 +35,7 @@ from h2mare.storage.xarray_helpers import (
     chunk_dataset,
     int16_encoding,
     rename_dims,
+    rename_source_vars,
     snap_grid_coords,
 )
 from h2mare.storage.zarr_catalog import ZarrCatalog
@@ -119,6 +120,10 @@ def convert_netcdf_to_zarr(
             the same slot a registry processor occupies in
             ``Netcdf2Zarr.process_dataset``. To reuse a registered processor,
             wrap it: ``processor=lambda ds: PROCESSORS["sst"](ds, cfg, "sst")``.
+            A registered processor names variables as config's
+            ``source_renames`` leaves them (``sst``, not ``analysed_sst``), and
+            this config-free path applies no renames — do it in the callable
+            first if the files still carry their source names.
         apply_rename: Apply ``rename_dims`` (``longitude/latitude/valid_time`` →
             ``lon/lat/time``). Set ``False`` when the files already use canonical
             dim names.
@@ -908,12 +913,17 @@ class Netcdf2Zarr(BaseConverter):
         if self.var_config.source != "cds":
             ds = rename_dims(ds)
 
+        # Before the processor, so its body, boa_fronts, derived_vars and the CF
+        # attrs all name variables the way config.yaml does (sst, not
+        # analysed_sst). Config is the only place the map lives.
+        ds = rename_source_vars(ds, self.var_config.source_renames, self.var_key)
+
         processor = PROCESSORS.get(self.var_key)
         if processor:
             ds = processor(ds, self.var_config, self.var_key)
 
         # After the processor, so boa_fronts and derived_vars both name
-        # variables as it leaves them (sst, not analysed_sst). Fronts first, so
+        # variables as it leaves them. Fronts first, so
         # a derived layer may read a front distance but not the other way
         # round. Detection stages each layer to disk; _process_period clears
         # the staging once the period has been written.
