@@ -603,6 +603,43 @@ _SOURCE_ENCODING_PREFIXES = ("GRIB_",)
 _SOURCE_ENCODING_ATTRS = ("valid_min", "valid_max")
 
 
+def drop_conflicting_missing_value(ds: xr.Dataset) -> xr.Dataset:
+    """
+    Drop a ``missing_value`` that contradicts the ``_FillValue`` beside it.
+
+    Reading a Zarr moves both into ``.encoding``, and xarray refuses to write
+    them back when they disagree: *"Variable None has conflicting _FillValue
+    (nan) and missing_value (-999.0). Cannot encode data."* So a store carrying
+    both cannot be rewritten from itself — which is what a front recompute, a
+    rechunk, or any overlapping append does.
+
+    ``chl`` is the one store here that carries it, inherited from the CMEMS
+    ocean-colour product and never true of what we stored: the array's fill is
+    NaN and no -999 appears in it. ``_FillValue`` is kept because it describes
+    the data; CF has deprecated ``missing_value`` in its favour anyway. Where
+    the two agree nothing is dropped, since nothing is wrong.
+    """
+    for name in list(ds.variables):
+        encoding = ds[name].encoding
+        fill, missing = encoding.get("_FillValue"), encoding.get("missing_value")
+        if missing is None or fill is None:
+            continue
+        # NaN != NaN, so compare that case by name rather than by value.
+        both_nan = (
+            isinstance(fill, float)
+            and isinstance(missing, float)
+            and np.isnan(fill)
+            and np.isnan(missing)
+        )
+        if not both_nan and fill != missing:
+            logger.debug(
+                f"{name}: dropping missing_value={missing}, which contradicts "
+                f"_FillValue={fill}"
+            )
+            encoding.pop("missing_value")
+    return ds
+
+
 def drop_source_encoding_attrs(ds: xr.Dataset, *, drop_grib: bool = True) -> xr.Dataset:
     """
     Strip attributes that describe the source file rather than this dataset.

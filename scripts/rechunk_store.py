@@ -47,7 +47,10 @@ import xarray as xr
 
 from h2mare import get_settings
 from h2mare.storage.recovery import recover_zarr_store
-from h2mare.storage.xarray_helpers import chunk_dataset
+from h2mare.storage.xarray_helpers import (
+    chunk_dataset,
+    drop_conflicting_missing_value,
+)
 from h2mare.storage.zarr_catalog import ZarrCatalog
 
 
@@ -156,6 +159,10 @@ def rechunk_file(path: Path, *, allow_downcast: bool) -> bool:
                 f"float32; pass --allow-downcast to accept that"
             )
             return False
+
+        # A store that carries both _FillValue and a contradicting
+        # missing_value cannot be written back from itself — chl does.
+        drop_conflicting_missing_value(planned)
 
         # Inherited chunk encodings fight the chunking planned above: to_zarr
         # refuses a write whose dask chunks straddle the encoding's.

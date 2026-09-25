@@ -19,6 +19,7 @@ from h2mare.storage.xarray_helpers import (
     check_depth_compatible,
     check_grid_compatible,
     depth_mismatch,
+    drop_conflicting_missing_value,
     int16_scale,
     snap_grid_coords,
 )
@@ -499,6 +500,10 @@ def _append_data(var_key: str, ds_new: xr.Dataset, path: Path) -> None:
     for var in ds_out.variables:
         ds_out[var].encoding.pop("chunks", None)
         ds_out[var].encoding.pop("preferred_chunks", None)
+
+    # Same shape of problem, from the same re-read: a store carrying both
+    # _FillValue and a contradicting missing_value cannot be written back.
+    drop_conflicting_missing_value(ds_out)
 
     # Co-locate tmp with destination so rename stays on the same drive (atomic on Windows/NTFS)
     tmp_path = path.with_name(path.name + ".tmp")
