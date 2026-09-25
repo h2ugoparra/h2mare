@@ -234,6 +234,24 @@ class TestWarnIfRepUpdated:
         assert "2022-12-31" in msg
         assert "2023-12-31" in msg
 
+    def test_the_catalog_consulted_is_this_downloader_s(self, dl):
+        """
+        Its own config and store, not whatever the machine has deployed.
+
+        Resolving through get_settings() read another store's catalog, and for
+        a var_key the deployed config did not define the constructor raised
+        into the debug branch — the check turning itself off, silently, on any
+        machine pointed elsewhere. It is why these tests passed or failed
+        depending on H2MARE_ROOT.
+        """
+        with patch("h2mare.storage.zarr_catalog.ZarrCatalog") as MockCatalog:
+            MockCatalog.return_value.df = pd.DataFrame()
+            dl._warn_if_rep_updated(pd.Timestamp("2023-12-31"))
+
+        kwargs = MockCatalog.call_args.kwargs
+        assert kwargs["app_config"] is dl.app_config
+        assert kwargs["store_root"] == dl.store_root
+
     def test_no_warning_when_api_end_date_matches_catalog(self, dl, tmp_path):
         catalog_df = pd.DataFrame(
             [
