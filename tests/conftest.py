@@ -1,5 +1,6 @@
 """Shared fixtures for h2mare test suite."""
 
+import os
 from datetime import date
 from pathlib import Path
 from types import SimpleNamespace
@@ -7,6 +8,43 @@ from types import SimpleNamespace
 import numpy as np
 import polars as pl
 import pytest
+
+from h2mare.config import get_settings
+
+REPO = Path(__file__).resolve().parent.parent
+
+
+# ---------------------------------------------------------------------------
+# The config under test
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="session", autouse=True)
+def repo_config() -> "object":
+    """
+    Run the suite against the repo's own config.yaml, whatever the machine has.
+
+    ``H2MARE_ROOT`` is a user-wide setting on a developer box — pointed at
+    whichever project is being worked on — and it outranks the repo's .env,
+    because python-dotenv does not override an existing variable. Pointed at
+    another project it takes the whole suite with it: seven tests failed
+    against a config that simply does not define the var_keys they name, which
+    says something about the machine and nothing about the code.
+
+    CI has no ``H2MARE_ROOT`` and finds the repo by its config.yaml. This makes
+    a local run agree with it, and is why ``get_settings`` documents its cache
+    as clearable.
+    """
+    previous = os.environ.get("H2MARE_ROOT")
+    os.environ["H2MARE_ROOT"] = str(REPO)
+    get_settings.cache_clear()
+    yield
+    if previous is None:
+        os.environ.pop("H2MARE_ROOT", None)
+    else:
+        os.environ["H2MARE_ROOT"] = previous
+    get_settings.cache_clear()
+
 
 # ---------------------------------------------------------------------------
 # DataFrame factories

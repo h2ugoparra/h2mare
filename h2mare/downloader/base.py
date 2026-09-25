@@ -73,7 +73,18 @@ class BaseDownloader(ABC):
         from h2mare.storage.zarr_catalog import ZarrCatalog
 
         try:
-            df = ZarrCatalog(self.var_key, auto_refresh=False).df
+            # The downloader's own config and store, not the ambient ones: this
+            # is a check about the archive this instance writes to. Resolving it
+            # through get_settings() instead read whichever store the machine
+            # had deployed, and a var_key the deployed config did not define
+            # raised out of the constructor into the debug branch below — the
+            # check disabling itself, silently, on a machine pointed elsewhere.
+            df = ZarrCatalog(
+                self.var_key,
+                app_config=self.app_config,
+                store_root=self.store_root,
+                auto_refresh=False,
+            ).df
         except FileNotFoundError:
             return
         except Exception as e:
