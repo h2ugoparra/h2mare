@@ -36,7 +36,7 @@ variables:
       gke: {op: kinetic_energy, source: [ugos, vgos]}
 
   mld:
-    local_folder: CMEMS_MLD
+    local_folder: CMEMS_PHY_001_030/mld
     source_vars: [mlotst]
     compiled_vars: [mld]
     dataset_id_rep: cmems_mod_glo_phy_my_0.083deg_P1D-m
@@ -47,7 +47,7 @@ variables:
     bbox: [-80, 0, 10, 70]
 
   thetao:
-    local_folder: CMEMS_Thetao
+    local_folder: CMEMS_PHY_001_030/thetao
     source_vars: [thetao]
     compiled_vars: [thetao_100, thetao_200, thetao_500, thetao_1000]
     dataset_id_rep: cmems_mod_glo_phy_my_0.083deg_P1D-m
@@ -99,7 +99,7 @@ variables:
     bbox: [-180, -80, 180, 90]
 
   o2:
-    local_folder: CMEMS_Biochemical
+    local_folder: CMEMS_BGC_001_029
     source_vars: [o2]
     compiled_vars: [o2_0, o2_100, o2_500, o2_1000]
     dataset_id_rep: cmems_mod_glo_bgc_my_0.25deg_P1D-m
