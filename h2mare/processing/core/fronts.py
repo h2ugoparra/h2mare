@@ -22,7 +22,7 @@ import multiprocessing as mp
 import shutil
 import time
 from collections.abc import Iterator
-from functools import partial
+from functools import cached_property, partial
 from multiprocessing.pool import Pool
 from pathlib import Path
 
@@ -36,9 +36,13 @@ from scipy.ndimage import maximum_filter, median_filter, minimum_filter, sobel
 
 from h2mare import get_settings
 from h2mare.models import BOAFrontSpec
+from h2mare.utils.parallel import resolve_n_workers
 from h2mare.utils.spatial import haversine_min_distance_kdtree
 
-#: Pool size when a ``boa_fronts`` entry does not set ``n_workers``.
+#: Pool size when a ``boa_fronts`` entry does not set ``n_workers``. Detection
+#: workers are cheap — one lat×lon slab read from the staged Zarr per day — so
+#: this sits well above the eddies default. Capped by the host, and by
+#: ``H2MARE_MAX_WORKERS``: see ``utils.parallel.resolve_n_workers``.
 DEFAULT_N_WORKERS = 10
 
 #: Marks the staging stores under INTERIM_DIR, so they can be swept by name.
@@ -324,9 +328,17 @@ class FrontProcessor:
         self.name = name
         self.spec = spec
 
-    @property
+    @cached_property
     def n_workers(self) -> int:
-        return self.spec.n_workers or DEFAULT_N_WORKERS
+        """
+        Pool size for this layer: the spec's value or the module default, capped.
+
+        Cached so the cap is resolved — and logged — once per layer rather than
+        at each of the two places that ask for it.
+        """
+        return resolve_n_workers(
+            self.spec.n_workers, DEFAULT_N_WORKERS, f"{self.var_key}/{self.name}"
+        )
 
     def from_dataset(self, ds: xr.Dataset) -> xr.DataArray:
         """

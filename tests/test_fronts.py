@@ -1,5 +1,6 @@
 """Tests for processing/core/fronts.py and the boa_fronts config entry."""
 
+import os
 from pathlib import Path
 from unittest.mock import patch
 
@@ -10,6 +11,7 @@ import pytest
 import xarray as xr
 import yaml
 
+from h2mare.config import get_settings
 from h2mare.models import AppConfig, BOAFrontSpec
 from h2mare.processing.core.fronts import (
     DEFAULT_N_WORKERS,
@@ -374,11 +376,25 @@ class TestFrontProcessor:
         with pytest.raises(ValueError, match="no time steps"):
             self._run(_ds().isel(time=slice(0, 0)))
 
-    def test_worker_count_comes_from_the_spec(self):
+    def test_worker_count_comes_from_the_spec(self, monkeypatch):
+        """On a machine with cores to spare — the cap is the next test."""
+        monkeypatch.setattr(os, "cpu_count", lambda: 64)
         assert FrontProcessor("sst", "sst_fdist", _spec()).n_workers == (
             DEFAULT_N_WORKERS
         )
         assert FrontProcessor("sst", "sst_fdist", _spec(n_workers=2)).n_workers == 2
+
+    def test_the_pool_is_capped_to_the_machine(self, monkeypatch):
+        """DEFAULT_N_WORKERS is 10; a smaller box gets its own core count, and
+        a CI runner with 4 cores no longer starts 10 spawn workers."""
+        monkeypatch.setattr(os, "cpu_count", lambda: 4)
+        assert FrontProcessor("sst", "sst_fdist", _spec()).n_workers == 4
+        assert FrontProcessor("sst", "sst_fdist", _spec(n_workers=2)).n_workers == 2
+
+    def test_the_env_ceiling_caps_the_pool(self, monkeypatch):
+        monkeypatch.setattr(os, "cpu_count", lambda: 64)
+        monkeypatch.setattr(get_settings(), "MAX_WORKERS", 2)
+        assert FrontProcessor("sst", "sst_fdist", _spec(n_workers=8)).n_workers == 2
 
 
 class TestRealPool:

@@ -22,6 +22,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The **process** pools — BOA front detection and the eddy rasterisation — are
+  now capped by the host's CPU count, and by an optional `H2MARE_MAX_WORKERS`
+  ceiling in `.env`. Front detection defaulted to 10 spawn workers whatever the
+  machine had: on a 4-core box (or a CI runner) that started six workers it
+  could not run, each re-importing h2mare and receiving its own copy of every
+  task. The per-site defaults and each variable's `n_workers` are unchanged —
+  they propose, the machine caps. A malformed `H2MARE_MAX_WORKERS` is warned
+  about and ignored, since `Settings()` runs on any import. The thread pools
+  (AVISO FTP downloads, `parquet2csv`, geometry extraction) are deliberately
+  left alone: they wait on the network or the disk, where more threads than
+  cores is the point.
+
 - `source_renames` in a variable's config entry maps its source variable names
   onto the names it publishes (`{analysed_sst: sst}`), closing the loop between
   `source_vars` and `compiled_vars` in the one place both are declared. Applied

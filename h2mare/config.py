@@ -55,6 +55,12 @@ class Settings:
         # this run to go somewhere else. See utils.paths.store_root_for.
         self._store_root_overridden = False
 
+        # Ceiling on every worker pool, for a machine smaller than the one a
+        # site's default was measured on. None leaves each site's own default
+        # (and the host's CPU count) in charge — see
+        # utils.parallel.resolve_n_workers.
+        self.MAX_WORKERS = self._get_max_workers()
+
         # No directories are created here: Settings() runs on any import, and
         # BASE_DIR may be a directory that merely contains a config.yaml. Writers
         # mkdir their own parents.
@@ -101,6 +107,39 @@ class Settings:
         if store_dir := os.getenv("STORE_ROOT"):
             return Path(store_dir).resolve()
         return None
+
+    @staticmethod
+    def _get_max_workers() -> Optional[int]:
+        """
+        Ceiling on worker pools from ``H2MARE_MAX_WORKERS``, if it is usable.
+
+        A malformed value is warned about and ignored rather than raised:
+        ``Settings()`` runs on any import, so a typo in a tuning knob would
+        otherwise stop every command, including the ones that start no pool.
+        Ignoring it leaves each site at its own default, which is the behaviour
+        of not setting it at all.
+        """
+        raw = os.getenv("H2MARE_MAX_WORKERS")
+        if not raw:
+            return None
+
+        try:
+            value = int(raw)
+        except ValueError:
+            logger.warning(
+                f"H2MARE_MAX_WORKERS={raw!r} is not a whole number — ignoring it. "
+                f"Worker pools keep their own defaults."
+            )
+            return None
+
+        if value < 1:
+            logger.warning(
+                f"H2MARE_MAX_WORKERS={value} is below 1 — ignoring it. Worker "
+                f"pools keep their own defaults."
+            )
+            return None
+
+        return value
 
     def override_store_root(self, store_root: Path) -> None:
         """
