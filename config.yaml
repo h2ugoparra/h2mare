@@ -5,6 +5,8 @@ variables:
   sst:
     local_folder: CMEMS_SST_010_011
     source_vars: [analysed_sst, analysis_error]
+    source_renames:
+      analysed_sst: sst
     compiled_vars: [sst, analysis_error, sst_std, sst_fdist]
     dataset_id_rep: METOFFICE-GLO-SST-L4-REP-OBS-SST
     dataset_id_nrt: METOFFICE-GLO-SST-L4-NRT-OBS-SST-V2
@@ -38,6 +40,8 @@ variables:
   mld:
     local_folder: CMEMS_PHY_001_030/mld
     source_vars: [mlotst]
+    source_renames:
+      mlotst: mld
     compiled_vars: [mld]
     dataset_id_rep: cmems_mod_glo_phy_my_0.083deg_P1D-m
     source: cmems
@@ -62,6 +66,8 @@ variables:
   chl:
     local_folder: CMEMS_BGC_009_104
     source_vars: [CHL]
+    source_renames:
+      CHL: chl
     compiled_vars: [chl, chl_fdist]
     dataset_id_rep: cmems_obs-oc_glo_bgc-plankton_my_l4-gapfree-multi-4km_P1D
     source: cmems

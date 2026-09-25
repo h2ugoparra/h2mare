@@ -326,6 +326,16 @@ class KeyVarConfigEntry(msgspec.Struct):
     # var_key. Used to select only these columns when adding a variable to an
     # existing Parquet store (--add-var). None means not yet declared.
     compiled_vars: Optional[list[str]] = None
+    # Source variable names renamed to the names this var_key publishes them
+    # under — e.g. {analysed_sst: sst}. This is the map between source_vars and
+    # compiled_vars, and the only place it lives.
+    #
+    # Applied at convert time before the var_key's registered processor, so a
+    # processor body, boa_fronts, derived_vars and the CF attrs all name
+    # variables the way config does; a var_key that needs nothing but a rename
+    # (mld) therefore needs no processor at all. Only the names change — reach
+    # for derived_vars for a variable computed from another.
+    source_renames: Optional[dict[str, str]] = None
     # Cadence of this variable's stored Zarr. DAILY (the default, and what every
     # existing store is) means one step per calendar day. HOURLY keeps the
     # source's sub-daily axis instead of aggregating it away at convert time —
@@ -380,8 +390,9 @@ class KeyVarConfigEntry(msgspec.Struct):
     #
     # Keyed by output name, like derived_vars, so a store carrying several
     # fields can publish a layer for each of them; `source` names the variable
-    # as the var_key's processor leaves it. Applied just before derived_vars,
-    # so a derived layer may read an fdist but not the other way round.
+    # as source_renames and the var_key's processor leave it. Applied just
+    # before derived_vars, so a derived layer may read an fdist but not the
+    # other way round.
     #
     # Daily stores only: detection schedules one field per day, and an hourly
     # axis has 24 of them. The threshold is BOA's own — see BOAFrontSpec.
@@ -643,6 +654,74 @@ def _check_regrid_names(var_key: str, var_config: KeyVarConfigEntry) -> None:
         )
 
 
+def _check_source_renames(var_key: str, var_config: KeyVarConfigEntry) -> None:
+    """
+    Refuse a ``source_renames`` map that cannot mean what it says.
+
+    The map is the link between ``source_vars`` and ``compiled_vars``, and it is
+    applied before everything else at convert time — so a slip here renames a
+    variable out of the reach of every step that follows, and the store ends up
+    publishing a name nothing else in config knows about.
+
+    The rename *keys* are not checked against ``source_vars``: that field holds
+    what is requested from the provider, which for CDS is the API's long name
+    (``2m_temperature``) rather than the name the GRIB carries (``t2m``). A key
+    naming a variable the file does not hold is caught at convert time instead,
+    by ``rename_source_vars``.
+    """
+    renames = var_config.source_renames or {}
+    if not renames:
+        return
+
+    for src, out in renames.items():
+        if src == out:
+            raise ValueError(
+                f"'{var_key}': source_renames maps '{src}' onto itself; drop the entry."
+            )
+
+    targets = list(renames.values())
+    collided = sorted({t for t in targets if targets.count(t) > 1})
+    if collided:
+        raise ValueError(
+            f"'{var_key}': source_renames maps more than one source onto "
+            f"{collided}; only one of them would survive the rename."
+        )
+
+    written = {
+        out
+        for name, spec in (var_config.derived_vars or {}).items()
+        for out in spec.output_names(name)
+    } | set(var_config.boa_fronts or {})
+    clash = sorted(set(targets) & written)
+    if clash:
+        raise ValueError(
+            f"'{var_key}': source_renames writes {clash}, which derived_vars or "
+            f"boa_fronts also write; keep one."
+        )
+
+    # Only where compiled_vars is declared, which is what says the names exist.
+    declared = var_config.compiled_vars
+    if not declared:
+        return
+
+    # A renamed 3-D variable is published as its depth columns, not under the
+    # name it is stored as, so its levels count as declaring it.
+    sliced = set(depth_levels_for(var_key, var_config))
+    unpublished = sorted(set(targets) - set(declared) - sliced)
+    if unpublished:
+        raise ValueError(
+            f"'{var_key}': source_renames renames to {unpublished}, which it does "
+            f"not publish. Its compiled_vars are {sorted(declared)}."
+        )
+
+    stale = sorted(set(renames) & set(declared))
+    if stale:
+        raise ValueError(
+            f"'{var_key}': compiled_vars names {stale}, which source_renames "
+            f"renames away, so no store ever holds it. Use the new name."
+        )
+
+
 class AppConfig(msgspec.Struct):
     """Complete application configuration."""
 
@@ -654,6 +733,7 @@ class AppConfig(msgspec.Struct):
             _check_derived_names(var_key, var_config)
             _check_front_entries(var_key, var_config)
             _check_regrid_names(var_key, var_config)
+            _check_source_renames(var_key, var_config)
 
         # compiled_vars is written by hand and read by Parquet, routing and the
         # CF checks, so a depth column compile produces but compiled_vars omits

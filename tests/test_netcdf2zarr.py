@@ -409,6 +409,70 @@ class TestProcessDataset:
 
 
 # ---------------------------------------------------------------------------
+# source_renames
+#
+# The source -> published name map lives in config, and is applied before the
+# processor slot, so a var_key whose only need is a rename needs no processor.
+# ---------------------------------------------------------------------------
+
+
+class TestProcessDatasetRenames:
+    def _ds(self, name: str, fill: float = 1.0):
+        return xr.Dataset(
+            {name: (["time", "lat", "lon"], np.full((2, 2, 2), fill))},
+            coords={
+                "time": pd.date_range("2020-01-01", periods=2, freq="D"),
+                "lat": [30.0, 35.0],
+                "lon": [-10.0, -5.0],
+            },
+        )
+
+    def test_a_rename_only_var_key_needs_no_processor(self, tmp_path):
+        entry = {**_MLD_ENTRY, "source_renames": {"mlotst": "mld"}}
+        n2z = _make_converter(tmp_path, var_key="mld", entry=entry)
+        with patch.dict(
+            "h2mare.format_converters.netcdf2zarr.PROCESSORS", {}, clear=True
+        ):
+            result = n2z.process_dataset(self._ds("mlotst"))
+        assert set(map(str, result.data_vars)) == {"mld"}
+
+    def test_the_processor_sees_the_renamed_variable(self, tmp_path):
+        """Applied before the processor, so process_sst can read ds["sst"]."""
+        entry = {**_SST_ENTRY_SUBSET, "source_renames": {"analysed_sst": "sst"}}
+        n2z = _make_converter(tmp_path, entry=entry)
+        with patch.dict(
+            "h2mare.format_converters.netcdf2zarr.PROCESSORS",
+            {"sst": lambda d, *_: d.assign(sst=d["sst"] - 273.15)},
+        ):
+            result = n2z.process_dataset(self._ds("analysed_sst", fill=300.0))
+        np.testing.assert_allclose(result["sst"].values, 300.0 - 273.15, rtol=1e-4)
+
+    def test_derived_vars_read_the_renamed_name(self, tmp_path):
+        """derived_vars and boa_fronts name variables as config does, whether a
+        processor or the rename put them there."""
+        entry = {
+            **_MLD_ENTRY,
+            "source_renames": {"mlotst": "mld"},
+            "derived_vars": {"mld_std": {"op": "rolling_std", "source": "mld"}},
+        }
+        n2z = _make_converter(tmp_path, var_key="mld", entry=entry)
+        with patch.dict(
+            "h2mare.format_converters.netcdf2zarr.PROCESSORS", {}, clear=True
+        ):
+            result = n2z.process_dataset(self._ds("mlotst"))
+        assert "mld_std" in result
+
+    def test_a_source_the_files_lack_is_refused(self, tmp_path):
+        entry = {**_MLD_ENTRY, "source_renames": {"mlotst": "mld"}}
+        n2z = _make_converter(tmp_path, var_key="mld", entry=entry)
+        with patch.dict(
+            "h2mare.format_converters.netcdf2zarr.PROCESSORS", {}, clear=True
+        ):
+            with pytest.raises(ValueError, match="source_renames maps 'mlotst'"):
+                n2z.process_dataset(self._ds("mixed_layer_depth"))
+
+
+# ---------------------------------------------------------------------------
 # boa_fronts
 #
 # Front detection is applied here rather than inside the cmems processors, so

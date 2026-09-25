@@ -12,6 +12,7 @@ from h2mare.storage.xarray_helpers import (
     drop_source_encoding_attrs,
     get_dataset_encoding,
     rename_dims,
+    rename_source_vars,
     snap_grid_coords,
     unified_time_chunk,
 )
@@ -344,6 +345,51 @@ class TestRenameDims:
         assert "time" in result.dims
         assert "lat" in result.dims
         assert "lon" in result.dims
+
+
+class TestRenameSourceVars:
+    """config.yaml's source -> published name map (``source_renames``)."""
+
+    def _ds(self, name="mlotst"):
+        times = pd.date_range("2020-01-01", periods=2, freq="D")
+        return xr.Dataset(
+            {name: (["time", "lat", "lon"], np.arange(8.0).reshape(2, 2, 2))},
+            coords={"time": times, "lat": [30.0, 31.0], "lon": [-10.0, -9.0]},
+        )
+
+    def test_renames_and_keeps_the_values(self):
+        ds = self._ds()
+        result = rename_source_vars(ds, {"mlotst": "mld"}, "mld")
+        assert "mld" in result and "mlotst" not in result
+        np.testing.assert_array_equal(result["mld"].values, ds["mlotst"].values)
+
+    def test_renames_only_what_is_listed(self):
+        ds = self._ds().assign(analysis_error=lambda d: d["mlotst"] * 0)
+        result = rename_source_vars(ds, {"mlotst": "mld"}, "mld")
+        assert set(map(str, result.data_vars)) == {"mld", "analysis_error"}
+
+    def test_no_map_is_a_no_op(self):
+        ds = self._ds()
+        for renames in (None, {}):
+            result = rename_source_vars(ds, renames, "mld")
+            assert set(map(str, result.data_vars)) == {"mlotst"}
+
+    def test_an_already_renamed_dataset_passes_again(self):
+        """Idempotent: the target is there, the source is gone, nothing to do."""
+        once = rename_source_vars(self._ds(), {"mlotst": "mld"}, "mld")
+        twice = rename_source_vars(once, {"mlotst": "mld"}, "mld")
+        assert set(map(str, twice.data_vars)) == {"mld"}
+
+    def test_a_source_the_dataset_lacks_is_refused(self):
+        """Otherwise it surfaces much later as a column nothing wrote."""
+        with pytest.raises(ValueError, match="source_renames maps 'mlotst'"):
+            rename_source_vars(self._ds(name="somethingelse"), {"mlotst": "mld"}, "mld")
+
+    def test_the_error_names_the_var_key_and_what_is_there(self):
+        with pytest.raises(ValueError) as err:
+            rename_source_vars(self._ds(name="other"), {"mlotst": "mld"}, "mld")
+        assert "[mld]" in str(err.value)
+        assert "['other']" in str(err.value)
 
 
 class TestDropSourceEncodingAttrs:

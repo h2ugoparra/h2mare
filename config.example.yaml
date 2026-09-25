@@ -22,6 +22,11 @@ variables:
     local_folder: CMEMS_SST
     archive_raw: false
     source_vars: [analysed_sst, analysis_error]
+    # Source names renamed to the names this var_key publishes, applied before
+    # the convert step's processor. The only place that map lives — a variable
+    # needing nothing else needs no processor at all.
+    source_renames:
+      analysed_sst: sst
     # Names as they appear in the compiled h2ds store, including anything the
     # convert step derives. `h2mare parquet --add-var` selects on these.
     compiled_vars: [sst, analysis_error, sst_std, sst_fdist]

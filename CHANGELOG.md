@@ -22,6 +22,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `source_renames` in a variable's config entry maps its source variable names
+  onto the names it publishes (`{analysed_sst: sst}`), closing the loop between
+  `source_vars` and `compiled_vars` in the one place both are declared. Applied
+  at convert time before the registered processor, so processors, `boa_fronts`,
+  `derived_vars` and the CF attrs all see config's names. Config load refuses a
+  rename onto a name the var_key does not publish, onto one `derived_vars` or
+  `boa_fronts` also writes, two sources onto one name, a self-map, and a
+  `compiled_vars` still listing a renamed-away source; a rename naming a
+  variable the raw files do not hold fails the convert by name.
+
+### Changed
+
+- The `sst`, `chl` and `mld` renames moved out of their convert-time processors
+  into `source_renames` in config. `process_mld` only renamed `mlotst`, so it
+  and its registry entry are gone — a variable needing nothing but a rename now
+  needs no Python at all. No store changes: the names on disk are the same, and
+  nothing needs re-converting. A caller reusing a registered processor through
+  `convert_netcdf_to_zarr` must do the rename itself, as that path is
+  config-free.
+
 - `scripts/bathymetry.py` builds a 60s layer next to the 15s one, both as tiled
   Zarr (`etopo2022_<res>_…_bathy-std.zarr`) holding `bathy` and a 3×3 rolling
   `bathy_std` (the entry's `derived_vars`), with the ETOPO source's global and

@@ -33,15 +33,11 @@ def process_chl(
     """
     Prepare the chlorophyll dataset for its front-distance layer.
 
-    ``chl_fdist`` is declared in config (``boa_fronts``) and detected after
-    this returns; the chunking here is what the detection stages from.
+    ``CHL`` → ``chl`` is config's (``source_renames``), applied before this
+    runs. ``chl_fdist`` is declared in config too (``boa_fronts``) and detected
+    after this returns; the chunking here is what the detection stages from.
     """
-    _var = "chl"
-    return (
-        ds.rename_vars({"CHL": _var})
-        .astype("float32")
-        .chunk({"time": 1, "lat": 500, "lon": 500})
-    )
+    return ds.astype("float32").chunk({"time": 1, "lat": 500, "lon": 500})
 
 
 def process_sst(
@@ -50,23 +46,14 @@ def process_sst(
     var_key: str | None = None,
 ) -> xr.Dataset:
     """
-    Process sea surface temperature downloaded dataset.
+    Convert sea surface temperature from kelvin to degrees Celsius.
 
-    ``sst_std`` and ``sst_fdist`` are both declared in config — ``derived_vars``
-    and ``boa_fronts`` — and computed after this returns.
+    ``analysed_sst`` → ``sst`` is config's (``source_renames``), applied before
+    this runs. ``sst_std`` and ``sst_fdist`` are declared in config too —
+    ``derived_vars`` and ``boa_fronts`` — and computed after this returns.
     """
     _var = "sst"
-    ds = ds.rename_vars({"analysed_sst": _var})
     ds[_var] = (
         (ds[_var] - 273.15).astype("float32").chunk({"time": 1, "lat": 500, "lon": 500})
     )
     return ds
-
-
-def process_mld(
-    ds: xr.Dataset,
-    var_config: Optional[KeyVarConfigEntry] = None,
-    var_key: str | None = None,
-) -> xr.Dataset:
-    """Process mixed layer depth dataset"""
-    return ds.rename_vars({"mlotst": "mld"})
