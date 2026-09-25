@@ -117,6 +117,34 @@ class TestGetStoreDir:
         assert s.STORE_ROOT is None
 
 
+class TestMaxWorkers:
+    """
+    H2MARE_MAX_WORKERS is a ceiling on every pool, for a machine smaller than
+    the one a site's default was measured on. A malformed value is ignored
+    rather than raised: Settings() runs on any import.
+    """
+
+    def _settings(self, tmp_path, monkeypatch, value=None):
+        monkeypatch.setenv("H2MARE_ROOT", str(tmp_path))
+        if value is None:
+            monkeypatch.delenv("H2MARE_MAX_WORKERS", raising=False)
+        else:
+            monkeypatch.setenv("H2MARE_MAX_WORKERS", value)
+        return Settings()
+
+    def test_unset_leaves_each_site_its_own_default(self, tmp_path, monkeypatch):
+        assert self._settings(tmp_path, monkeypatch).MAX_WORKERS is None
+
+    def test_a_whole_number_is_read(self, tmp_path, monkeypatch):
+        assert self._settings(tmp_path, monkeypatch, "3").MAX_WORKERS == 3
+
+    @pytest.mark.parametrize("value", ["", "many", "3.5", "0", "-2"])
+    def test_an_unusable_value_is_ignored(self, tmp_path, monkeypatch, value):
+        """Ignored, not raised — a typo in a tuning knob must not stop a
+        command that starts no pool at all."""
+        assert self._settings(tmp_path, monkeypatch, value).MAX_WORKERS is None
+
+
 class TestOverrideStoreRoot:
     """
     Backs --store-path. Applied to settings rather than threaded through each

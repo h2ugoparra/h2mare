@@ -39,6 +39,7 @@ from h2mare.storage.zarr_catalog import ZarrCatalog
 from h2mare.types import BBox, DateLike, DateRange, FilePeriod
 from h2mare.utils.datetime_utils import normalize_date
 from h2mare.utils.files_io import filter_raw_files
+from h2mare.utils.parallel import resolve_n_workers
 from h2mare.utils.paths import resolve_download_path, resolve_store_path
 from h2mare.utils.spatial import (
     GridBuilder,
@@ -87,6 +88,10 @@ _BatchJobs = tuple[
 ]
 
 #: Pool size when neither the caller nor the var_key's config sets `n_workers`.
+#: Low because each worker holds the period's observations plus a day of grids,
+#: and because the limit is the staging write in the main process: profiling a
+#: year at 1/12° found 8 no faster than 4. Capped by the host, and by
+#: ``H2MARE_MAX_WORKERS``: see ``utils.parallel.resolve_n_workers``.
 DEFAULT_N_WORKERS = 4
 
 
@@ -261,7 +266,9 @@ class EDDIESProcessor:
             dx, dy: x,y cell size resp., in degrees. Default to the grid the
                 var_key's config declares (`cells_per_degree`).
         """
-        n_workers = n_workers or self.var_config.n_workers or DEFAULT_N_WORKERS
+        n_workers = resolve_n_workers(
+            n_workers or self.var_config.n_workers, DEFAULT_N_WORKERS, self.var_key
+        )
 
         logger.info("Starting eddies processing")
         self._clear_stale_staging()

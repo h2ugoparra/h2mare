@@ -145,7 +145,7 @@ conventional commits, branch protection. Only these two are additional here:
 
 - **Logging** — use `loguru` (`from loguru import logger`), not stdlib `logging`
 - **Paths** — always access paths via `settings.*`; never hardcode
-- **`.env`** — `STORE_ROOT` (required); `AVISO_FTP_SERVER`, `AVISO_USERNAME`, `AVISO_PASSWORD` (required for AVISO variables); `H2MARE_ROOT` (optional, overrides project root detection)
+- **`.env`** — `STORE_ROOT` (required); `AVISO_FTP_SERVER`, `AVISO_USERNAME`, `AVISO_PASSWORD` (required for AVISO variables); `H2MARE_ROOT` (optional, overrides project root detection); `H2MARE_MAX_WORKERS` (optional ceiling on the *process* pools — fronts, eddies; resolved by `utils/parallel.py::resolve_n_workers`, which also caps them by CPU count. The thread pools are not capped: they wait on I/O)
 - **Types** — use `DateRange`, `BBox`, `DateLike` from `h2mare/types.py`; no raw tuples. Accept plain tuples in public APIs and construct the named type internally.
 - **Regression tests** — must fail on unfixed code; verify with `git stash push <src-file>` → run test → `git stash pop`.
 - **Test helpers** — `tests/conftest.py:make_grid_df` builds time×lon×lat Polars frames for parquet-layer tests; `_make_ds` helpers in `tests/test_storage.py` build zarr-ready datasets.
