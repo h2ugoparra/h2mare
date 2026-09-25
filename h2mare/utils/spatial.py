@@ -328,13 +328,22 @@ def _conservative_regrid(
     return xr.Dataset(out, attrs=ds.attrs)
 
 
-#: Grid pairs already reported by :func:`_warn_if_out_of_phase`. A compile
-#: regrids the same variable once per period file, so without this a 30-year
-#: run says the same thing 30 times per variable.
-_phase_warned: set[tuple[float, float]] = set()
+#: Grid pairs already reported by :func:`_warn_if_out_of_phase`, keyed by
+#: var_key as well as by grid: a compile regrids the same variable once per
+#: period file, so without this a 30-year run says the same thing 30 times —
+#: but every var_key sharing the offending grid is worth naming once, since
+#: each is a variable whose values are being averaged rather than copied.
+_phase_warned: set[tuple[str, float, float]] = set()
 
 
-def _warn_if_out_of_phase(ds: xr.Dataset, target: xr.Dataset, ratio: float) -> None:
+def _tag(label: str) -> str:
+    """``"[sst] "`` when the caller names what it is regridding, else nothing."""
+    return f"[{label}] " if label else ""
+
+
+def _warn_if_out_of_phase(
+    ds: xr.Dataset, target: xr.Dataset, ratio: float, label: str = ""
+) -> None:
     """
     Say so when a variable at the target's own resolution is half a cell off it.
 
@@ -359,12 +368,12 @@ def _warn_if_out_of_phase(ds: xr.Dataset, target: xr.Dataset, ratio: float) -> N
     if phase <= PHASE_TOL_CELLS:
         return
 
-    key = (round(src_step, 9), round(float(target["lat"].values[0]), 9))
+    key = (label, round(src_step, 9), round(float(target["lat"].values[0]), 9))
     if key in _phase_warned:
         return
     _phase_warned.add(key)
     logger.warning(
-        f"native grid is the target's resolution ({src_step:.6g}°) but sits "
+        f"{_tag(label)}native grid is the target's resolution ({src_step:.6g}°) but sits "
         f"{phase:.2f} cells out of phase with it, so every value is "
         f"interpolated from its four neighbours rather than copied. Putting "
         f"the target's values where this source's sit (`values_at`) would keep "
@@ -379,6 +388,7 @@ def regrid_to(
     method: RegridMethod = "auto",
     methods: Optional[Mapping[str, RegridMethod]] = None,
     min_coverage: float = 0.0,
+    label: str = "",
 ) -> xr.Dataset:
     """
     Put *ds* on the *target* grid, choosing how by comparing the two resolutions.
@@ -407,6 +417,10 @@ def regrid_to(
         min_coverage: Fraction of a target cell that must be valid (not NaN) for
             it to carry a value, for the conservative path only. ``0.0`` (the
             default) gives a value to any cell with some valid area.
+        label: What is being regridded, for the log lines — the var_key, when a
+            caller has one. A compile puts a dozen variables on the base grid
+            in a row, and the choice it made only means something next to the
+            name of the variable it made it for.
 
     Returns:
         *ds* on the target grid, carrying the target's own coordinate objects so
@@ -421,7 +435,13 @@ def regrid_to(
             # so anything but an exact match means one of them was not regridded.
             merged = xr.merge(
                 [
-                    regrid_to(ds[names], target, method=m, min_coverage=min_coverage)
+                    regrid_to(
+                        ds[names],
+                        target,
+                        method=m,
+                        min_coverage=min_coverage,
+                        label=label,
+                    )
                     for m, names in groups.items()
                 ],
                 join="exact",
@@ -437,10 +457,10 @@ def regrid_to(
         )
         method = "conservative" if ratio > 1 + _RATIO_TOL else "linear"
         logger.debug(
-            f"regrid: {axis_step(ds['lat'].values):.6g}° → "
+            f"{_tag(label)}regrid: {axis_step(ds['lat'].values):.6g}° → "
             f"{axis_step(target['lat'].values):.6g}° (ratio {ratio:.3g}) via {method}"
         )
-        _warn_if_out_of_phase(ds, target, ratio)
+        _warn_if_out_of_phase(ds, target, ratio, label)
 
     if method == "linear":
         out = ds.interp_like(target, method="linear", assume_sorted=True)
