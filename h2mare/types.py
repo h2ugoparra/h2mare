@@ -12,11 +12,17 @@ from datetime import date, datetime
 from enum import Enum
 from typing import Literal, Optional, Sequence, cast
 
+import numpy as np
 import pandas as pd
 import polars as pl
 import xarray as xr
 
 DateLike = str | pd.Timestamp | datetime | date
+
+#: One date or several. The pandas and numpy containers are named because the
+#: pandas stubs do not count a DatetimeIndex (what pd.date_range returns) or a
+#: Series as a Sequence, so type checkers rejected them where they work.
+DatesLike = DateLike | Sequence[DateLike] | pd.Index | pd.Series | np.ndarray
 
 #: Which store a var_key is read from. ``native`` is its own per-variable Zarr,
 #: ``compiled`` is the h2ds every var_key is merged into, and ``auto`` picks per
