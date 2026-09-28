@@ -18,7 +18,7 @@ from loguru import logger
 
 from h2mare.models import StoreDtype, TimeStep
 from h2mare.storage.zarr_index import ZarrIndex
-from h2mare.types import BBox, DateLike, DateRange
+from h2mare.types import BBox, DateLike, DateRange, DatesLike
 from h2mare.utils.datetime_utils import end_of_day, normalize_dates
 from h2mare.utils.spatial import sel_padded_bbox
 
@@ -128,7 +128,7 @@ class ZarrReader:
 
     def open_dataset(
         self,
-        dates: DateLike | Sequence[DateLike] | None = None,
+        dates: DatesLike | None = None,
         start_date: DateLike | None = None,
         end_date: DateLike | None = None,
         bbox: BBox | Sequence[float] | None = None,
@@ -207,7 +207,7 @@ class ZarrReader:
 
     def _open_sparse_dates(
         self,
-        dates: DateLike | Sequence[DateLike],
+        dates: DatesLike,
         bbox: BBox | None,
         variables: str | Sequence[str] | None,
         chunks: dict | str | None,

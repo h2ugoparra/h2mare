@@ -11,14 +11,14 @@ from __future__ import annotations
 
 from collections import defaultdict
 from pathlib import Path
-from typing import Any, Optional, Sequence, Union
+from typing import Any, Optional
 
 import numpy as np
 import pandas as pd
 from loguru import logger
 
 from h2mare.storage.zarr_scanner import ZarrDirectoryScanner
-from h2mare.types import BBox, DateLike, DateRange, FilePeriod
+from h2mare.types import BBox, DateLike, DateRange, DatesLike, FilePeriod
 from h2mare.utils.datetime_utils import normalize_dates
 
 
@@ -272,9 +272,7 @@ class ZarrIndex:
             "start_date"
         )
 
-    def map_dates_to_paths(
-        self, dates: Union[DateLike, Sequence[DateLike]]
-    ) -> dict[str, list[pd.Timestamp]]:
+    def map_dates_to_paths(self, dates: DatesLike) -> dict[str, list[pd.Timestamp]]:
         """
         Map zarr file paths to their corresponding dates.
 

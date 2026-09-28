@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import TYPE_CHECKING, Sequence, cast
+from typing import TYPE_CHECKING, cast
 
 import numpy as np
 import pandas as pd
@@ -12,7 +12,7 @@ import pandas as pd
 from h2mare.types import to_datetime as to_datetime
 
 if TYPE_CHECKING:
-    from h2mare.types import DateLike
+    from h2mare.types import DateLike, DatesLike
 
 _LAST_INSTANT_OF_DAY = pd.Timedelta(days=1) - pd.Timedelta(nanoseconds=1)
 
@@ -50,7 +50,7 @@ def end_of_day(date: DateLike) -> pd.Timestamp:
     return normalize_date(date) + _LAST_INSTANT_OF_DAY
 
 
-def normalize_dates(dates: DateLike | Sequence[DateLike]) -> list[pd.Timestamp]:
+def normalize_dates(dates: DatesLike) -> list[pd.Timestamp]:
     """
     Normalize one date or a sequence of dates to a list of midnight Timestamps.
 
