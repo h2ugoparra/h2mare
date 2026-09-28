@@ -293,6 +293,124 @@ class TestNearestTimeIndices:
 
 
 # ---------------------------------------------------------------------------
+# Samples no cell or time step answers
+# ---------------------------------------------------------------------------
+
+
+def _gappy_daily_ds() -> xr.Dataset:
+    """Daily axis missing Jan 3-4; sst is 10 x the day of the month everywhere."""
+    times = pd.to_datetime(["2020-01-01", "2020-01-02", "2020-01-05"])
+    lats, lons = [30.0, 35.0, 40.0], [-10.0, -5.0, 0.0]
+    data = np.array([10.0, 20.0, 50.0])[:, None, None] * np.ones((1, 3, 3))
+    return xr.Dataset(
+        {"sst": (["time", "lat", "lon"], data)},
+        coords={"time": times, "lat": lats, "lon": lons},
+    )
+
+
+class TestUnansweredSamplesAreNaN:
+    """
+    A nearest-neighbour search always finds *something*. A point beyond the
+    grid used to take the edge cell's value, a date missing from the axis its
+    neighbour's, and a sub-daily sample after noon the next day's — each one
+    returned as though it were the sample's own.
+    """
+
+    @staticmethod
+    def _csv(times, lons, lats, **kwargs) -> pd.DataFrame:
+        pts = pd.DataFrame({"time": pd.to_datetime(times), "lon": lons, "lat": lats})
+        return Extractor.extract_from_csv(pts, kwargs.pop("ds"), "row_id", **kwargs)
+
+    def test_point_beyond_the_grid_is_nan(self):
+        """
+        Regression: lon 5 and lon 350 against a grid ending at 0 both took the
+        eastern edge cell's value; lat 44 the northern edge's.
+        """
+        out = self._csv(
+            ["2020-01-01"] * 4,
+            lons=[1.0, 5.0, 350.0, -5.0],
+            lats=[30.0, 30.0, 30.0, 44.0],
+            ds=_make_distinct_ds(),
+        )
+        # lon 1.0 is inside the last cell (it reaches 2.5): t=0, lat_i=0, lon_i=2
+        assert out["sst"].iloc[0] == 2.0
+        assert out["sst"].iloc[1:].isna().all()
+
+    def test_irregular_axis_reaches_as_far_as_its_wider_side(self):
+        """The inner cell of [-10, -3, 0] spans 3.5° west of -3: -6 is inside it."""
+        ds = _make_spatial_ds(lons=[-10.0, -3.0, 0.0])
+        out = self._csv(["2020-01-01"], lons=[-6.0], lats=[30.0], ds=ds)
+        assert out["sst"].iloc[0] == 1.0
+
+    def test_missing_day_is_nan_rather_than_its_neighbour(self):
+        """Regression: Jan 3 is not on the axis and took Jan 2's value."""
+        out = self._csv(
+            ["2020-01-02", "2020-01-03"],
+            lons=[-5.0, -5.0],
+            lats=[35.0, 35.0],
+            ds=_gappy_daily_ds(),
+            time_step=pd.Timedelta(days=1),
+        )
+        assert out["sst"].iloc[0] == 20.0
+        assert np.isnan(out["sst"].iloc[1])
+
+    def test_inferred_step_is_daily_on_a_gappy_axis(self):
+        """
+        Inference takes the smallest spacing: the median of [1 day, 3 days]
+        would read 2 days, and a day-wide tolerance would hand Jan 3 Jan 2.
+        """
+        out = self._csv(["2020-01-03"], lons=[-5.0], lats=[35.0], ds=_gappy_daily_ds())
+        assert np.isnan(out["sst"].iloc[0])
+
+    def test_subdaily_sample_on_a_daily_axis_takes_its_own_day(self):
+        """
+        Regression: the day's step is stamped at midnight, so 23:30 on Jan 1 was
+        30 minutes from Jan 2's step and 23.5 hours from its own, and took Jan 2.
+        """
+        out = self._csv(
+            ["2020-01-01 08:00", "2020-01-01 23:30"],
+            lons=[-5.0, -5.0],
+            lats=[35.0, 35.0],
+            ds=_gappy_daily_ds(),
+            time_step=pd.Timedelta(days=1),
+        )
+        assert out["sst"].tolist() == [10.0, 10.0]
+
+    def test_hourly_axis_takes_the_nearest_hour_within_half_a_step(self):
+        times = pd.date_range("2020-01-01", periods=5, freq="h")
+        ds = xr.Dataset(
+            {
+                "t2m": (
+                    ["time", "lat", "lon"],
+                    np.arange(5.0)[:, None, None] * np.ones((1, 3, 3)),
+                )
+            },
+            coords={
+                "time": times,
+                "lat": [30.0, 35.0, 40.0],
+                "lon": [-10.0, -5.0, 0.0],
+            },
+        )
+        out = self._csv(
+            ["2020-01-01 02:20", "2020-01-01 06:00"],
+            lons=[-5.0, -5.0],
+            lats=[35.0, 35.0],
+            ds=ds,
+        )
+        assert out["t2m"].iloc[0] == 2.0
+        assert np.isnan(out["t2m"].iloc[1])  # 2 h past the last step
+
+    def test_geometry_on_a_missing_day_is_nan(self):
+        """Regression: the geometry engine's nearest .sel lent Jan 3 Jan 2's value."""
+        gdf = _make_geodf([box(-12, 28, -3, 36)] * 2, ["2020-01-02", "2020-01-03"])
+        out = _extractor(gdf).extract_from_dataset(_gappy_daily_ds(), n_workers=2)
+
+        out = out.sort_index()
+        assert out.loc[0, "sst"] == pytest.approx(20.0)
+        assert np.isnan(out.loc[1, "sst"])
+
+
+# ---------------------------------------------------------------------------
 # Atomic checkpoint helpers
 # ---------------------------------------------------------------------------
 
@@ -837,6 +955,43 @@ class TestProcessSingleVarkeyRouting:
         assert out["tp"].tolist() == [3.0, 15.0]  # the hours themselves
         assert out["ekman_anom"].tolist() == [400.0, 400.0]  # same day, broadcast
         assert set(_atm_config().compiled_vars) <= set(out.columns)
+
+    @staticmethod
+    def _daily_tp_config() -> SimpleNamespace:
+        return SimpleNamespace(
+            compiled_vars=["tp"],
+            time_step=TimeStep.DAILY,
+            extract_depth_slices=None,
+            rename_lonlat=False,
+            local_folder="CDS_AtmAccumAvg",
+            store_root=None,
+        )
+
+    def test_daily_store_answers_subdaily_samples_with_their_own_day(self, monkeypatch):
+        """
+        Regression: sub-daily input kept its full stamps against a daily store,
+        whose steps sit at midnight, so every sample after noon took the next
+        day's value (101, not 100, for 23:30 on Jan 1).
+        """
+        self._patch_catalogs(monkeypatch, self._h2ds()[["tp"]], self._h2ds())
+        ext = self._extractor_for(
+            self._daily_tp_config(), ["2020-01-01 03:00:00", "2020-01-01 23:30:00"]
+        )
+
+        out = ext.process_single_varkey("atm-accum-avg")
+
+        assert out["tp"].tolist() == [100.0, 100.0]
+
+    def test_daily_store_leaves_a_missing_day_empty(self, monkeypatch):
+        """Regression: a day absent from the store took its neighbour's value."""
+        store = self._h2ds()[["tp"]].drop_sel(time=pd.Timestamp("2020-01-03"))
+        self._patch_catalogs(monkeypatch, store, self._h2ds())
+        ext = self._extractor_for(self._daily_tp_config(), ["2020-01-02", "2020-01-03"])
+
+        out = ext.process_single_varkey("atm-accum-avg")
+
+        assert out["tp"].iloc[0] == 101.0
+        assert np.isnan(out["tp"].iloc[1])
 
     def test_daily_store_never_touches_h2ds(self, monkeypatch):
         cfg = SimpleNamespace(
@@ -2196,6 +2351,22 @@ class TestExtractBathy:
         # (lat 0.5, lon 0.2) -> i=5, j=2; (lat 0.3, lon 0.7) -> i=3, j=7.
         assert out["bathy"].tolist() == [52.0, 37.0]
         assert out["bathy_std"].tolist() == [152.0, 137.0]
+
+    def test_point_beyond_the_layer_is_nan(self, tmp_path):
+        """Regression: a point east of the layer took its eastern edge cell's depth."""
+        df = pd.DataFrame(
+            {"time": ["2020-01-01"] * 2, "lon": [0.21, 1.5], "lat": [0.5, 0.5]}
+        )
+        ext = _extractor(
+            df,
+            app_config=SimpleNamespace(variables={"bathy": self._config(tmp_path)}),
+            store_root=tmp_path,
+        )
+
+        out = ext.process_single_varkey("bathy")
+
+        assert out["bathy"].iloc[0] == 52.0
+        assert out[["bathy", "bathy_std"]].iloc[1].isna().all()
 
     def test_geometry_std_is_the_polygon_mean_of_the_std_layer(self, tmp_path):
         out = self._polygon(tmp_path, self._config(tmp_path))

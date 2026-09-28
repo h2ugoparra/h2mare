@@ -155,6 +155,13 @@ Extractor(pts, index_col="row_id", read_from="compiled").run("sst")
 - **A daily store missing what it publishes is an error, not a route.** The rule
   is uniform: absent where the design puts it elsewhere is routed; absent where
   the design says it should be present is a hole in the store, and says so.
+- **Against a daily store, a sample takes the day it falls in** — 23:30 reads
+  that day, not the next one's midnight step. Against an hourly store it takes
+  the nearest hour.
+- **No neighbour stands in for a missing value.** A sample outside the grid
+  (beyond the store's extent, or a 0–360 longitude against a −180–180 grid), or
+  on a date the store does not hold, comes back `NaN` with a warning counting
+  such rows — rather than the edge cell's or the adjacent day's value.
 - The store your input never reaches is never opened, and h2ds is opened **once**
   per `Extractor` however many `var_keys` a `run()` walks.
 
@@ -276,7 +283,7 @@ extractor.extract_from_dataset(
 | `ds` | Gridded data with coords named `lon`, `lat`, and optionally `time`. For geometry input the dataset is assumed to be in `crs` — its CRS is overwritten (not reprojected) to match the geometries. |
 | `vars` | Subset of variables to extract. Only valid when `ds` is an `xr.Dataset`; passing it with a `DataArray` raises `TypeError`. |
 | `n_workers` | Parallel workers for geometry (SHP) extraction only. |
-| `clip_to_coverage` | When `True`, input rows whose location (and time, if `ds` has a time coord) fall outside the `ds` extent are dropped and surface as `NaN` in the result. Default `False`, since nearest-neighbour (CSV) and clip-or-NaN (SHP) already handle out-of-extent inputs. |
+| `clip_to_coverage` | When `True`, input rows whose location (and time, if `ds` has a time coord) fall outside the `ds` extent are dropped and surface as `NaN` in the result. Default `False`, since both engines already return `NaN` for a point outside the grid or a time no step answers. The cadence is read off `ds`'s time axis (its smallest spacing): a daily axis gives each sample the day it falls in, anything else the nearest step within half a step. |
 
 Only config-free preparation is applied. Config-driven steps that the store path performs
 — depth-level slicing, store selection (`read_from`), and store date/bbox coverage resolution — are
