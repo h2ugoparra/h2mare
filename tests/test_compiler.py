@@ -366,6 +366,25 @@ class TestCatalogsFollowTheStoreRoot:
             own / "sst",  # sst is read where it lives
         ]
 
+    def test_catalogs_use_the_compilers_own_config(self, tmp_path):
+        """
+        Regression: _catalog_for built each ZarrCatalog without app_config, so
+        the catalog validated the var_key against the settings' config. A
+        var_key present only in the config handed to the Compiler failed there.
+        """
+        cfg = _make_config()
+        with patch("h2mare.processing.compiler.ZarrCatalog") as MockCatalog:
+            c = Compiler(
+                var_key="h2ds",
+                app_config=cfg,
+                remote_store_root=tmp_path / "elsewhere",
+                local_store_root=tmp_path / "local",
+            )
+            c._catalog_for("sst", auto_refresh=False)
+
+        configs = [call.kwargs["app_config"] for call in MockCatalog.call_args_list]
+        assert configs == [cfg, cfg]
+
 
 class TestHasOverlap:
     def test_returns_true_when_ranges_overlap(self, compiler):

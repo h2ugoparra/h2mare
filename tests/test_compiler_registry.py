@@ -142,6 +142,28 @@ class TestCompileBathy:
         called_path = mock_open.call_args[0][0]
         assert called_path == tmp_path / "bathy" / "bathy.nc"
 
+    def test_compiles_a_zarr_layer(self, tmp_path):
+        """
+        Regression: the layer was opened with xr.open_dataset and no engine,
+        which cannot read the native (15s, 60s) .zarr layers — on Windows it
+        raised PermissionError on the store directory.
+        """
+        compiler = _make_compiler(tmp_path)
+        compiler.app_config.variables["bathy"] = SimpleNamespace(
+            layers={"60s": "bathy_60s.zarr"},
+            compile_layer="60s",
+            local_folder="bathy",
+            store_root=None,
+            regrid=None,
+        )
+        layer = _daily_ds("bathy", _DATES).isel(time=0).drop_vars("time") * -100
+        layer.to_zarr(tmp_path / "bathy" / "bathy_60s.zarr")
+
+        out = _compile_bathy(compiler, None, _DR)
+
+        assert out is not None
+        np.testing.assert_allclose(out["bathy"].values, -100.0)
+
 
 # ---------------------------------------------------------------------------
 # _compile_moon

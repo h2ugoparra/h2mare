@@ -172,8 +172,12 @@ class Compiler:
         """
         var_config = self.app_config.variables[var_key]
         root = store_root_for(var_config, self.remote_store_root)
+        # The compiler's own config, not the catalog's settings default: a
+        # var_key known only to the app_config this compiler was handed would
+        # otherwise fail validation, or resolve to another entry of that name.
         return ZarrCatalog(
             var_key,
+            app_config=self.app_config,
             store_root=root / var_config.local_folder,
             **kwargs,
         )
