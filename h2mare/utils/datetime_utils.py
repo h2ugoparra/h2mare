@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import TYPE_CHECKING, Sequence, cast
 
+import numpy as np
 import pandas as pd
 
 # Re-exported for callers that import it from here; the single definition
@@ -60,7 +61,9 @@ def normalize_dates(dates: DateLike | Sequence[DateLike]) -> list[pd.Timestamp]:
     # Each element goes through normalize_date rather than being normalized
     # inline, so one unusable entry in a list is reported the same way as a
     # lone one instead of raising AttributeError on NaT.
-    if isinstance(dates, (list, tuple)):
+    # A DatetimeIndex (what pd.date_range returns), Series or array is a
+    # sequence of dates too; handed to normalize_date whole, it raised.
+    if isinstance(dates, (list, tuple, pd.Index, pd.Series, np.ndarray)):
         return [normalize_date(d) for d in dates]
     return [normalize_date(cast("DateLike", dates))]
 
