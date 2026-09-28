@@ -362,7 +362,7 @@ variable_attrs:
     short_name: SST Std
     long_name: Standard deviation of analysed sea surface temperature
     units: degree_C
-    comment: Derived from a rolling mean (3*3 cells) from sst native resolution.
+    comment: Derived from a rolling standard deviation (3*3 cells) from sst native resolution.
     product_id_rep: SST_GLO_SST_L4_REP_Observations_010_011
     product_id_nrt: SST_GLO_SST_L4_NRT_Observations_010_001
     dataset_id_rep: METOFFICE-GLO-SST-L4-REP-OBS-SST
@@ -404,7 +404,7 @@ variable_attrs:
     short_name: ADT Std
     long_name: Standard deviation of absolute dynamic topography
     units: m
-    comment: Derived from a rolling mean (3*3 cells) from adt native resolution.
+    comment: Derived from a rolling standard deviation (3*3 cells) from adt native resolution.
     product_id_rep: SEALEVEL_GLO_PHY_L4_MY_008_047
     product_id_nrt: SEALEVEL_GLO_PHY_L4_NRT_008_046
     dataset_id_rep: cmems_obs-sl_glo_phy-ssh_my_allsat-l4-duacs-0.125deg_P1D
@@ -425,7 +425,7 @@ variable_attrs:
     short_name: SLA Std
     long_name: Standard deviation of sea level anomaly
     units: m
-    comment: Derived from a rolling mean (3*3 cells) from sla native resolution.
+    comment: Derived from a rolling standard deviation (3*3 cells) from sla native resolution.
     product_id_rep: SEALEVEL_GLO_PHY_L4_MY_008_047
     product_id_nrt: SEALEVEL_GLO_PHY_L4_NRT_008_046
     dataset_id_rep: cmems_obs-sl_glo_phy-ssh_my_allsat-l4-duacs-0.125deg_P1D
