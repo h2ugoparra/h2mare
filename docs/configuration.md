@@ -8,145 +8,68 @@ H2MARE is configured through two files: `config.yaml` (variable definitions and 
 
 ### Variable entries
 
-Each key under `variables:` defines one data stream:
+Each key under `variables:` defines one data stream. The entry below is a
+reference card, not a working variable: it lists every field once, with what it
+does. A real entry uses only the fields it needs — at minimum the four marked
+*required* (plus `pattern` for anything downloaded) — and some fields here
+exclude each other (the legacy forms against their replacements; `layers` is
+for `bathy`). The table below has the details.
 
 ```yaml
 variables:
-  sst:
-    local_folder: CMEMS_SST           # subdirectory under STORE_ROOT
-    store_root: /mnt/fast_ssd         # optional: this variable's own root
-    source_vars: [analysed_sst, analysis_error]  # variable names inside the source file
-    source_renames:
-      analysed_sst: sst               # published as sst from here on
-    compiled_vars: [sst, analysis_error, sst_std, sst_fdist]
-    dataset_id_rep: <cmems-id>        # reprocessed (multiyear) dataset ID
-    dataset_id_nrt: <cmems-id>        # near-real-time dataset ID (optional)
-    source: cmems                     # cmems | aviso | cds
-    archive_raw: false                # optional, default false: keep raw files in store (true) or delete after convert
-    pattern: (\d{4}-\d{2}-\d{2})(?:-(\d{4}-\d{2}-\d{2}))?  # filename date pattern
-    filename_date_range: true         # the pattern captures (start, end)
-    subset: true                      # CMEMS only: subset() vs get() download API
-    bbox: [-80, 0, 10, 70]           # [xmin, ymin, xmax, ymax]
-    depth_range: [0.0, 500.0]        # [min_depth, max_depth]
-    derived_vars:
+  my_var:
+    # --- where it is stored
+    local_folder: CMEMS_SST           # required: subdirectory under the store root
+    store_root: /mnt/fast_ssd         # this variable's own root; default STORE_ROOT
+    time_step: daily                  # store cadence: daily | hourly
+    store_dtype: float32              # on-disk encoding: float32 | int16
+    archive_raw: false                # keep raw files in the store (true) or delete after convert
+
+    # --- what is downloaded
+    source: cmems                     # required: cmems | aviso | cds
+    dataset_id_rep: <dataset-id>      # required: reprocessed (multiyear) dataset ID
+    dataset_id_nrt: <dataset-id>      # near-real-time dataset ID
+    source_vars: [analysed_sst, thetao]  # required: variable names in the source files
+    subset: true                      # CMEMS only: subset() (true) or get() (false)
+    bbox: [-80, 0, 10, 70]            # [xmin, ymin, xmax, ymax]
+    depth_range: [0, 500]             # depth band downloaded, in metres
+
+    # --- how raw files are read
+    pattern: (\d{4}-\d{2}-\d{2})(?:-(\d{4}-\d{2}-\d{2}))?  # regex taking the date(s) from a filename
+    filename_date_range: true         # the pattern captures (start, end), not one day
+    raw_include: '_long_'             # convert only raw files matching this regex
+    merge_time_step: false            # CDS: flatten the GRIB time x step grid
+    trajectory_format: false          # rasterise trajectories instead of reading a grid
+    n_workers: 4                      # processes for that rasterisation
+    known_gaps: ['2025-06-02']        # days the provider never published
+
+    # --- grid
+    cells_per_degree: 4               # grid step as cells per degree (4 = 0.25 deg)
+    values_at: cell_center            # values at cell_center or on grid_line crossings
+    regrid: {sst_fdist: nearest}      # per-column method onto the compile grid
+
+    # --- published variables
+    source_renames: {analysed_sst: sst}      # source name -> published name
+    depth_levels: {thetao: [0, 50]}          # depths published -> thetao_0, thetao_50
+    extract_depth_levels: {thetao: [0]}      # extraction-only override of depth_levels
+    derived_vars:                            # layers computed at convert time
       sst_std: {op: rolling_std, source: sst, window: 3}
-    boa_fronts:                       # threshold in sst's own units (degC)
+    boa_fronts:                              # front distance; threshold in the source's units
       sst_fdist: {source: sst, threshold: 0.4}
+    compiled_vars: [sst, sst_std, sst_fdist, thetao_0, thetao_50]  # every column h2ds holds
 
-  radiation:
-    local_folder: CDS_Radiation
-    store_root: /mnt/era5             # hourly ERA5 stores on a drive of their own
-    source_vars:                      # the CDS API's long names...
-      - surface_latent_heat_flux
-      - surface_solar_radiation_downwards
-      - toa_incident_solar_radiation
-    compiled_vars: [slhf, ssrd, tisr] # ...and the short names the GRIB carries
-    source: cds
-    archive_raw: false
-    time_step: hourly                 # keep the source cadence; h2ds stays daily
-    store_dtype: int16                # scale/offset packed, ~2/3 the size
-    merge_time_step: true             # GRIB time x step grid
-    dataset_id_rep: reanalysis-era5-single-levels
-    pattern: (\d{4}-\d{2}-\d{2})(?:-(\d{4}-\d{2}-\d{2}))?
-    filename_date_range: true
-    bbox: [-80, 0, 10, 70]
+    # --- static layers (bathy only)
+    layers: {15s: bathy_15s.zarr, 0.25deg: bathy_0.25deg.nc}  # layer name -> file
+    compile_layer: 0.25deg            # layer compile reads
+    extract_layer: 15s                # default layer extraction reads
 
-  chl:                                # a 2-D product with a convert-time layer
-    local_folder: CMEMS_BGC_009_104
-    source_vars: [CHL]                # the name inside the source file...
-    source_renames:
-      CHL: chl                        # ...and the name this variable publishes
-    compiled_vars: [chl, chl_fdist]   # every column h2ds ends up holding
-    dataset_id_rep: <cmems-id>
-    source: cmems
-    pattern: (\d{4}-\d{2}-\d{2})(?:-(\d{4}-\d{2}-\d{2}))?
-    filename_date_range: true         # the pattern captures (start, end)
-    subset: true
-    bbox: [-80, 0, 10, 70]
-    boa_fronts:                       # threshold in chl's own units
-      chl_fdist: {source: chl, threshold: 0.06}
-    known_gaps:                       # confirmed absent at source, not lost here
-      - '1998-11-17/1998-11-20'
-      - '1999-01-25'
-
-  dyn_rep:                            # 3-D: a band is downloaded, levels published
-    local_folder: CMEMS_PHY_001_030/my
-    source_vars: [thetao, uo, vo]
-    compiled_vars: [thetao_0, thetao_5, thetao_std_0, uo_0, vo_0, ke_0]
-    dataset_id_rep: <cmems-id>
-    source: cmems
-    pattern: (\d{4}-\d{2}-\d{2})(?:-(\d{4}-\d{2}-\d{2}))?
-    filename_date_range: true
-    subset: true
-    bbox: [-42, 28, -14, 48]
-    depth_range: [0, 110]             # the continuous band downloaded
-    depth_levels:                     # the discrete levels published, per variable
-      thetao: [0, 5]
-      uo: [0]
-      vo: [0]
-    extract_depth_levels:             # extraction only, merged per variable
-      thetao: [0]
-    derived_vars:                     # computed at convert time, in this order
-      ke: {op: kinetic_energy, source: [uo, vo], depth: [0]}
-      thetao_std: {op: rolling_std, source: thetao, depth: [0], window: 3}
-
-  eddies:                             # a trajectory atlas: rasterised, not regridded
-    local_folder: AVISO_EDDIES/META3.2
-    source_vars: [time, latitude, longitude, track, amplitude]
-    compiled_vars: [ac_track, ac_amp]
-    dataset_id_rep: /value-added/eddy-trajectory/delayed-time/META3.2_DT_allsat
-    dataset_id_nrt: /value-added/eddy-trajectory/near-real-time
-    source: aviso
-    archive_raw: true                 # costly to fetch again, so kept in the store
-    pattern: (\d{8})_(\d{8})
-    filename_date_range: true
-    raw_include: '_long_|_nrt_'       # only these raw variants belong in the store
-    bbox: [-80, 0, 10, 70]
-    trajectory_format: true           # bypasses the open_mfdataset path entirely
-    cells_per_degree: 12              # the grid this store is built on (1/12 deg)
-    values_at: grid_line              # where the values sit; default cell_center
-    n_workers: 4                      # rasterisation pool, one day per task
-    regrid:                           # a mean across a boundary describes no eddy
-      ac_track: nearest
-      ac_amp: nearest
-
-  bathy:                              # static: read from layers, never converted
-    local_folder: ETOPO_Topography
-    source_vars: [z]
-    compiled_vars: [bathy, bathy_std]
-    dataset_id_rep: Etopo_v1
-    source: noaa
-    layers:                           # name -> file under <store_root>/<local_folder>/
-      15s: etopo2022_15s_bathy-std.zarr
-      0.25deg: etopo_0.25deg_mean-std_surface.nc
-    compile_layer: 0.25deg            # a name from layers, not a file
-    extract_layer: 15s
-
-  thetao_legacy:                      # NOT a real var_key: the legacy forms only
-    local_folder: CMEMS_PHY_001_030/legacy
-    source_vars: [thetao]
-    compiled_vars: [thetao_100, thetao_500]
-    dataset_id_rep: <cmems-id>
-    source: cmems
-    pattern: (\d{4}-\d{2}-\d{2})(?:-(\d{4}-\d{2}-\d{2}))?
-    filename_date_range: true
-    depth_range: [0, 500]
-    compile_depth_slices: [100, 500]  # older depth_levels: {thetao_legacy: [...]}
-    extract_depth_slices: [100]       # older extract_depth_levels
-    rename_lonlat: true               # no-op, kept so old configs stay valid
+    # --- legacy: still accepted, not for new entries
+    compile_depth_slices: [0, 50]     # old depth_levels
+    extract_depth_slices: [0]         # old extract_depth_levels
+    rename_lonlat: false              # no effect any more
 ```
 
-These entries are illustrative rather than a copy of the shipped `config.yaml`.
-Between them they use every field in the table below. `thetao_legacy` exists
-only to show the legacy forms (`compile_depth_slices`, `extract_depth_slices`,
-`rename_lonlat`), which are still accepted but which a new entry should not use —
-as written, its slices would look for a store variable named `thetao_legacy`, so
-a real entry would declare `depth_levels: {thetao: [100, 500]}` instead. `bathy`
-is shown in full, with its layer table, under [The `bathy` key](#the-bathy-key).
-Nothing is required beyond what the table marks as such, so a plain 2-D variable
-can leave out most of what `sst` shows — `derived_vars`, `boa_fronts`,
-`source_renames`, `store_root`, `depth_range` and the rest are there to
-illustrate, not because every entry needs them.
+See [The `bathy` key](#the-bathy-key) for a real static entry.
 
 Both `time_step` and `store_dtype` are properties of the **store**, not of a run:
 each takes effect when a Zarr is created and an append inherits it, so changing
