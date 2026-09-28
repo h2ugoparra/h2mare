@@ -109,7 +109,11 @@ def _compile_bathy(
         store_root_for(var_cfg, compiler.remote_store_root) / var_cfg.local_folder
     )
     data_path = static_layer_path(var_cfg, var_cfg.compile_layer, bathy_dir)
-    ds = xr.open_dataset(data_path).sel(
+    # Native layers (15s, 60s) are Zarr stores and the 0.25° layer is netCDF,
+    # as in Extractor._extract_bathy. open_dataset cannot open a .zarr
+    # directory without an engine (PermissionError on Windows).
+    opener = xr.open_zarr if data_path.suffix == ".zarr" else xr.open_dataset
+    ds = opener(data_path).sel(
         lon=slice(compiler.bbox.xmin, compiler.bbox.xmax),
         lat=slice(compiler.bbox.ymin, compiler.bbox.ymax),
     )
