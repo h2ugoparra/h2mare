@@ -20,7 +20,7 @@ variables:
     dataset_id_nrt: <cmems-id>        # near-real-time dataset ID (optional)
     source: cmems                     # cmems | aviso | cds
     archive_raw: false                # optional, default false: keep raw files in store (true) or delete after convert
-    pattern: "(\d{4}-\d{2}-\d{2})-(\d{4}-\d{2}-\d{2})"  # filename date pattern
+    pattern: '(\d{4}-\d{2}-\d{2})-(\d{4}-\d{2}-\d{2})'  # filename date pattern
     subset: true                      # CMEMS only: subset() vs get() download API
     bbox: [-80, 0, 10, 70]           # [xmin, ymin, xmax, ymax]
     depth_range: [0.0, 500.0]        # [min_depth, max_depth]
@@ -33,7 +33,75 @@ variables:
     store_dtype: int16                # scale/offset packed, ~2/3 the size
     merge_time_step: true             # GRIB time x step grid
     dataset_id_rep: reanalysis-era5-single-levels
+
+  chl:                                # a 2-D product with a convert-time layer
+    local_folder: CMEMS_BGC_009_104
+    source_vars: [CHL]                # the name inside the source file...
+    source_renames:
+      CHL: chl                        # ...and the name this variable publishes
+    compiled_vars: [chl, chl_fdist]   # every column h2ds ends up holding
+    dataset_id_rep: <cmems-id>
+    source: cmems
+    pattern: (\d{4}-\d{2}-\d{2})(?:-(\d{4}-\d{2}-\d{2}))?
+    filename_date_range: true         # the pattern captures (start, end)
+    subset: true
+    bbox: [-80, 0, 10, 70]
+    boa_fronts:                       # threshold in chl's own units
+      chl_fdist: {source: chl, threshold: 0.06}
+    known_gaps:                       # confirmed absent at source, not lost here
+      - '1998-11-17/1998-11-20'
+      - '1999-01-25'
+
+  dyn_rep:                            # 3-D: a band is downloaded, levels published
+    local_folder: CMEMS_PHY_001_030/my
+    source_vars: [thetao, uo, vo]
+    compiled_vars: [thetao_0, thetao_5, thetao_std_0, uo_0, vo_0, ke_0]
+    dataset_id_rep: <cmems-id>
+    source: cmems
+    pattern: (\d{4}-\d{2}-\d{2})(?:-(\d{4}-\d{2}-\d{2}))?
+    filename_date_range: true
+    subset: true
+    bbox: [-42, 28, -14, 48]
+    depth_range: [0, 110]             # the continuous band downloaded
+    depth_levels:                     # the discrete levels published, per variable
+      thetao: [0, 5]
+      uo: [0]
+      vo: [0]
+    extract_depth_levels:             # extraction only, merged per variable
+      thetao: [0]
+    derived_vars:                     # computed at convert time, in this order
+      ke: {op: kinetic_energy, source: [uo, vo], depth: [0]}
+      thetao_std: {op: rolling_std, source: thetao, depth: [0], window: 3}
+
+  eddies:                             # a trajectory atlas: rasterised, not regridded
+    local_folder: AVISO_EDDIES/META3.2
+    source_vars: [time, latitude, longitude, track, amplitude]
+    compiled_vars: [ac_track, ac_amp]
+    dataset_id_rep: /value-added/eddy-trajectory/delayed-time/META3.2_DT_allsat
+    dataset_id_nrt: /value-added/eddy-trajectory/near-real-time
+    source: aviso
+    archive_raw: true                 # costly to fetch again, so kept in the store
+    pattern: (\d{8})_(\d{8})
+    filename_date_range: true
+    raw_include: '_long_|_nrt_'       # only these raw variants belong in the store
+    bbox: [-80, 0, 10, 70]
+    trajectory_format: true           # bypasses the open_mfdataset path entirely
+    cells_per_degree: 12              # the grid this store is built on (1/12 deg)
+    values_at: grid_line              # where the values sit; default cell_center
+    n_workers: 4                      # rasterisation pool, one day per task
+    regrid:                           # a mean across a boundary describes no eddy
+      ac_track: nearest
+      ac_amp: nearest
 ```
+
+These entries are illustrative rather than a copy of the shipped `config.yaml`.
+Between them they use every field except the static-layer keys — `layers`,
+`compile_layer` and `extract_layer`, which only `bathy` has and which are shown
+under [The `bathy` key](#the-bathy-key) — and the legacy forms
+(`compile_depth_slices`, `extract_depth_slices`, `rename_lonlat`), which the
+table below still documents but which a new entry should not use. Nothing is
+required beyond what the table marks as such, so a plain 2-D variable needs only
+the fields `sst` shows.
 
 Both `time_step` and `store_dtype` are properties of the **store**, not of a run:
 each takes effect when a Zarr is created and an append inherits it, so changing
