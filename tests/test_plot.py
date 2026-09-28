@@ -319,6 +319,109 @@ class TestUncoveredRecordsAreSkipped:
         assert drawn == []
 
 
+class TestDepthSliceReadFromNativeStore:
+    """
+    ``thetao_0`` is a name only extraction and compile produce; the native store
+    holds ``thetao`` on a depth axis. Routed as-is it went to the compiled store,
+    so a project that never compiles could not plot any depth-sliced column.
+    """
+
+    def _patch(self, monkeypatch) -> tuple[list, list]:
+        """Config with dyn_rep.thetao at [0, 110]; returns (routes, plotted ds)."""
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+
+        import numpy as np
+        import pandas as pd
+        import xarray as xr
+
+        from h2mare.utils import plot as plot_module
+
+        var_cfg = SimpleNamespace(depth_levels={"thetao": [0, 110]})
+        settings = SimpleNamespace(
+            app_config=SimpleNamespace(variables={"dyn_rep": var_cfg})
+        )
+        monkeypatch.setattr(plot_module, "get_settings", lambda: settings)
+
+        # depth 0 holds 1s, depth 110 holds 2s, so the slice taken is visible.
+        ds = xr.Dataset(
+            {
+                "thetao": (
+                    ("time", "depth", "lat", "lon"),
+                    np.stack([np.ones((2, 2)), np.full((2, 2), 2.0)])[None],
+                )
+            },
+            coords={
+                "time": pd.to_datetime(["2020-01-01"]),
+                "depth": [0.49, 109.7],
+                "lat": [30.0, 31.0],
+                "lon": [-10.0, -9.0],
+            },
+        )
+        catalog = MagicMock()
+        catalog.open_dataset.return_value = ds
+
+        routes: list = []
+
+        def _route(var, var_key, read_from="auto"):
+            routes.append((var, var_key, read_from))
+            return catalog
+
+        monkeypatch.setattr(plot_module, "catalog_for_var", _route)
+
+        plotted: list = []
+        real_field_for_plot = plot_module.field_for_plot
+
+        def _field(ds, var):
+            plotted.append(ds)
+            return real_field_for_plot(ds, var)
+
+        monkeypatch.setattr(plot_module, "field_for_plot", _field)
+        monkeypatch.setattr(plot_module.plt, "show", lambda *a, **k: None)
+        return routes, plotted
+
+    def _records(self):
+        import pandas as pd
+
+        return pd.DataFrame(
+            {"date": pd.to_datetime(["2020-01-01"]), "lon": [-9.5], "lat": [30.5]}
+        )
+
+    def test_slice_is_cut_from_the_native_variable(self, monkeypatch):
+        from h2mare.utils.plot import plot_records_on_field
+
+        routes, plotted = self._patch(monkeypatch)
+
+        plot_records_on_field(self._records(), "dyn_rep", var="thetao_110")
+
+        assert routes == [("thetao", "dyn_rep", "native")]
+        assert list(plotted[0].data_vars) == ["thetao_110"]
+        assert float(plotted[0]["thetao_110"].max()) == 2.0
+
+    def test_derived_slice_is_routed_unchanged(self, monkeypatch):
+        from h2mare.utils.plot import plot_records_on_field
+
+        routes, _ = self._patch(monkeypatch)
+
+        # ke has no native variable, so it cannot be cut here.
+        with pytest.raises(KeyError):
+            plot_records_on_field(self._records(), "dyn_rep", var="ke_0")
+
+        assert routes == [("ke_0", "dyn_rep", "auto")]
+
+    def test_compiled_read_from_still_asks_for_the_h2ds_column(self, monkeypatch):
+        from h2mare.utils.plot import plot_records_on_field
+
+        routes, _ = self._patch(monkeypatch)
+
+        with pytest.raises(KeyError):
+            plot_records_on_field(
+                self._records(), "dyn_rep", var="thetao_0", read_from="compiled"
+            )
+
+        assert routes == [("thetao_0", "dyn_rep", "compiled")]
+
+
 class TestNoNotebookOnlyImportsAtModuleScope:
     """
     IPython is needed by one function (``animate_vars``, which renders through
