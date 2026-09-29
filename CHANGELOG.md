@@ -91,6 +91,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Stores on disk still hold the old layers.** Rewrite them with
   `scripts/recompute_fronts.py sst chl --apply` (no raw files needed), then
   `compile` and `parquet` over the same window.
+- **An eddy day that failed to rasterise was dropped silently.** The worker
+  logged the exception and returned nothing, and the period was written one
+  day short, logged as SUCCESS for its full length, with provenance spanning
+  the hole — so coverage moved past it and nothing retried it. A failure now
+  raises, naming the day and eddy type, and the period is not written. Days the
+  atlas has no observations for are still skipped, now by date in a warning.
 
 ## [0.8.1] - 2026-09-14
 

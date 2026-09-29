@@ -376,12 +376,12 @@ class EDDIESProcessor:
                 staged = self._stage_batch(pending, out_names, stage, staged)
 
             if staged:
-                self._write_staged(stage)
+                n_written = self._write_staged(stage)
                 # One line per period, like front detection's: the per-month
                 # lines below it are debug, so an ordinary run reports what it
                 # converted and how long the period took, not its bookkeeping.
                 logger.success(
-                    f"[{self.var_key}] {period_dates[0]:%Y}: {len(period_dates)} "
+                    f"[{self.var_key}] {period_dates[0]:%Y}: {n_written} "
                     f"day(s) in {time.perf_counter() - t0:.1f}s"
                 )
         finally:
@@ -488,20 +488,32 @@ class EDDIESProcessor:
     def _collect_days(
         eddy_type_str: str, dates: pd.DatetimeIndex, job: AsyncResult
     ) -> xr.Dataset | None:
-        """Collect one submitted eddy type's days as a single Dataset."""
-        daily = [r for r in job.get() if r is not None]
-        if not daily:
+        """
+        Collect one submitted eddy type's days as a single Dataset.
+
+        ``job.get()`` re-raises the first exception a worker hit, which is what
+        stops a period with a failed day from being written at all. Days the
+        atlas holds no observations for come back as None and are left out,
+        named in a warning.
+        """
+        results = job.get()
+        daily = [r for r in results if r is not None]
+        empty = [d for d, r in zip(dates, results) if r is None]
+        if empty:
+            shown = ", ".join(f"{d:%Y-%m-%d}" for d in empty[:10])
+            more = f" and {len(empty) - 10} more" if len(empty) > 10 else ""
             logger.warning(
-                f"No valid results for {eddy_type_str} in "
-                f"{dates[0]:%Y-%m-%d}..{dates[-1]:%Y-%m-%d}"
+                f"[{eddy_type_str}] {len(empty)} day(s) with no observations in "
+                f"the atlas, not written: {shown}{more}"
             )
+        if not daily:
             return None
 
         # Explicit join: xarray's concat default changes from "outer" to "exact".
         return xr.concat(daily, dim="time", join="outer")
 
-    def _write_staged(self, stage: Path) -> None:
-        """Write a staged period to the store, as one dataset, lazily."""
+    def _write_staged(self, stage: Path) -> int:
+        """Write a staged period to the store, lazily, as one dataset; return its days."""
         ds_staged = xr.open_zarr(stage, consolidated=False)
         try:
             # The staging layout and time units must not leak into the store:
@@ -522,6 +534,7 @@ class EDDIESProcessor:
                 pd.to_datetime(ds_merged.time.max().values),
             )
             self._write_provenance(path, written)
+            return int(ds_merged.sizes["time"])
         finally:
             ds_staged.close()
 
@@ -885,9 +898,20 @@ def _process_daily_static(
     *,
     eddy_type_str: str,
 ) -> xr.Dataset | None:
-    """Rasterise one day's eddy observations onto the worker's grid."""
+    """
+    Rasterise one day's eddy observations onto the worker's grid.
+
+    Returns None for a day the atlas holds no observations for: the day is
+    left out, like any day a provider never published, and the caller says
+    so. Anything else that goes wrong raises, naming the day. The pool
+    re-raises it in the main process, which fails the period before it is
+    written. Catching it here instead, as this once did, dropped the day from
+    a period that was still written, and logged as a success.
+    """
     lat1, lon1 = _WORKER_GRID["lat1"], _WORKER_GRID["lon1"]
     sea_mask = _WORKER_GRID["sea_mask"]
+    if ds_day.sizes.get("obs", 0) == 0:
+        return None
     try:
         lat2 = ds_day["latitude"].values
         lon2 = ds_day["longitude"].values
@@ -933,8 +957,12 @@ def _process_daily_static(
         return ds_float64_to_float32(xr.Dataset(data_vars, coords=coords))
 
     except Exception as e:
-        logger.exception(f"Failed to process {date}: {e}")
-        return None
+        # Re-raised with the day and type in the message: the traceback that
+        # crosses back from the pool worker names neither.
+        raise RuntimeError(
+            f"[{eddy_type_str}] rasterising {date:%Y-%m-%d} failed: "
+            f"{type(e).__name__}: {e}"
+        ) from e
 
 
 # ================================================

@@ -1,6 +1,6 @@
 """Tests for processing/core/aviso.py — pure functions and EDDIESProcessor helpers."""
 
-from multiprocessing.pool import Pool
+from multiprocessing.pool import Pool, ThreadPool
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -9,8 +9,10 @@ import numpy as np
 import pandas as pd
 import pytest
 import xarray as xr
+from loguru import logger
 
 from h2mare.models import AppConfig
+from h2mare.processing.core import aviso as aviso_module
 from h2mare.processing.core.aviso import (
     EDDIESProcessor,
     _group_dates,
@@ -764,6 +766,115 @@ class TestRunBatchesByMonth:
     def test_n_workers_from_config(self, converted):
         _, _, pool_cls, _ = converted
         assert pool_cls.call_args.kwargs["processes"] == 1
+
+
+class TestFailedDays:
+    """
+    A day a worker failed on used to be logged and dropped: the period was
+    still written, one day short, logged as SUCCESS for its full length, and
+    its provenance span covered the hole. Nothing retried it, because coverage
+    had moved past it.
+    """
+
+    def _run(self, tmp_path, fail_on_call: int | None):
+        downloads, store = tmp_path / "downloads", tmp_path / "store"
+        store.mkdir()
+        _write_atlas(
+            downloads / "rep" / "Anticyclonic_20210101_20210131.nc",
+            "2021-01-01",
+            "2021-01-31",
+            0,
+        )
+        entry = _EDDIES_ENTRY | {
+            "source_vars": [
+                "time",
+                "latitude",
+                "longitude",
+                *_EDDIES_ENTRY["source_vars"],
+            ],
+            "bbox": (-40, 20, -30, 30),
+            "cells_per_degree": 1,
+            "n_workers": 1,
+        }
+        out_path = store / "aviso_eddies_2021.zarr"
+        real_search = aviso_module.nearest_on_sphere
+        calls = []
+
+        def search(*args, **kwargs):
+            # One thread, tasks in order: call 15 is 2021-01-15.
+            calls.append(1)
+            if len(calls) == fail_on_call:
+                raise ValueError("boom")
+            return real_search(*args, **kwargs)
+
+        with (
+            patch("h2mare.processing.core.aviso.ZarrCatalog") as MockCat,
+            patch(
+                "h2mare.processing.core.aviso.resolve_date_range",
+                side_effect=lambda _k, s, e: DateRange(s, e),
+            ),
+            # Same process, so the patched search is the one the worker calls.
+            patch("h2mare.processing.core.aviso.mp.Pool", ThreadPool),
+            patch("h2mare.processing.core.aviso.nearest_on_sphere", search),
+        ):
+            MockCat.return_value.exists.return_value = False
+            MockCat.return_value.store_root = store
+            MockCat.return_value.build_file_path.return_value = out_path
+            EDDIESProcessor(
+                var_key="eddies",
+                app_config=_make_config(entry=entry),
+                store_root=store,
+                download_root=downloads,
+            ).run("2021-01-01", "2021-01-31")
+        return out_path, store
+
+    def test_a_failed_day_fails_the_period_and_writes_nothing(self, tmp_path):
+        with pytest.raises(RuntimeError, match=r"\[ac\] rasterising 2021-01-15"):
+            self._run(tmp_path, fail_on_call=15)
+
+        store = tmp_path / "store"
+        assert not (store / "aviso_eddies_2021.zarr").exists()
+        assert list(store.iterdir()) == []  # staging cleared too
+
+    def test_without_failures_every_day_is_written(self, tmp_path):
+        out_path, _ = self._run(tmp_path, fail_on_call=None)
+        with xr.open_zarr(out_path, consolidated=False) as ds:
+            assert ds.sizes["time"] == 31
+
+
+class TestDaysWithoutObservations:
+    def test_worker_returns_none_for_an_empty_day(self):
+        grid = MagicMock(lat=np.array([25.0]), lon=np.array([-35.0]))
+        grid.sea_mask = np.array([[True]])
+        aviso_module._init_worker(grid)
+        empty = xr.Dataset({"latitude": ("obs", np.array([]))})
+
+        assert (
+            aviso_module._process_daily_static(
+                pd.Timestamp("2021-01-01"), empty, eddy_type_str="ac"
+            )
+            is None
+        )
+
+    def test_empty_days_are_named_and_the_rest_kept(self):
+        day = xr.Dataset(
+            {"ac_amp": (["time"], [1.0])}, coords={"time": [pd.Timestamp("2021-01-01")]}
+        )
+        job = MagicMock()
+        job.get.return_value = [day, None]
+        messages: list[str] = []
+        sink = logger.add(messages.append, level="WARNING", format="{message}")
+        try:
+            out = EDDIESProcessor._collect_days(
+                "ac", pd.DatetimeIndex(["2021-01-01", "2021-01-02"]), job
+            )
+        finally:
+            logger.remove(sink)
+
+        assert out is not None and out.sizes["time"] == 1
+        assert any(
+            "1 day(s) with no observations" in m and "2021-01-02" in m for m in messages
+        )
 
 
 def test_n_workers_must_be_positive():
