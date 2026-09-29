@@ -1102,6 +1102,62 @@ class TestCalendarDoy:
         assert values.max() == cds._EKMAN_DOY_BUCKETS
 
 
+class TestClimatologyGrid:
+    """
+    The anomaly and the event counts subtract and compare against the
+    climatology with xarray's default inner join, so a climatology on less
+    than the data's grid shrank them to the overlap, silently.
+    """
+
+    _LATS = [30.0, 30.25, 30.5]
+    _LONS = [-40.0, -39.75]
+
+    def _write(self, tmp_path, lats, lons):
+        shape2d = (len(lats), len(lons))
+        coords = {"lat": lats, "lon": lons}
+        xr.Dataset(
+            {"ekman_pumping_anom": (["month", "lat", "lon"], np.zeros((12, *shape2d)))},
+            coords={"month": np.arange(1, 13), **coords},
+        ).to_netcdf(tmp_path / cds._EKMAN_P90_FILE)
+        n = cds._EKMAN_DOY_BUCKETS
+        xr.Dataset(
+            {"ekman_pumping": (["dayofyear", "lat", "lon"], np.zeros((n, *shape2d)))},
+            coords={"dayofyear": np.arange(1, n + 1), **coords},
+        ).to_netcdf(tmp_path / cds._EKMAN_DOY_FILE)
+
+    def _run(self, tmp_path, monkeypatch, lats, lons):
+        self._write(tmp_path, lats, lons)
+        monkeypatch.setattr(
+            cds, "get_settings", lambda: SimpleNamespace(CLIMATOLOGY_DIR=tmp_path)
+        )
+        times = pd.date_range("2020-01-01", periods=40, freq="D")
+        da = xr.DataArray(
+            np.ones((len(times), len(self._LATS), len(self._LONS))),
+            dims=["time", "lat", "lon"],
+            coords={"time": times, "lat": self._LATS, "lon": self._LONS},
+            name="ekman_pumping",
+        )
+        return cds.add_engineered_ekman(da, "atm-accum-avg", seed_from_store=False)
+
+    def test_a_climatology_short_of_the_grid_is_refused(self, tmp_path, monkeypatch):
+        """Regression: the anomaly came back on 2 of the data's 3 latitudes."""
+        with pytest.raises(ValueError, match=r"1 of 3 lat values are not on it"):
+            self._run(tmp_path, monkeypatch, self._LATS[:2], self._LONS)
+
+    def test_labels_a_float_apart_still_cover_every_cell(self, tmp_path, monkeypatch):
+        """Regression: an inner join on values a float apart kept no cell at all."""
+        lats = [v + 1e-9 for v in self._LATS]
+        out = self._run(tmp_path, monkeypatch, lats, self._LONS)
+
+        assert out.sizes["lat"] == 3 and out.sizes["lon"] == 2
+        np.testing.assert_array_equal(out["lat"].values, self._LATS)
+        assert np.isfinite(out["ekman_anom"].values).all()
+
+    def test_a_wider_climatology_is_cut_to_the_data(self, tmp_path, monkeypatch):
+        out = self._run(tmp_path, monkeypatch, [29.75, *self._LATS], self._LONS)
+        np.testing.assert_array_equal(out["lat"].values, self._LATS)
+
+
 class TestClimatologyAlignment:
     """The consumer must read the climatology on the same calendar it was built on."""
 

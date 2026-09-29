@@ -97,6 +97,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the hole — so coverage moved past it and nothing retried it. A failure now
   raises, naming the day and eddy type, and the period is not written. Days the
   atlas has no observations for are still skipped, now by date in a warning.
+- **A climatology short of the ERA5 grid cropped the Ekman features.** The
+  anomaly and upwelling-event counts align with the day-of-year and p90
+  climatologies by xarray's default inner join, so a climatology built for a
+  smaller bbox (its file name is fixed, whatever `bbox` says) shrank them to
+  the overlap without a word, and labels a float apart matched nothing at all.
+  Compile now refuses a climatology that does not cover the data's grid, naming
+  the file, and puts one that does onto the data's own labels. The shipped
+  climatologies match the shipped grid exactly, so nothing changes there.
 
 ## [0.8.1] - 2026-09-14
 
