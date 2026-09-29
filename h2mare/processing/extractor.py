@@ -12,7 +12,7 @@ from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import cached_property
 from pathlib import Path
-from typing import Literal, Optional, Sequence, Union, overload
+from typing import Literal, Optional, Sequence, Union, cast, overload
 
 import ephem
 import geopandas as gpd
@@ -195,6 +195,147 @@ def _warn_if_wholly_failed(result: pd.DataFrame, errors: list[Exception]) -> Non
     )
 
 
+#: Relative slack on the half-cell tolerance, so a sample on a cell's outer
+#: edge, give or take float noise, still belongs to that cell.
+_TOL_SLACK = 1e-6
+
+# cast: the pandas stubs type every Timedelta constructor as possibly NaT.
+_ONE_DAY = cast(pd.Timedelta, pd.Timedelta(days=1))
+_ONE_HOUR = cast(pd.Timedelta, pd.Timedelta(hours=1))
+
+
+def _axis_half_widths(values: np.ndarray) -> np.ndarray:
+    """
+    How far each point of a 1-D axis reaches: half the spacing around it.
+
+    Takes the wider side, which only matters on an irregular axis. The end
+    points reuse their one neighbour's gap. An axis of one point has no spacing
+    to measure, so it reaches everywhere (inf) and nothing is refused on it.
+    """
+    v = np.asarray(values, dtype="float64")
+    if v.size < 2:
+        return np.full(v.size, np.inf)
+    gaps = np.abs(np.diff(v))
+    left = np.concatenate([gaps[:1], gaps])
+    right = np.concatenate([gaps, gaps[-1:]])
+    return np.maximum(left, right) / 2
+
+
+def _outside_grid(
+    ds: xr.Dataset | xr.DataArray,
+    query_lons: np.ndarray,
+    query_lats: np.ndarray,
+    lat_idx: np.ndarray | None = None,
+    lon_idx: np.ndarray | None = None,
+) -> np.ndarray:
+    """
+    True for each query point that its nearest cell does not contain.
+
+    A nearest-neighbour search always answers, so a point east of the grid
+    lands on the eastern edge cell and a 0–360 longitude on whichever edge is
+    closest, and both would read that cell's value as their own. A point is
+    only inside a cell when it is within half the spacing of its centre.
+
+    Without the indices, the nearest cell is found per axis, which is what the
+    search on a rectilinear grid comes to.
+    """
+    misses = np.zeros(len(query_lons), dtype=bool)
+    for name, q, idx in (("lon", query_lons, lon_idx), ("lat", query_lats, lat_idx)):
+        axis = np.asarray(ds[name].values, dtype="float64")
+        q = np.asarray(q, dtype="float64")
+        if idx is None:
+            idx = ds.indexes[name].get_indexer(q, method="nearest")
+        half = _axis_half_widths(axis)[idx]
+        misses |= np.abs(q - axis[idx]) > half * (1 + _TOL_SLACK)
+    return misses
+
+
+def infer_time_step(ds: xr.Dataset | xr.DataArray) -> pd.Timedelta | None:
+    """
+    The cadence of *ds*'s time axis: its smallest spacing between steps.
+
+    The smallest, not the typical: a daily axis with a missing day still has
+    daily steps around it, whereas its median over a short gappy axis reads
+    two days, and a day-wide tolerance would then lend the gap its neighbour's
+    value. None with fewer than two distinct steps.
+    """
+    if "time" not in ds.coords:
+        return None
+    times = np.unique(ds["time"].values.astype("datetime64[ns]").astype("int64"))
+    if times.size < 2:
+        return None
+    return pd.to_timedelta(int(np.diff(times).min()), unit="ns")
+
+
+def _nearest_steps(grid: pd.DatetimeIndex, query: pd.DatetimeIndex) -> np.ndarray:
+    """
+    Nearest *grid* index for each *query* instant; *grid* sorted ascending.
+
+    Both sides are pinned to nanoseconds before the integer cast: a Zarr axis
+    decodes to ``[ns]`` while pandas parses input strings to ``[us]``, and
+    int64 counts of different units compare as nonsense.
+    """
+    grid_ns = grid.to_numpy().astype("datetime64[ns]").astype("int64")
+    q = query.to_numpy().astype("datetime64[ns]").astype("int64")
+    right = np.searchsorted(grid_ns, q).clip(0, len(grid_ns) - 1)
+    left = (right - 1).clip(0, len(grid_ns) - 1)
+    return np.where(
+        np.abs(grid_ns[right] - q) <= np.abs(grid_ns[left] - q), right, left
+    )
+
+
+def _to_day(times: pd.DatetimeIndex) -> pd.DatetimeIndex:
+    """*times* truncated to midnight of the day they fall in."""
+    return pd.DatetimeIndex(times.to_numpy().astype("datetime64[D]"))
+
+
+def _match_times(
+    ds: xr.Dataset | xr.DataArray,
+    query_times,
+    time_step: pd.Timedelta | None,
+) -> tuple[np.ndarray, np.ndarray]:
+    """
+    The time step answering each query, and whether one does at all.
+
+    - **Daily** axis: a sample takes the day it falls in. Nearest-instant would
+      send everything after noon to the next day, whose midnight stamp is
+      closer. A day missing from the axis answers nothing, rather than lending
+      its neighbour's value.
+    - **Any other** step: the nearest step, if it is within half a step.
+    - ``time_step=None`` (a single-step axis, nothing to measure): the nearest
+      step, unchecked.
+
+    Returns:
+        ``(indices, answered)``, both aligned to *query_times*. Where
+        ``answered`` is False the index is only a placeholder.
+    """
+    grid = pd.DatetimeIndex(ds["time"].values)
+    query = pd.DatetimeIndex(pd.to_datetime(query_times))
+
+    if time_step == _ONE_DAY:
+        grid, query = _to_day(grid), _to_day(query)
+        idx = _nearest_steps(grid, query)
+        return idx, np.asarray(grid[idx] == query)
+
+    idx = _nearest_steps(grid, query)
+    if time_step is None:
+        return idx, np.ones(len(query), dtype=bool)
+    return idx, np.asarray(abs(grid[idx] - query) <= time_step / 2)
+
+
+def _log_unanswered(n_space: int, n_time: int) -> None:
+    """Say how many samples were returned as NaN, and why."""
+    if n_space:
+        logger.warning(
+            f"{n_space} sample(s) fall outside the dataset's grid; returned as NaN."
+        )
+    if n_time:
+        logger.warning(
+            f"{n_time} sample(s) have no time step for their date (a day missing "
+            f"from the store, or beyond its axis); returned as NaN."
+        )
+
+
 def _extract_geometry(
     id: str,
     date,
@@ -202,6 +343,7 @@ def _extract_geometry(
     ds: xr.DataArray | xr.Dataset,
     index_col: str,
     errors: list[Exception] | None = None,
+    time_idx: int | None = None,
 ) -> dict:
     """
     Extract data and return as dictionary for a single geometry row.
@@ -215,6 +357,9 @@ def _extract_geometry(
         date (): date value of the geometry row.
         geom (): geometry of the geometry row.
         ds (xr.DataArray | xr.Dataset): in-memory xarray object.
+        time_idx: Position on ``ds``'s time axis answering this row, as
+            resolved by :func:`_match_times`; negative when none does, which
+            returns the row as NaN. Required when ``ds`` has a time axis.
 
     Returns:
         dict: dictionary with index, variable names and extracted values.
@@ -223,8 +368,22 @@ def _extract_geometry(
     data_vars: list[str] = [str(v) for v in ds.data_vars] if is_dataset else []
     single_var_name: str = str(ds.name) if (not is_dataset and ds.name) else "value"
 
-    if date is not None:
-        ds = ds.sel(time=date, method="nearest")
+    nan_result: dict = {index_col: id}
+    if is_dataset:
+        nan_result.update({var: float("nan") for var in data_vars})
+    else:
+        nan_result[single_var_name] = float("nan")
+
+    if "time" in ds.dims:
+        if time_idx is None:
+            # Outside the try: the except below would turn this into a NaN row.
+            raise ValueError(
+                "_extract_geometry needs time_idx for a dataset with a time "
+                "axis; without it the clip would average every time step."
+            )
+        if time_idx < 0:
+            return nan_result
+        ds = ds.isel(time=time_idx)
 
     try:
         clipped = ds.rio.clip([geom], drop=True, all_touched=True).mean()
@@ -252,12 +411,6 @@ def _extract_geometry(
             errors.append(e)
 
     # --- Return NaNs for failed geometry to preserve structure ---
-    nan_result: dict = {index_col: id}
-    if is_dataset:
-        nan_result.update({var: float("nan") for var in data_vars})
-    else:
-        nan_result[single_var_name] = float("nan")
-
     return nan_result
 
 
@@ -1038,7 +1191,12 @@ class Extractor:
 
         ds = ds.sortby("time")
 
-        result = self._extract(data_resolved, ds, n_workers)
+        # The cadence comes from config, not from the axis just opened: that
+        # holds only the dates asked for, so its spacing says nothing about
+        # the store's. A daily store answers each sample with the day it falls
+        # in; an hourly one with the nearest hour.
+        time_step = _ONE_HOUR if step_freq(var_cfg) == "h" else _ONE_DAY
+        result = self._extract(data_resolved, ds, n_workers, time_step)
 
         if from_compiled:
             # Reached only when this var_key converts hourly, so its derived
@@ -1073,8 +1231,15 @@ class Extractor:
         data_resolved,
         ds: xr.Dataset,
         n_workers: int,
+        time_step: pd.Timedelta | None = None,
     ) -> pd.DataFrame:
-        """Run the point or geometry engine, whichever this input calls for."""
+        """
+        Run the point or geometry engine, whichever this input calls for.
+
+        ``time_step`` is the store's cadence, which decides how a sample's time
+        is matched to the axis (see :func:`_match_times`). None infers it from
+        ``ds``'s own axis, and is what a static layer (no time axis) passes.
+        """
         if self.input_type == "shp":
             if not isinstance(data_resolved, gpd.GeoDataFrame):
                 raise TypeError("Data must be a GeoDataFrame for shapefile extraction")
@@ -1109,11 +1274,17 @@ class Extractor:
             ds = self.ensure_crs(data_resolved, ds)
 
             return self.extract_from_shp(
-                data_resolved, ds, self.index_col, n_workers=n_workers
+                data_resolved,
+                ds,
+                self.index_col,
+                n_workers=n_workers,
+                time_step=time_step,
             )
 
         elif self.input_type == "csv":
-            return self.extract_from_csv(data_resolved, ds, self.index_col)
+            return self.extract_from_csv(
+                data_resolved, ds, self.index_col, time_step=time_step
+            )
 
         raise ValueError(f"Unsupported input_type: {self.input_type}")
 
@@ -1210,7 +1381,7 @@ class Extractor:
         )
 
         ds = ds[wanted].sortby("time")
-        return self._extract(data_resolved, ds, n_workers=n_workers)
+        return self._extract(data_resolved, ds, n_workers, _ONE_DAY)
 
     def extract_from_dataset(
         self,
@@ -1587,25 +1758,17 @@ class Extractor:
         and every row silently lands on index 0: one arbitrary time returned
         for the whole input, varying only by location.
         """
-        grid_times = ds.time.values.astype("datetime64[ns]").astype("int64")
-        q = (
-            pd.to_datetime(query_times)
-            .to_numpy()
-            .astype("datetime64[ns]")
-            .astype("int64")
-        )
-
-        right = np.searchsorted(grid_times, q).clip(0, len(grid_times) - 1)
-        left = (right - 1).clip(0, len(grid_times) - 1)
-        return np.where(
-            np.abs(grid_times[right] - q) <= np.abs(grid_times[left] - q),
-            right,
-            left,
+        return _nearest_steps(
+            pd.DatetimeIndex(ds.time.values),
+            pd.DatetimeIndex(pd.to_datetime(query_times)),
         )
 
     @staticmethod
     def extract_from_csv(
-        data: pd.DataFrame, ds: xr.Dataset | xr.DataArray, index_col: str
+        data: pd.DataFrame,
+        ds: xr.Dataset | xr.DataArray,
+        index_col: str,
+        time_step: pd.Timedelta | None = None,
     ) -> pd.DataFrame:
         """
         Point extraction from a dataframe. If run as staticmethod, time, lat and lon cols should be named 'time', 'lat' and 'lon', resp.
@@ -1626,30 +1789,46 @@ class Extractor:
               nearest-time lookup uses ``np.searchsorted`` and returns wrong indices
               on an unsorted axis. No CRS is required.
 
+        A sample is returned as NaN, not snapped, when the nearest cell does not
+        contain it (outside the grid) or when no time step answers its date
+        (see :func:`_match_times`): a nearest-neighbour search always finds
+        *something*, and that something would read as the sample's own value.
+
         Parameters:
             ds (xr.Dataset | xr.DataArray): dataset with coords lon, lat and optionally time.
+            time_step: The store's cadence. One day means each sample takes the
+                day it falls in. None infers it from ``ds``'s time axis.
 
         Returns:
             pd.DataFrame: extracted variables with previous index set
         """
         valid = data[data["lon"].notna() & data["lat"].notna()]
         coords = {index_col: valid.index}
+        lons, lats = valid["lon"].to_numpy(), valid["lat"].to_numpy()
 
-        lat_idx, lon_idx = Extractor._nearest_grid_indices(
-            ds, valid["lon"].to_numpy(), valid["lat"].to_numpy()
-        )
+        lat_idx, lon_idx = Extractor._nearest_grid_indices(ds, lons, lats)
+        misses = _outside_grid(ds, lons, lats, lat_idx, lon_idx)
+        n_space = int(misses.sum())
 
         isel_kwargs: dict = {
             "lon": xr.DataArray(lon_idx, dims=index_col, coords=coords),
             "lat": xr.DataArray(lat_idx, dims=index_col, coords=coords),
         }
 
-        if "time" in ds.coords:
-            time_idx = Extractor._nearest_time_indices(ds, valid["time"].values)  # type: ignore
+        n_time = 0
+        if "time" in ds.dims:
+            step = time_step if time_step is not None else infer_time_step(ds)
+            time_idx, answered = _match_times(ds, valid["time"].values, step)  # type: ignore
+            n_time = int((~answered & ~misses).sum())
+            misses |= ~answered
             isel_kwargs["time"] = xr.DataArray(time_idx, dims=index_col, coords=coords)
 
         ds = load_dataset_to_memory(ds.isel(**isel_kwargs))
         result = ds.to_dataframe()
+        if misses.any():
+            values = [i for i, c in enumerate(result.columns) if c not in ds.coords]
+            result.iloc[np.flatnonzero(misses), values] = np.nan
+            _log_unanswered(n_space, n_time)
         return result.reindex(data.index)
 
     @staticmethod
@@ -1658,6 +1837,7 @@ class Extractor:
         ds: xr.Dataset | xr.DataArray,
         index_col: str,
         n_workers: int = 8,
+        time_step: pd.Timedelta | None = None,
     ) -> pd.DataFrame:
         """
         Extract data from shapefile using multiprocessing starmap.
@@ -1679,6 +1859,8 @@ class Extractor:
             gdf (gpd.GeoDataFrame): geodataframe with geometries and time column.
             ds (xr.Dataset): xarray dataset with dask arrays.
             n_workers (int, optional): Number of workers for parallel processing of geometries. Defaults to 8.
+            time_step: The store's cadence, as for :meth:`extract_from_csv`. A
+                row whose date no time step answers is returned as NaN.
 
         Returns:
             pd.DataFrame with extracted values.
@@ -1697,16 +1879,19 @@ class Extractor:
 
         ds_computed = load_dataset_to_memory(ds)
 
-        has_time = "time" in ds.coords
-
-        if has_time:
+        if "time" in ds_computed.dims:
+            step = time_step if time_step is not None else infer_time_step(ds_computed)
+            time_idx, answered = _match_times(ds_computed, data.time.values, step)
+            _log_unanswered(0, int((~answered).sum()))
             tasks = [
-                (id, date, geom, ds_computed, index_col)
-                for id, date, geom in zip(data.index, data.time, data.geometry)
+                (id, date, geom, ds_computed, index_col, int(t) if ok else -1)
+                for id, date, geom, t, ok in zip(
+                    data.index, data.time, data.geometry, time_idx, answered
+                )
             ]
         else:
             tasks = [
-                (id, None, geom, ds_computed, index_col)
+                (id, None, geom, ds_computed, index_col, None)
                 for id, geom in zip(data.index, data.geometry)
             ]
 
@@ -1727,7 +1912,8 @@ class Extractor:
         errors: list[Exception] = []
         with ThreadPoolExecutor(max_workers=n_workers) as executor:
             futures = [
-                executor.submit(_extract_geometry, *task, errors) for task in tasks
+                executor.submit(_extract_geometry, *task[:5], errors, task[5])
+                for task in tasks
             ]
             for future in as_completed(futures):
                 result = future.result()
@@ -1794,19 +1980,21 @@ class Extractor:
         # vectorised nearest .sel finds the cells and reads only their tiles.
         valid = data[data["lon"].notna() & data["lat"].notna()]
         coords = {self.index_col: valid.index}
+        lons, lats = valid["lon"].to_numpy(), valid["lat"].to_numpy()
         out = (
             ds.sel(
-                lon=xr.DataArray(
-                    valid["lon"].to_numpy(), dims=self.index_col, coords=coords
-                ),
-                lat=xr.DataArray(
-                    valid["lat"].to_numpy(), dims=self.index_col, coords=coords
-                ),
+                lon=xr.DataArray(lons, dims=self.index_col, coords=coords),
+                lat=xr.DataArray(lats, dims=self.index_col, coords=coords),
                 method="nearest",
             )
             .compute()
             .to_dataframe()
         )
+        # The nearest .sel above snaps a point beyond the layer onto its edge.
+        outside = _outside_grid(ds, lons, lats)
+        if outside.any():
+            out.loc[out.index[outside], wanted] = np.nan
+            _log_unanswered(int(outside.sum()), 0)
         return out.reindex(data.index)
 
     def _slice_depth(

@@ -62,6 +62,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   converted). Entries that set it are unaffected; set `true` where raw files
   are costly to download again (the shipped config does for `fsle`, `eddies`).
 
+### Fixed
+
+- **Extraction returned a neighbour's value where it had none.** The point and
+  geometry engines took the nearest cell and time step with no limit, so a
+  sample outside the grid got the edge cell's value (a point at 25°E read
+  22.9 °C off a store ending at 10°E), and a date missing from the store got
+  the adjacent day's. Such samples are now `NaN`, with a warning counting them:
+  a point must fall inside its cell, and a time within half a step of its own.
+  The bathy point path gets the same check.
+- **Sub-daily samples against a daily store read the next day after noon.** A
+  daily step is stamped at midnight, so 23:30 on June 15 was nearer June 16's
+  stamp and took June 16's value — about half the rows of a typical GPS track.
+  Against a daily store each sample now takes the day it falls in, as the
+  compiled-store path already did. The store's cadence comes from its
+  `time_step`; `extract_from_dataset` reads it off the dataset's axis.
+
 ## [0.8.1] - 2026-09-14
 
 ### Fixed
