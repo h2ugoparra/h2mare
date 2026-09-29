@@ -67,16 +67,29 @@ Returns the `out_path` written. Raises `FileNotFoundError` if no paths are given
 ### Reusing a registry processor
 
 `processor` takes a single-argument callable; wrap a registered processor to
-supply its config arguments:
+supply its config arguments. A registered processor names variables the way
+config's `source_renames` leaves them (`sst`, not `analysed_sst`), and this
+config-free path applies no renames, so do the rename in the callable first:
 
 ```python
+from h2mare.config import get_settings
 from h2mare.processing.registry import PROCESSORS
+from h2mare.storage import rename_source_vars
 
+cfg = get_settings().app_config.variables["sst"]
 convert_netcdf_to_zarr(
     "raw_sst.nc", "sst.zarr", name="sst",
-    processor=lambda ds: PROCESSORS["sst"](ds, cfg, "sst"),
+    processor=lambda ds: PROCESSORS["sst"](
+        rename_source_vars(ds, cfg.source_renames, "sst"), cfg, "sst"
+    ),
 )
 ```
+
+Only the processor runs: the `derived_vars` and `boa_fronts` layers a var_key
+declares (`sst_std`, `sst_fdist`) are config-driven steps of `Netcdf2Zarr` and are
+not computed here. Call `apply_derived_vars` (`h2mare.processing.derived`) or
+`apply_boa_fronts` (`h2mare.processing.core.fronts`) in the callable too if you
+need them.
 
 ---
 

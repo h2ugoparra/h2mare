@@ -15,9 +15,13 @@ idx = ParquetIndexer("data/processed/parquet")
 ```python
 ParquetIndexer(
     parquet_root,
+    *,
     time_col="time",
     lon_col="lon",
     lat_col="lat",
+    target_file_mb=256,
+    partition_by=None,
+    column_groups=None,
 )
 ```
 
@@ -27,6 +31,11 @@ ParquetIndexer(
 | `time_col` | `"time"` | Name of the time column |
 | `lon_col` | `"lon"` | Name of the longitude column |
 | `lat_col` | `"lat"` | Name of the latitude column |
+| `target_file_mb` | `256` | Target size of each Parquet file, in MB |
+| `partition_by` | `["year", "month"]` | Hive partition columns. The temporal ones (`"year"`, `"month"`, `"day"`) are derived from the time column; any other must be a column of the frame passed to `add_data()` (e.g. `["species", "year"]`) |
+| `column_groups` | `None` | Maps a column to whatever produces it (a var_key, in the pipeline). Only used to report missing columns by producer rather than one by one |
+
+Everything after `parquet_root` is keyword-only.
 
 ---
 

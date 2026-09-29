@@ -20,11 +20,14 @@ ds = catalog.open_dataset(
 ```python
 ZarrCatalog(
     var_key,
+    *,
     file_period=FilePeriod.YEAR,
     app_config=None,
     store_root=None,
     metadata_root=None,
     auto_refresh=True,
+    verbose=False,
+    warn_if_missing=True,
 )
 ```
 
@@ -32,9 +35,14 @@ ZarrCatalog(
 |---|---|---|
 | `var_key` | — | Variable key; must exist in `config.yaml` |
 | `file_period` | `YEAR` | Granularity used for the `period` column in the index |
+| `app_config` | settings | Configuration to read `var_key` from. Pass another project's `AppConfig` to catalog its stores |
 | `store_root` | `STORE_ROOT/<local_folder>` | Directory scanned for `.zarr` files |
 | `metadata_root` | `data/processed/metadata/` | Directory for the Parquet catalog file |
 | `auto_refresh` | `True` | Check for new/modified files on each `.df` access |
+| `verbose` | `False` | Log the catalog's own bookkeeping (scans, rebuilds, cache use) at its level; otherwise it stays quiet |
+| `warn_if_missing` | `True` | Log a warning when the store directory does not exist yet. Set `False` where an empty store is expected, e.g. before the first convert |
+
+Everything after `var_key` is keyword-only.
 
 ---
 
