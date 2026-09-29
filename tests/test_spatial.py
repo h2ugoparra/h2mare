@@ -13,6 +13,14 @@ from h2mare.utils.spatial import (
 
 
 class TestHaversineMinDistance:
+    def test_no_targets_is_nan_not_half_the_earth(self):
+        """Regression: an empty target set came back as 20,015 km everywhere."""
+        result = haversine_min_distance_kdtree(
+            np.array([[40.0, -10.0], [41.0, -9.0]]), np.empty((0, 2))
+        )
+        assert result.shape == (2,)
+        assert np.isnan(result).all()
+
     def test_basic_distance(self):
         coords1 = np.array([[40.0, -10.0]])
         coords2 = np.array([[40.0, -10.0]])

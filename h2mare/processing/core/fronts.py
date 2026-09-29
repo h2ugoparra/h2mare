@@ -32,7 +32,13 @@ import xarray as xr
 from global_land_mask import globe
 from loguru import logger
 from numpy.typing import NDArray
-from scipy.ndimage import maximum_filter, median_filter, minimum_filter, sobel
+from scipy.ndimage import (
+    distance_transform_edt,
+    maximum_filter,
+    median_filter,
+    minimum_filter,
+    sobel,
+)
 
 from h2mare import get_settings
 from h2mare.models import BOAFrontSpec
@@ -138,12 +144,22 @@ def boa(
     Detect oceanic fronts based on Belkin O'Reilly algorithm.
 
     This function applies the following steps:
-    1. Replace NaNs with zeros.
+    1. Fill each NaN cell (land, cloud, a missing day) with its nearest valid
+       cell's value.
     2. Detect candidate extrema with `filt5` and `filt3`.
     3. Compute gradients in x and y directions using Sobel filters.
     4. Combine gradients to form a front-intensity map.
     5. Apply a threshold to binarize the front detection.
-    6. Extract coordinates of detected front pixels.
+    6. Extract coordinates of detected front pixels, leaving out any that sit
+       on a cell the field has no value for.
+
+    The fill is what keeps a coastline from reading as a front. Filling with a
+    constant instead — 0, as this once did — puts a jump the size of the field
+    itself at every land and cloud edge (~18 °C for sst), and every sea cell
+    touching the coast came out as a front, at distance 0. A nearest-value fill
+    carries the field flat across the edge, so a gradient there is one the
+    water actually has: a coastal upwelling front still shows, the coast does
+    not.
 
     Args:
         lon: 1D array of longitudes corresponding to the x-axis of `ingrid`.
@@ -154,9 +170,19 @@ def boa(
             part of a front.
 
     Returns:
-        np.ndarray shape (N, 2): Array of coordinates (lat, lon) for the N detected frontal pixels.
+        np.ndarray shape (N, 2): Array of coordinates (lat, lon) for the N detected
+        frontal pixels; empty when the field holds no values at all.
     """
-    ingrid = np.nan_to_num(ingrid, nan=0)
+    ingrid = np.asarray(ingrid, dtype="float64")
+    invalid = np.isnan(ingrid)
+    if invalid.all():
+        return np.empty((0, 2))
+    if invalid.any():
+        nearest = distance_transform_edt(
+            invalid, return_distances=False, return_indices=True
+        )
+        ingrid = ingrid[tuple(np.asarray(nearest))]
+
     grid5 = filt5(ingrid)
     grid35 = filt3(ingrid, grid5)
 
@@ -164,8 +190,7 @@ def boa(
     tgy = sobel(grid35, axis=0)
     front = np.hypot(tgx, tgy)
 
-    front = np.where(front >= threshold, 1, 0)
-    iy, ix = np.where(front == 1)
+    iy, ix = np.nonzero((front >= threshold) & ~invalid)
     return np.column_stack((lat[iy], lon[ix]))
 
 
@@ -292,13 +317,19 @@ def _detect_day(
     Module level, and taking everything it needs as arguments, so a pool worker
     pickles a plain function rather than a processor holding config.
     """
-    latlon2_arr = BOA_application(da.sel(time=date), threshold)
+    day = da.sel(time=date).load()
+    latlon2_arr = BOA_application(day, threshold)
 
+    # NaN throughout on a day with no fronts: there is nothing to measure to.
     min_distance = haversine_min_distance_kdtree(latlon1_arr, latlon2_arr)
     # float32, like the field the distances describe: a distance in km has far
     # fewer digits than float64 offers, and the staged month is half the size.
     distances = np.full((len(lat), len(lon)), np.nan, dtype="float32")
     distances[sea_mask] = min_distance
+    # The sea mask is global_land_mask's, not the product's: where the field
+    # itself has no value — its own coastline, ice, a gap — a distance would
+    # describe a cell the variable says nothing about.
+    distances[np.isnan(day.values)] = np.nan
 
     return (
         xr.DataArray(

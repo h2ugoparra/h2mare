@@ -91,7 +91,11 @@ def haversine_min_distance_kdtree(
 
     Returns:
         Minimum great-circle distance in km from each point in ``coords1``
-        to its nearest neighbour in ``coords2``. Shape: ``(N,)``
+        to its nearest neighbour in ``coords2``. Shape: ``(N,)``. All NaN when
+        ``coords2`` is empty: with nothing to measure to there is no distance,
+        and the tree's answer for an empty target set — infinity, which the
+        arc conversion clips to half the Earth's circumference, 20,015 km —
+        would read as a real one.
 
     Raises:
         ValueError: If either input array is not 2-dimensional or does not
@@ -107,6 +111,8 @@ def haversine_min_distance_kdtree(
         raise ValueError(f"coords1 must have shape (N, 2), got {coords1.shape}")
     if coords2.ndim != 2 or coords2.shape[1] != 2:
         raise ValueError(f"coords2 must have shape (M, 2), got {coords2.shape}")
+    if len(coords2) == 0:
+        return np.full(len(coords1), np.nan)
 
     distance, _ = nearest_on_sphere(
         to_unit_sphere(coords1[:, 0], coords1[:, 1]), coords2[:, 0], coords2[:, 1]
