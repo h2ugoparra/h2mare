@@ -22,6 +22,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Every command logs, before it does anything, which project root it resolved
+  and how (`H2MARE_ROOT`, a config.yaml above the working directory, or the
+  library fallback), whether a config.yaml is there, and the `STORE_ROOT`. A
+  user-wide `H2MARE_ROOT` silently points any checkout at another project's
+  config and stores; now the first line of the log says so.
+- `H2MARE_ROOT` set in `.env` is ignored with a warning and kept out of the
+  environment. It never moved the process reading the file (the root is chosen
+  before `.env` is found), but once loaded, spawn workers inherited it and
+  could resolve another project's root than their parent.
 - The **process** pools — BOA front detection and the eddy rasterisation — are
   now capped by the host's CPU count, and by an optional `H2MARE_MAX_WORKERS`
   ceiling in `.env`. Front detection defaulted to 10 spawn workers whatever the

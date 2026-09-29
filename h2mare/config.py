@@ -85,22 +85,44 @@ class Settings:
         4. Fallback: ~/.h2mare → library mode, no directories created.
         """
         if root_env := os.getenv("H2MARE_ROOT"):
+            self._root_source = "the H2MARE_ROOT environment variable"
             return Path(root_env).resolve(), True
 
-        for start in (Path.cwd(), Path(__file__).resolve().parent):
+        for start, label in (
+            (Path.cwd(), "the working directory"),
+            (Path(__file__).resolve().parent, "the h2mare package"),
+        ):
             current = start.resolve()
             while current != current.parent:
                 if (current / "config.yaml").exists():
+                    self._root_source = f"a config.yaml found above {label}"
                     return current, True
                 current = current.parent
 
+        self._root_source = "the library-mode fallback (no config.yaml found)"
         return Path.home() / ".h2mare", False
 
     def _load_dotenv(self):
-        """Load environment variables from .env file."""
+        """
+        Load environment variables from .env file.
+
+        ``H2MARE_ROOT`` set there is refused: the root is chosen before this
+        file can be found, so it cannot move this process — but loaded into
+        the environment it would move every spawn worker, which re-imports
+        h2mare and resolves the root again, onto another project's config.
+        """
         env_file = self.BASE_DIR / ".env"
-        if env_file.exists():
-            load_dotenv(env_file)
+        if not env_file.exists():
+            return
+        root_before = os.environ.get("H2MARE_ROOT")
+        load_dotenv(env_file)
+        if root_before is None and "H2MARE_ROOT" in os.environ:
+            ignored = os.environ.pop("H2MARE_ROOT")
+            logger.warning(
+                f"Ignoring H2MARE_ROOT={ignored} in {env_file}: the project root "
+                f"is chosen before .env is read, so it has no effect there. Set "
+                f"it in the environment instead, or remove the line."
+            )
 
     def _get_store_dir(self) -> Path | None:
         """Get external storage directory from environment."""
@@ -171,6 +193,27 @@ class Settings:
             logger.info(f"Store root overridden: {resolved}")
         self.STORE_ROOT = resolved
         self._store_root_overridden = True
+
+    def describe_resolution(self) -> str:
+        """
+        Where this process found its project, config and stores, in one line.
+
+        Every one of them can come from somewhere other than the directory a
+        command is run from — a user-wide ``H2MARE_ROOT`` points a checkout at
+        another project's config.yaml and stores — so a command says which it
+        is using before it touches anything.
+        """
+        config = self.BASE_DIR / "config.yaml"
+        config_note = "config.yaml" if config.exists() else "no config.yaml there"
+        store = (
+            f"STORE_ROOT {self.STORE_ROOT}"
+            if self.STORE_ROOT is not None
+            else "STORE_ROOT not set"
+        )
+        return (
+            f"Project root {self.BASE_DIR} (from {self._root_source}); "
+            f"{config_note}; {store}"
+        )
 
     @property
     def store_root_overridden(self) -> bool:
