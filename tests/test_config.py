@@ -1,8 +1,10 @@
 """Tests for config.py — Settings class."""
 
+import os
 import warnings
 
 import pytest
+from loguru import logger
 
 from h2mare.config import Settings, get_settings
 
@@ -56,6 +58,68 @@ class TestFindProjectRoot:
         monkeypatch.delenv("STORE_ROOT", raising=False)
         s = Settings()
         assert s.BASE_DIR.is_absolute()
+
+
+class TestDescribeResolution:
+    """
+    A user-wide H2MARE_ROOT points any checkout at another project's config and
+    stores, and nothing said so: commands ran against it without a line in the
+    log naming where they were.
+    """
+
+    def test_names_h2mare_root_as_the_source(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("H2MARE_ROOT", str(tmp_path))
+        monkeypatch.setenv("STORE_ROOT", str(tmp_path / "stores"))
+        line = Settings().describe_resolution()
+
+        assert str(tmp_path.resolve()) in line
+        assert "H2MARE_ROOT environment variable" in line
+        assert "no config.yaml there" in line
+        assert f"STORE_ROOT {(tmp_path / 'stores').resolve()}" in line
+
+    def test_names_the_config_found_above_the_working_directory(
+        self, tmp_path, monkeypatch
+    ):
+        monkeypatch.delenv("H2MARE_ROOT", raising=False)
+        monkeypatch.delenv("STORE_ROOT", raising=False)
+        (tmp_path / "config.yaml").write_text(_MINIMAL_CONFIG_YAML)
+        monkeypatch.chdir(tmp_path)
+        line = Settings().describe_resolution()
+
+        assert "config.yaml found above the working directory" in line
+        assert "; config.yaml;" in line
+        assert "STORE_ROOT not set" in line
+
+
+class TestH2mareRootInDotenv:
+    def test_is_ignored_and_kept_out_of_the_environment(self, tmp_path, monkeypatch):
+        """
+        Regression: the root is chosen before .env is read, so H2MARE_ROOT there
+        never moved this process — but load_dotenv put it in os.environ, where
+        every spawn worker read it and resolved another project's root.
+        """
+        monkeypatch.delenv("H2MARE_ROOT", raising=False)
+        monkeypatch.delenv("STORE_ROOT", raising=False)
+        (tmp_path / "config.yaml").write_text(_MINIMAL_CONFIG_YAML)
+        (tmp_path / ".env").write_text(f"H2MARE_ROOT={tmp_path / 'elsewhere'}\n")
+        monkeypatch.chdir(tmp_path)
+        messages: list[str] = []
+        sink = logger.add(messages.append, level="WARNING", format="{message}")
+        try:
+            s = Settings()
+        finally:
+            logger.remove(sink)
+
+        assert s.BASE_DIR == tmp_path.resolve()
+        assert "H2MARE_ROOT" not in os.environ
+        assert any("Ignoring H2MARE_ROOT" in m for m in messages)
+
+    def test_a_real_environment_variable_is_left_alone(self, tmp_path, monkeypatch):
+        (tmp_path / ".env").write_text("H2MARE_ROOT=/somewhere/else\n")
+        monkeypatch.setenv("H2MARE_ROOT", str(tmp_path))
+        monkeypatch.delenv("STORE_ROOT", raising=False)
+        Settings()
+        assert os.environ["H2MARE_ROOT"] == str(tmp_path)
 
 
 # ---------------------------------------------------------------------------
