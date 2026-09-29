@@ -126,6 +126,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   naming the depth actually used; it was labelled with the requested depth and
   said nothing. The shipped `thetao_1000` (read from 902 m) is within that
   spacing and stays silent.
+- **A failed AVISO directory listing was treated as the whole dataset.** Listing
+  errors were logged and the rest of the tree returned, so a dropped connection
+  on one per-year directory ended the REP range a year early (days fetched from
+  NRT instead) and left that year's files unqueued, with the run reported as a
+  success. A directory that cannot be listed now fails the listing, and so the
+  variable's download.
 - **A climatology short of the ERA5 grid cropped the Ekman features.** The
   anomaly and upwelling-event counts align with the day-of-year and p90
   climatologies by xarray's default inner join, so a climatology built for a

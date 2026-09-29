@@ -664,3 +664,55 @@ class TestFtpConnectionLifecycle:
 
         dead.close.assert_called_once()
         assert dl.ftp is fresh
+
+
+# ---------------------------------------------------------------------------
+# get_all_files_recursively — the FTP listing everything downstream trusts
+# ---------------------------------------------------------------------------
+
+
+def _fake_mlsd(tree: dict, fail_on: str | None = None):
+    """An ftp.mlsd over *tree* ({dir: {name: subtree or None}}); None = file."""
+
+    def mlsd(path=""):
+        if path == fail_on:
+            raise EOFError("connection dropped")
+        node = tree
+        for part in filter(None, path.split("/")):
+            node = node[part]
+        yield (".", {"type": "cdir"})
+        for name, sub in node.items():
+            yield (name, {"type": "dir" if isinstance(sub, dict) else "file"})
+
+    return mlsd
+
+
+_TREE = {
+    "2020": {"fsle_20200101.nc": None, "fsle_20200102.nc": None},
+    "2021": {"fsle_20210101.nc": None},
+}
+
+
+class TestListing:
+    def test_walks_every_directory(self, dl):
+        dl.ftp.mlsd = _fake_mlsd(_TREE)
+        assert dl.get_all_files_recursively() == [
+            "2020/fsle_20200101.nc",
+            "2020/fsle_20200102.nc",
+            "2021/fsle_20210101.nc",
+        ]
+
+    def test_a_directory_that_fails_to_list_fails_the_listing(self, dl):
+        """
+        Regression: the error was logged and the other years returned as the
+        whole dataset — a REP range a year short, and files never queued.
+        """
+        dl.ftp.mlsd = _fake_mlsd(_TREE, fail_on="2021")
+        with pytest.raises(RuntimeError, match="Listing '2021' on the AVISO FTP"):
+            dl.get_all_files_recursively()
+
+    def test_availability_is_not_computed_from_a_partial_list(self, dl):
+        dl.ftp.mlsd = _fake_mlsd(_TREE, fail_on="2021")
+        with patch.object(type(dl), "adjust_ftp_path_to_dataset"):
+            with pytest.raises(RuntimeError):
+                dl.get_rep_availability()
