@@ -330,6 +330,50 @@ def convert360_180(_ds: xr.Dataset) -> xr.Dataset:
     return _ds
 
 
+#: (owner, name, level) triples already warned about by :func:`nearest_depth`:
+#: a compile slices the same levels once per period file, and one line per run
+#: says what a line per year would.
+_depth_warned: set[tuple[str, str, float]] = set()
+
+
+def nearest_depth(depths, level: float, owner: str, name: str) -> float:
+    """
+    The stored depth a requested *level* resolves to: the nearest one.
+
+    A request past the end of the axis is answered by its last level — that
+    is the design, and the shipped config relies on it: ``depth_range`` stops
+    the ``thetao`` download at 1000 m, so ``thetao_1000`` is the 902 m level,
+    the next one (1062 m) lying outside the band. Up to one level spacing past
+    either end, that clamp is silent.
+
+    Further than that it is almost certainly a mistake — 5000 m against an
+    axis ending at 1000 m, or a level list written for another store — and
+    the column would still be labelled with the depth that was asked for, so
+    it says so, once per run, naming the depth actually used.
+
+    Args:
+        depths: The store's depth axis, in metres.
+        level: Requested depth, in metres.
+        owner: var_key named in the warning.
+        name: Variable or entry named in the warning.
+    """
+    axis = np.sort(np.asarray(depths, dtype="float64"))
+    i = int(np.abs(axis - level).argmin())
+    if axis.size > 1 and not axis[0] <= level <= axis[-1]:
+        end_gap = axis[1] - axis[0] if level < axis[0] else axis[-1] - axis[-2]
+        key = (owner, name, float(level))
+        if abs(axis[i] - level) > end_gap and key not in _depth_warned:
+            _depth_warned.add(key)
+            logger.warning(
+                f"[{owner}] {name}: {level:g} m is past the store's depth axis "
+                f"({axis[0]:g}..{axis[-1]:g} m), so it is read from the "
+                f"{axis[i]:g} m level, {abs(axis[i] - level):g} m away, while "
+                f"still named for {level:g} m. Check the requested levels "
+                f"against this store's depth_range."
+            )
+    return float(axis[i])
+
+
 def select_depth_levels(
     ds: xr.Dataset, levels: dict[str, list[int]], owner: str
 ) -> xr.Dataset:
@@ -339,7 +383,9 @@ def select_depth_levels(
     ``levels`` maps a store variable to its depths in metres (as resolved by
     ``models.depth_levels_for``); a variable listed there becomes
     ``<variable>_<level>``, matched to the store's axis by nearest depth and
-    named after the *requested* level (``o2_1000`` off a 902 m axis). Variables
+    named after the *requested* level (``thetao_1000`` off the 902 m level, the
+    deepest the store holds). A level far past either end of the axis is
+    warned about (:func:`nearest_depth`). Variables
     without a depth axis pass through, so a store may mix 2-D and 3-D fields.
 
     A 3-D variable left out is refused rather than passed on: a depth axis
@@ -364,9 +410,8 @@ def select_depth_levels(
                     f"axis. Remove it from depth_levels."
                 )
             for level in levels[name]:
-                out[f"{name}_{level}"] = da.sel(
-                    depth=level, method="nearest"
-                ).drop_vars("depth")
+                stored = nearest_depth(da["depth"].values, level, owner, name)
+                out[f"{name}_{level}"] = da.sel(depth=stored).drop_vars("depth")
         elif has_depth:
             raise ValueError(
                 f"[{owner}] '{name}' has a depth axis but no depth levels. Add it "

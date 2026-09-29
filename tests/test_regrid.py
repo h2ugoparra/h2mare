@@ -163,6 +163,23 @@ class TestNearest:
         result = regrid_to(source, target, method="nearest")
         np.testing.assert_array_equal(result["lat"].values, target["lat"].values)
 
+    def test_target_cells_beyond_the_source_are_nan(self):
+        """
+        Regression: a plain nearest sel carried the edge cell's value outward to
+        every target cell past the source's extent. Conservative and linear
+        both leave those NaN.
+        """
+        source = _field(_grid(0.25, n=4))  # centres 0.125 .. 0.875
+        target = _grid(0.25, start=-0.5, n=8)  # centres -0.375 .. 1.375
+
+        v = regrid_to(source, target, method="nearest")["v"].values
+
+        inside = slice(2, 6)  # the four target centres the source covers
+        np.testing.assert_array_equal(v[inside, inside], source["v"].values)
+        outside = np.ones_like(v, dtype=bool)
+        outside[inside, inside] = False
+        assert np.isnan(v[outside]).all()
+
 
 class TestPerVariableMethods:
     """One store mixes fields a mean fits with fields it destroys."""

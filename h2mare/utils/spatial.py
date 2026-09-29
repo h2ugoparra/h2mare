@@ -427,6 +427,27 @@ def _warn_if_out_of_phase(
     )
 
 
+def _nearest_regrid(ds: xr.Dataset, target: xr.Dataset) -> xr.Dataset:
+    """
+    Each target cell takes the nearest source cell's value, if one is in reach.
+
+    In reach means within half the source's widest spacing, per axis, so a
+    target cell beyond the source's extent is NaN — as it is under the other
+    two methods — rather than the edge cell's value carried outward, which a
+    plain nearest ``sel`` did.
+    """
+    out = ds
+    for axis in ("lat", "lon"):
+        values = np.asarray(ds[axis].values, dtype="float64")
+        reach = np.abs(np.diff(values)).max() / 2 if values.size > 1 else np.inf
+        out = out.reindex(
+            {axis: target[axis].values},
+            method="nearest",
+            tolerance=reach * (1 + 1e-6),
+        )
+    return out
+
+
 def regrid_to(
     ds: xr.Dataset,
     target: xr.Dataset,
@@ -511,7 +532,7 @@ def regrid_to(
     if method == "linear":
         out = ds.interp_like(target, method="linear", assume_sorted=True)
     elif method == "nearest":
-        out = ds.sel(lat=target["lat"], lon=target["lon"], method="nearest")
+        out = _nearest_regrid(ds, target)
     elif method == "conservative":
         out = _conservative_regrid(ds, target, min_coverage)
     else:

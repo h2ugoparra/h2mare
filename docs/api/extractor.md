@@ -254,7 +254,9 @@ Refused rather than guessed:
 - a level list that is empty, negative, fractional or repeated.
 
 Levels are matched to the store's axis by nearest depth and keep the requested name, so
-`thetao_1000` off a store that ends at 902 m holds the 902 m values.
+`thetao_1000` off a store that ends at 902 m holds the 902 m values. That clamp is silent
+up to one level spacing past the end of the axis; a level further out (5000 m against that
+store) is still read from the last level, but logs a warning naming the depth actually used.
 
 The checkpoint is keyed by `var_key`, not by the levels asked for: after a failed run, a
 re-run with *different* levels replays the columns already extracted. Delete

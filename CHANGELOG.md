@@ -112,6 +112,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the hole — so coverage moved past it and nothing retried it. A failure now
   raises, naming the day and eddy type, and the period is not written. Days the
   atlas has no observations for are still skipped, now by date in a warning.
+- **Regridding with `nearest` carried edge values past the source.** A target
+  cell beyond the source's extent took the edge cell's value; it is now NaN, as
+  under `conservative` and `linear`. The shipped eddies store covers the whole
+  compile bbox, so h2ds is unchanged.
+- A depth level far past the end of a store's depth axis (more than one level
+  spacing beyond it) is still read from the last level, but now logs a warning
+  naming the depth actually used; it was labelled with the requested depth and
+  said nothing. The shipped `thetao_1000` (read from 902 m) is within that
+  spacing and stays silent.
 - **A climatology short of the ERA5 grid cropped the Ekman features.** The
   anomaly and upwelling-event counts align with the day-of-year and p90
   climatologies by xarray's default inner join, so a climatology built for a
