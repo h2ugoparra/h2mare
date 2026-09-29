@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Breaking (install):** the plotting stack (cartopy, matplotlib, plotly,
+  statsmodels, ipython) moved from the core dependencies to a `viz` extra. A
+  plain `pip install h2mare` now runs the whole pipeline without it; plotting
+  (`h2mare.utils.plot`, `ParquetIndexer.plot`) needs `pip install "h2mare[viz]"`
+  and says so when it is missing. `uv sync --dev` still installs it.
 - **Breaking (config):** the bathy entry's `data_file` / `data_file_hires` are
   replaced by named `layers` (`15s`, `60s`, `0.25deg` → file name) plus
   `compile_layer` and `extract_layer`. An old config fails at load. Config is

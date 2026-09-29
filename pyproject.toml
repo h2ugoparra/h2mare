@@ -25,7 +25,6 @@ classifiers = [
     "Topic :: Scientific/Engineering :: GIS",
 ]
 dependencies = [
-    "cartopy>=0.23.0",
     "cdsapi>=0.7.0",
     # xarray engine plugins, selected by name rather than imported
     # (netcdf2zarr.py:138), so nothing in the source references them.
@@ -38,9 +37,7 @@ dependencies = [
     "ephem>=4.1.0",
     "geopandas>=1.0.0",
     "global_land_mask>=1.0.0",
-    "ipython>=8.0.0",
     "loguru>=0.7.0",
-    "matplotlib>=3.8.0",
     "msgspec>=0.18.0",
     # Imported directly throughout the package but previously undeclared,
     # arriving only as transitives of xarray/geopandas/rioxarray/polars. That
@@ -54,17 +51,29 @@ dependencies = [
     "rasterio>=1.3",
     "shapely>=2.0",
     "zarr>=3.0",
-    "plotly>=5.24.0",
     "polars>=1.0.0",
     "python-dotenv>=1.0.0",
     "PyYAML>=6.0.0",
     "rioxarray>=0.17.0",
     "scipy>=1.13.0",
-    "statsmodels>=0.14.6",
     "tenacity>=8.0.0",
     "tqdm>=4.66.0",
     "typer>=0.12.0",
     "xarray>=2024.1.0",
+]
+
+[project.optional-dependencies]
+# Plotting: utils.plot, ParquetIndexer.plot and plot_records_on_field. Kept out
+# of the core install so a headless pipeline (download, convert, compile,
+# extract) does not pull cartopy, matplotlib and plotly, and the image stack
+# under them, onto servers that never draw anything. The plotting modules are
+# only imported on use, and say which extra to install when it is missing.
+viz = [
+    "cartopy>=0.23.0",
+    "ipython>=8.0.0",
+    "matplotlib>=3.8.0",
+    "plotly>=5.24.0",
+    "statsmodels>=0.14.6",
 ]
 
 [project.urls]
@@ -79,6 +88,9 @@ include = ["h2mare*"]
 
 [dependency-groups]
 dev = [
+    # The plotting tests need the viz extra; installing it here keeps
+    # `uv sync --dev`, CI and tox covering it without an --extra flag each.
+    "h2mare[viz]",
     "cf-units>=3.3",
     "ipykernel>=7.2.0",
     "nbformat>=5.10.4",

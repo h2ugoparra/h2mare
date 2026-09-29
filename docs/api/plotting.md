@@ -1,6 +1,7 @@
 # Plotting utilities
 
-Standalone plotting helpers in `h2mare.utils.plot`:
+Standalone plotting helpers in `h2mare.utils.plot`. They need the `viz` extra
+(`pip install "h2mare[viz]"`); without it, importing the module says so.
 
 ```python
 from h2mare.utils.plot import (

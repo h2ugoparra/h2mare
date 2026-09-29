@@ -8,13 +8,9 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Literal, Optional
 
-import cartopy.crs as ccrs
-import cartopy.feature as cfeature
 import geopandas as gpd
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import plotly.express as px
 import polars as pl
 import xarray as xr
 from loguru import logger
@@ -26,6 +22,20 @@ from h2mare.storage.xarray_helpers import select_depth_levels
 from h2mare.storage.zarr_catalog import ZarrCatalog
 from h2mare.types import BBox, ReadFrom
 from h2mare.validators import validate_columns, validate_var_key
+
+# The plotting stack is the optional `viz` extra. Said here, where it is first
+# needed, rather than as a bare "No module named 'cartopy'".
+try:
+    import cartopy.crs as ccrs
+    import cartopy.feature as cfeature
+    import matplotlib.pyplot as plt
+    import plotly.express as px
+except ImportError as e:
+    raise ImportError(
+        f"h2mare's plotting needs the viz extra "
+        f"({(e.name or 'a package').split('.')[0]} is not installed): "
+        "pip install 'h2mare[viz]'"
+    ) from e
 
 _PANEL_WIDTH = 3.0  # inches per panel column
 _WSPACE = -0.15  # fractional horizontal gap between panels

@@ -15,6 +15,16 @@ pip install h2mare
 uv add h2mare
 ```
 
+That installs the pipeline: download, convert, compile, extract, Parquet. The
+plotting helpers (`h2mare.utils.plot`, `ParquetIndexer.plot`) need the `viz`
+extra, which adds cartopy, matplotlib and plotly:
+
+```bash
+pip install "h2mare[viz]"
+# or
+uv add "h2mare[viz]"
+```
+
 ## Install from source
 
 ```bash
@@ -23,7 +33,7 @@ cd h2mare
 uv sync
 ```
 
-Include development dependencies (pytest, ruff):
+Include development dependencies (pytest, ruff, and the `viz` extra the plotting tests need):
 
 ```bash
 uv sync --dev

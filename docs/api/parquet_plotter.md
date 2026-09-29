@@ -1,6 +1,6 @@
 # ParquetPlotter
 
-`ParquetPlotter` is the visualization accessor for [`ParquetIndexer`](parquet_indexer.md). Access it via `indexer.plot` — do not instantiate it directly.
+`ParquetPlotter` is the visualization accessor for [`ParquetIndexer`](parquet_indexer.md). Access it via `indexer.plot` — do not instantiate it directly. It needs the `viz` extra (`pip install "h2mare[viz]"`); the rest of `ParquetIndexer` does not.
 
 ```python
 idx.plot.time_series("sst", agg_by="month")
