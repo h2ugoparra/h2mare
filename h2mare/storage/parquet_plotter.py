@@ -5,10 +5,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Literal, Optional, Union
 
 import numpy as np
-import plotly.graph_objects as go
 import polars as pl
 from loguru import logger
-from plotly.colors import DEFAULT_PLOTLY_COLORS
 
 from h2mare import get_settings
 from h2mare.storage.parquet_helpers import (
@@ -17,6 +15,18 @@ from h2mare.storage.parquet_helpers import (
     aggregate_by_time_stats,
 )
 from h2mare.utils.plot import plot_maps
+
+# The plotting stack is the optional `viz` extra. Said here, where it is first
+# needed, rather than as a bare "No module named 'cartopy'".
+try:
+    import plotly.graph_objects as go
+    from plotly.colors import DEFAULT_PLOTLY_COLORS
+except ImportError as e:
+    raise ImportError(
+        f"h2mare's plotting needs the viz extra "
+        f"({(e.name or 'a package').split('.')[0]} is not installed): "
+        "pip install 'h2mare[viz]'"
+    ) from e
 
 if TYPE_CHECKING:
     from h2mare.storage.parquet_catalog import ParquetCatalog
