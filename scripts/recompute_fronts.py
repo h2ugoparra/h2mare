@@ -325,6 +325,7 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--workers must be at least 1")
 
     handled = 0
+    failed: list[str] = []
     for var_key in var_keys:
         try:
             handled += run(
@@ -337,12 +338,19 @@ def main(argv: list[str] | None = None) -> int:
         except Exception as e:  # noqa: BLE001 - one bad store must not stop the rest
             print(f"[{var_key}] failed: {e}")
             clear_staging(var_key)
+            failed.append(var_key)
 
     if not args.apply:
         print("\nDry run — re-run with --apply to rewrite the store(s).")
     else:
         print(f"\nRecomputed {handled} file(s).")
         print("h2ds and Parquet still hold the old values — compile and parquet next.")
+    # Non-zero when any var_key failed: the loop carries on past a bad store so
+    # the rest still get done, but a shell or a scheduled run must not read a
+    # partial run as a clean one.
+    if failed:
+        print(f"\n{len(failed)} var_key(s) failed: {', '.join(failed)}")
+        return 1
     return 0
 
 
