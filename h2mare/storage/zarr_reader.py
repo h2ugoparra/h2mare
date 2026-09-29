@@ -647,10 +647,14 @@ class ZarrReader:
             bbox: [xmin, ymin, xmax, ymax]
 
         Returns:
-            Spatially subset dataset
+            Spatially subset dataset. A dataset without lat/lon (or y/x) cannot
+            be subset and is returned whole, with a warning.
 
         Raises:
-            ValueError: If bbox format is invalid
+            ValueError: If the selection itself fails — an axis that is not
+                monotonic, say. That used to be logged and the *unclipped*
+                dataset returned, so a caller asking for a region got the whole
+                domain as though it were the region.
         """
         # Determine coordinate names (support lat/lon or y/x)
         lat_coord = "lat" if "lat" in ds.coords else "y"
@@ -669,5 +673,6 @@ class ZarrReader:
                 ds, bbox.to_tuple(), lat_coord=lat_coord, lon_coord=lon_coord
             )
         except Exception as e:
-            logger.error(f"Failed to apply bbox: {e}")
-            return ds
+            raise ValueError(
+                f"[{self.var_key}] could not subset to {bbox}: {type(e).__name__}: {e}"
+            ) from e
