@@ -195,8 +195,9 @@ eddy that does not exist, so the ten identity and property columns are `nearest`
 while `ac_dist_km` and `ac_normdist`, which are continuous, stay on `auto`. `linear`
 and `conservative` can be named too, to pin the automatic choice.
 
-`nearest` does not check how far the nearest source cell is, so the source store
-must cover the whole compile `bbox` (the eddies store is written on it).
+A target cell takes the nearest source cell only if one lies within half the
+source's spacing; one beyond the source's extent is NaN, as under the other two
+methods, rather than the edge cell's value carried outward.
 
 A variable with overrides is split by method, each group is regridded on its own,
 and the groups are merged back with an exact join, so every part must land on

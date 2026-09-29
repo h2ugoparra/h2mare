@@ -14,6 +14,7 @@ from typing import Callable
 import xarray as xr
 
 from h2mare.models import DerivedOp, DerivedVarSpec
+from h2mare.storage.xarray_helpers import nearest_depth
 
 
 def rolling_std(da: xr.DataArray, window: int) -> xr.DataArray:
@@ -75,7 +76,10 @@ def apply_derived_vars(
             )
         for level, out in zip(spec.depth, spec.output_names(name)):
             at_level = [
-                s.sel(depth=level, method="nearest").drop_vars("depth") for s in srcs
+                s.sel(
+                    depth=nearest_depth(s["depth"].values, level, owner, name)
+                ).drop_vars("depth")
+                for s in srcs
             ]
             ds[out] = _OPS[spec.op](at_level, spec).rename(out)
     return ds

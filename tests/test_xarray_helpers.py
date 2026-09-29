@@ -4,6 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 import xarray as xr
+from loguru import logger
 
 from h2mare.storage.xarray_helpers import (
     apply_cf_attrs,
@@ -11,8 +12,10 @@ from h2mare.storage.xarray_helpers import (
     convert360_180,
     drop_source_encoding_attrs,
     get_dataset_encoding,
+    nearest_depth,
     rename_dims,
     rename_source_vars,
+    select_depth_levels,
     snap_grid_coords,
     unified_time_chunk,
 )
@@ -641,3 +644,55 @@ class TestApplyCfAttrs:
         assert "units" not in back["time"].attrs
         assert back["time"].encoding["calendar"] == "proleptic_gregorian"
         assert back["lat"].attrs["units"] == "degrees_north"
+
+
+class TestNearestDepth:
+    """
+    A level past the end of the depth axis is read from the last level and
+    still named for the level asked for. That clamp is the design (the shipped
+    thetao_1000 is the 902 m level, depth_range stopping the download at 1000 m),
+    but far past the end it was silent, so a typo'd level list mislabelled data.
+    """
+
+    # thetao's real deepest levels under depth_range (0, 1000)
+    _AXIS = [0.494, 541.089, 643.567, 763.333, 902.339]
+
+    @staticmethod
+    def _warnings(fn) -> list[str]:
+        messages: list[str] = []
+        sink = logger.add(messages.append, level="WARNING", format="{message}")
+        try:
+            fn()
+        finally:
+            logger.remove(sink)
+        return messages
+
+    def test_interior_request_takes_the_nearest_level_silently(self):
+        msgs = self._warnings(lambda: nearest_depth(self._AXIS, 600, "t1", "thetao"))
+        assert nearest_depth(self._AXIS, 600, "t1b", "thetao") == 643.567
+        assert msgs == []
+
+    def test_the_shipped_overshoot_is_clamped_silently(self):
+        """1000 m against an axis ending at 902 m: within one level spacing."""
+        msgs = self._warnings(lambda: nearest_depth(self._AXIS, 1000, "t2", "thetao"))
+        assert nearest_depth(self._AXIS, 1000, "t2b", "thetao") == 902.339
+        assert msgs == []
+
+    def test_far_past_the_end_warns_once_naming_the_depth_used(self):
+        """Regression: 5000 m came back as the 902 m values, without a word."""
+
+        def twice():
+            nearest_depth(self._AXIS, 5000, "t3", "thetao")
+            nearest_depth(self._AXIS, 5000, "t3", "thetao")
+
+        msgs = self._warnings(twice)
+        assert len(msgs) == 1
+        assert "5000 m is past" in msgs[0] and "902.339 m level" in msgs[0]
+
+    def test_select_depth_levels_goes_through_it(self):
+        ds = xr.Dataset(
+            {"thetao": (("depth", "lat"), np.arange(10.0).reshape(5, 2))},
+            coords={"depth": self._AXIS, "lat": [0.0, 1.0]},
+        )
+        msgs = self._warnings(lambda: select_depth_levels(ds, {"thetao": [5000]}, "t4"))
+        assert len(msgs) == 1 and "[t4] thetao" in msgs[0]
