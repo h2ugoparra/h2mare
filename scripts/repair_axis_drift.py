@@ -179,16 +179,22 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("give at least one var_key, or --all")
 
     total = 0
+    failed: list[str] = []
     for var_key in var_keys:
         try:
             total += repair(var_key, tol=args.tol, apply=args.apply)
         except Exception as e:  # noqa: BLE001 - one bad store must not stop the survey
             print(f"[{var_key}] could not be checked: {e}")
+            failed.append(var_key)
 
     if not args.apply:
         print("\nDry run — re-run with --apply to write.")
     else:
         print(f"\nRepaired {total} file(s).")
+    # Non-zero when any var_key failed, as in recompute_fronts.py.
+    if failed:
+        print(f"\n{len(failed)} var_key(s) failed: {', '.join(failed)}")
+        return 1
     return 0
 
 
