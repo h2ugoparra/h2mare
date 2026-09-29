@@ -77,6 +77,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Against a daily store each sample now takes the day it falls in, as the
   compiled-store path already did. The store's cadence comes from its
   `time_step`; `extract_from_dataset` reads it off the dataset's axis.
+- **Every coastline was a front.** BOA filled cells without data with 0, so
+  land read as a jump the size of the field (~18 °C for sst) and every sea cell
+  touching it was a front at distance 0 — 99% of coast-adjacent sst cells on
+  2024-06-15, where the next cell in held 77%. Cells without data are now
+  filled from their nearest valid neighbour, and no front is placed on one.
+  Offshore detection is unchanged, pixel for pixel.
+- **A day with no data wrote 20,015 km everywhere.** With no fronts to measure
+  to, every sea cell got half the Earth's circumference; chl's 11 all-null days
+  (1998–2002) carry it on disk. It is NaN now — `haversine_min_distance_kdtree`
+  returns NaN for an empty target set — and a distance is also NaN wherever the
+  source field itself is, rather than wherever `global_land_mask` calls land.
+- **Stores on disk still hold the old layers.** Rewrite them with
+  `scripts/recompute_fronts.py sst chl --apply` (no raw files needed), then
+  `compile` and `parquet` over the same window.
 
 ## [0.8.1] - 2026-09-14
 

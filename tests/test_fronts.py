@@ -115,6 +115,54 @@ class TestBOA:
         result = boa(lon, lat, ingrid, threshold=1e9)
         assert result.shape[0] == 0
 
+    @staticmethod
+    def _coast(field: np.ndarray) -> np.ndarray:
+        """*field* with its 10 westernmost columns turned to land (NaN)."""
+        field = field.copy()
+        field[:, :10] = np.nan
+        return field
+
+    _LAT = np.arange(40.0, 42.0, 0.05)
+    _LON = np.arange(-10.0, -8.0, 0.05)
+
+    def test_a_coastline_is_not_a_front(self):
+        """
+        Regression: NaN was filled with 0, so land read as a ~18 °C drop and
+        every sea cell touching the coast came out as a front — 99% of them on
+        the live sst store against ~40% offshore. A uniform sea has none.
+        """
+        ingrid = self._coast(np.full((self._LAT.size, self._LON.size), 18.0))
+        assert boa(self._LON, self._LAT, ingrid, threshold=0.4).shape == (0, 2)
+
+    def test_a_front_beside_the_coast_still_shows_and_the_coast_does_not(self):
+        """
+        An upwelling band 3 cells wide along the coast: the front is where it
+        meets warmer water, not where the water meets the land.
+        """
+        ingrid = np.full((self._LAT.size, self._LON.size), 18.0)
+        ingrid[:, 10:13] = 12.0
+        fronts = boa(self._LON, self._LAT, self._coast(ingrid), threshold=0.4)
+
+        assert fronts.shape[0] > 0
+        # Columns 10 and 11 are the band's coastal cells, whose neighbours on
+        # both sides hold 12 °C once the land is filled from them.
+        assert fronts[:, 1].min() >= self._LON[12] - 1e-9
+
+    def test_no_front_sits_on_a_cell_without_data(self):
+        """A step crossing a cloud hole: fronts either side, none in the hole."""
+        lat, lon, ingrid = self._step_field()
+        ingrid[2:6, 3:7] = np.nan
+        fronts = boa(lon, lat, ingrid, threshold=0.1)
+
+        rows = np.searchsorted(lat, fronts[:, 0])
+        cols = np.searchsorted(lon, fronts[:, 1])
+        assert fronts.shape[0] > 0
+        assert not np.isnan(ingrid[rows, cols]).any()
+
+    def test_a_field_without_values_has_no_fronts(self):
+        lat, lon, ingrid = self._step_field()
+        assert boa(lon, lat, np.full_like(ingrid, np.nan), 0.1).shape == (0, 2)
+
 
 # ---------------------------------------------------------------------------
 # BOA_application
@@ -232,6 +280,29 @@ class TestDetectDay:
         staged month is half the size for it."""
         da, lat, lon = self._day()
         assert self._run(da, lat, lon, "2020-01-15").dtype == np.float32
+
+    def test_a_day_without_fronts_is_nan_not_half_the_earth(self):
+        """
+        Regression: with no fronts to measure to, every sea cell got 20,015 km
+        — half the Earth's circumference, the arc for an infinite chord. On the
+        live store that was every sea cell of chl's 11 all-null days.
+        """
+        da, lat, lon = self._day()
+        da[:] = np.nan
+        result = self._run(da, lat, lon, "2020-01-15", fronts=np.empty((0, 2)))
+        assert np.isnan(result.values).all()
+
+    def test_distance_is_nan_where_the_field_has_no_value(self):
+        """
+        The sea mask comes from global_land_mask, not from the product: a cell
+        it calls sea but the field leaves empty (its own coastline, ice) got a
+        distance describing nothing.
+        """
+        da, lat, lon = self._day()
+        da[0, 0, 1] = np.nan
+        result = self._run(da, lat, lon, "2020-01-15").isel(time=0).values
+        assert np.isnan(result[0, 1])
+        assert np.isfinite(np.delete(result.ravel(), 1)).all()
 
     def test_land_stays_nan(self):
         da, lat, lon = self._day()
