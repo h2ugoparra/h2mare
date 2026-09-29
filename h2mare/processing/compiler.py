@@ -92,9 +92,11 @@ class Compiler:
     """
     Merges the per-variable Zarr stores into the compiled product (``h2ds``).
 
-    Each variable is read from its own native store, interpolated onto the
-    common 0.25° daily grid, and merged into one dataset written per period
-    (a file per year by default). What a given var_key contributes is decided
+    Each variable is read from its own native store, put on the daily grid the
+    ``h2ds`` config entry declares (``cells_per_degree``, ``values_at``) by
+    ``utils.spatial.regrid_to`` — an area-weighted mean where the store is
+    finer, linear interpolation where it is not — and merged into one dataset
+    written per period (a file per year by default). What a given var_key contributes is decided
     by ``compiler_registry.COMPILE_PROCESSORS``; anything unregistered goes
     through ``compile_default``.
 
@@ -113,13 +115,15 @@ class Compiler:
         date_format: Literal["year", "date", "yearmonth"] = "year",
     ):
         """
-        Class function to compile zarr files from each var_key to a pre defined spatial res (set at 0.25) grid with daily interpolated data.
+        Compile each var_key's store onto the grid ``var_key``'s config entry declares.
 
         Args:
             var_key (str, optional): Var key name of compiled data. Defaults to 'h2ds'.
             app_config (AppConfig, optional): Configuration data for var keys. Defaults to AppConfig.
-            remote_store_root (Path, optional): Store directory where all environmental data lives (currently D:).
-            local_store_root (Path], optional): Local data directory where compiled data lives (currently C:)
+            remote_store_root (Path, optional): Default root of the source stores.
+                Defaults to ``STORE_ROOT``; a var_key's own ``store_root`` wins.
+            local_store_root (Path, optional): Where ``zarr_backup`` copies the
+                compiled files. Defaults to ``ZARR_DIR/<local_folder>``.
             file_period: Temporal granularity ('year' or 'month') for file storage. Defaults to 'year'.
             date_format: string date format for output file name.
         """

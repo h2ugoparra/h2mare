@@ -179,6 +179,7 @@ plot_records_on_field(
     offset=1.0,
     max_plots=12,
     title_fn=None,
+    read_from="auto",
 )
 ```
 
@@ -193,12 +194,13 @@ DataFrame uses its point (± `offset`) and a red marker.
 |---|---|
 | `data` | Records to plot. GeoDataFrame (active geometry, reprojected to WGS84) or DataFrame (`lon_col`/`lat_col`) |
 | `var_key` | Variable key store passed to `ZarrCatalog` |
-| `var` | Data variable name within the dataset. Defaults to the first data variable in the store (names need not match the key); the available names are logged so you can pick one |
+| `var` | Variable to plot. Defaults to the first name `var_key` publishes (`compiled_vars`). It need not be in `var_key`'s own store: see `read_from` |
 | `time_col` | Date column. Defaults to `"date"` |
 | `lon_col` / `lat_col` | Coordinate columns, used only when `data` has no geometry. Default `"lon"` / `"lat"` |
 | `offset` | Half-width (degrees) of the bbox drawn around each location. Defaults to `1.0` |
 | `max_plots` | Maximum number of records to plot. Defaults to `12` |
 | `title_fn` | Callable mapping a row to a plot title. Defaults to the record date |
+| `read_from` | Which store `var` is read from. `"auto"` (default) goes to whichever store holds it, so a daily h2ds column of an hourly var_key plots the daily field extraction returns, and a depth slice (`thetao_0`) is cut from the native store. `"native"` pins the var_key's own store (the raw hourly field behind such a column); `"compiled"` reads the h2ds column. Same routing as [`Extractor`](extractor.md#cadence) |
 
 ```python
 # Inspect the SST field around the first 12 observation records
