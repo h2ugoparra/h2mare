@@ -70,6 +70,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `archive_raw` is optional and defaults to `false` (delete raw files once
   converted). Entries that set it are unaffected; set `true` where raw files
   are costly to download again (the shipped config does for `fsle`, `eddies`).
+- The release workflow runs the test suite on the tagged commit, refuses a
+  tag that does not match `pyproject.toml`'s version, and installs the built
+  wheel into a clean environment (resolved from its own metadata, no lock) and
+  imports it before publishing. Its actions are pinned to commit SHAs, and only
+  the publish job may mint a PyPI token. CI's branch-name check reads the branch
+  through the environment rather than pasting it into the script.
 
 ### Fixed
 
