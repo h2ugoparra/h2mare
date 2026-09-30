@@ -630,9 +630,7 @@ class TestFrontEntriesAtLoad:
 
 
 class TestRepoConfig:
-    """Guard the tracked config.yaml. Both thresholds used to be hardcoded in
-    fronts.py, so dropping an entry would silently stop a layer being written,
-    and changing one would silently rewrite the store's meaning."""
+    """Guard the tracked config.yaml."""
 
     @pytest.fixture(scope="class")
     def config(self) -> AppConfig:
@@ -641,21 +639,11 @@ class TestRepoConfig:
             {"variables": raw["variables"], "secrets": {}}, AppConfig
         )
 
-    @pytest.mark.parametrize(
-        "var_key, expected",
-        [
-            ("sst", {"sst_fdist": ("sst", 0.4)}),
-            ("chl", {"chl_fdist": ("chl", 0.06)}),
-        ],
-    )
-    def test_declares_the_formerly_hardcoded_thresholds(
-        self, config, var_key, expected
-    ):
-        fronts = config.variables[var_key].boa_fronts or {}
-        assert {n: (s.source, s.threshold) for n, s in fronts.items()} == expected
-
     @pytest.mark.parametrize("var_key", ["sst", "chl"])
-    def test_the_layer_is_published(self, config, var_key):
-        """A layer absent from compiled_vars never reaches h2ds or Parquet."""
+    def test_boa_is_retired(self, config, var_key):
+        """The front_layers replaced it (plans/front-layers.md §6.7), and every
+        stored distance predated the metric fix, so the stores were cleared of
+        them. Declaring it again would write fresh ones beside nothing."""
         entry = config.variables[var_key]
-        assert set(entry.boa_fronts or {}) <= set(entry.compiled_vars or [])
+        assert not entry.boa_fronts
+        assert f"{var_key}_fdist" not in (entry.compiled_vars or [])

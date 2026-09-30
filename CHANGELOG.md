@@ -26,6 +26,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Store reads behind the detection retry a transient `OSError` (the `D:`
   drive's intermittent EINVAL).
 
+### Removed
+
+- **BOA front distances** (`sst_fdist`, `chl_fdist`): `boa_fronts` is gone
+  from the shipped config, and with it the two columns from `compiled_vars`.
+  Every stored value predated the 2026-09 distance-metric fix, so the native
+  stores were cleared of them (`scripts/drop_variables.py`, which deletes named
+  variables from a var_key's store and refuses one the config still produces).
+  Breaking for anyone reading them; the front layers replace them. h2ds and the
+  Parquet store still hold them until rebuilt. The `boa_fronts` key and its
+  code remain for now.
+
 ## [0.9.0] - 2026-09-30
 
 ### Breaking
