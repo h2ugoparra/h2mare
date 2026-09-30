@@ -18,6 +18,10 @@ from loguru import logger
 from h2mare.config import AppConfig, get_settings
 from h2mare.format_converters.base import BaseConverter
 from h2mare.models import StoreDtype, step_freq
+from h2mare.processing.core.front_layers import (
+    apply_front_layers,
+    recompute_following_frequency,
+)
 from h2mare.processing.core.fronts import apply_boa_fronts, clear_staging
 from h2mare.processing.derived import apply_derived_vars
 from h2mare.processing.registry import PROCESSORS
@@ -711,6 +715,11 @@ class Netcdf2Zarr(BaseConverter):
             self._verify_written_dates(
                 path, written, self._expected_dates(period, paths), period
             )
+            # The frequency of the stored days after this window read masks
+            # the write just replaced; bring it up to date before anything
+            # else is written.
+            if self.var_config.front_layers and len(written):
+                self._refresh_following_frequency(written.max())  # type: ignore[arg-type]
             try:
                 self._write_provenance(path, paths, self._stored_dates(path))
             except Exception as e:
@@ -747,6 +756,49 @@ class Netcdf2Zarr(BaseConverter):
             # period's layer is a full copy of it, and nothing should still be
             # reading one when it goes.
             clear_staging(self.var_key)
+
+    # ========= FRONT LAYERS =========
+
+    def _read_front_masks(
+        self, var: str, start: pd.Timestamp, end: pd.Timestamp
+    ) -> Optional[xr.DataArray]:
+        """The store's own daily front masks over [start, end], or None."""
+        try:
+            ds = self.catalog.open_dataset(
+                start_date=start, end_date=end, variables=[var]
+            )
+        except (FileNotFoundError, KeyError, ValueError) as e:
+            logger.debug(
+                f"[{self.var_key}] no stored {var} for {start.date()}..{end.date()}: {e}"
+            )
+            return None
+        if var not in ds.data_vars or ds.sizes.get("time", 0) == 0:
+            return None
+        return ds[var].load()
+
+    def _refresh_following_frequency(self, after: pd.Timestamp) -> None:
+        """
+        Recompute the front frequency of the stored days following *after*.
+
+        Written per period file, through the same write path as any append:
+        the frequency variables of those days are replaced, everything else in
+        the files is kept.
+        """
+        specs = self.var_config.front_layers or {}
+        ds = recompute_following_frequency(specs, self._read_front_masks, after)
+        if ds is None:
+            return
+        ds = apply_cf_attrs(ds, native_var_key=self.var_key)
+        period = {"year": "Y", "yearmonth": "M"}.get(self.date_format, "D")
+        days = pd.DatetimeIndex(ds.time.values)
+        for key in days.to_period(period).unique():
+            part = ds.sel(time=days[days.to_period(period) == key])
+            path = self.catalog.build_file_path(part, self.date_format)
+            logger.info(
+                f"[{self.var_key}] refreshing front frequency for "
+                f"{part.sizes['time']} following day(s) in {path.name}"
+            )
+            write_append_zarr(self.var_key, chunk_dataset(part), path)
 
     # ========= WRITE VERIFICATION =========
 
@@ -928,6 +980,12 @@ class Netcdf2Zarr(BaseConverter):
         # round. Detection stages each layer to disk; _process_period clears
         # the staging once the period has been written.
         ds = apply_boa_fronts(ds, self.var_config.boa_fronts, self.var_key)
+        # After BOA and before derived_vars, like it. Seeded from the store's
+        # own front masks so the frequency of this dataset's first days covers
+        # the days before it.
+        ds = apply_front_layers(
+            ds, self.var_config.front_layers, self.var_key, self._read_front_masks
+        )
         ds = apply_derived_vars(ds, self.var_config.derived_vars, self.var_key)
 
         # Snap lon/lat to a canonical grid so float-noise drift between a source's

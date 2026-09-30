@@ -15,7 +15,7 @@ import xarray as xr
 from loguru import logger
 
 from h2mare.config import AppConfig, get_settings
-from h2mare.models import SYSTEM_VAR_KEYS, depth_levels_for
+from h2mare.models import SYSTEM_VAR_KEYS, depth_levels_for, native_only_vars
 from h2mare.storage.coverage import (
     resolve_date_range,
     split_time_range,
@@ -656,7 +656,14 @@ class Compiler:
                 var_key, self.app_config.variables.get(var_key)
             )
             processor = _compile_depth_var if has_levels else compile_default
-        return processor(self, catalog, date_range)
+        ds = processor(self, catalog, date_range)
+        # Compile carries every store variable into h2ds; a var_key's
+        # native-only ones (the daily front mask) are dropped here, whichever
+        # processor opened them.
+        native_only = native_only_vars(self.app_config.variables.get(var_key))
+        if ds is not None and native_only:
+            ds = ds.drop_vars(sorted(native_only & set(map(str, ds.data_vars))))
+        return ds
 
     # ============== UTILITIES ===================
     def _has_overlap(

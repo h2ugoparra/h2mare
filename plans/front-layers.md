@@ -1,6 +1,7 @@
 # Front layers for species distribution models
 
-Status: design, nothing implemented. Decisions settled 2026-09-30 (§9).
+Status: implementing (phase 3). Decisions settled 2026-09-30 (§9); the choices
+made while implementing are in §9.1.
 Written 2026-09-30 against `dev` @ 855a0d0. Every number below comes from the
 scripts in [`front-layers/prototype/`](front-layers/prototype/README.md), run
 read-only against the deployed sst and chl stores.
@@ -323,6 +324,7 @@ invented. The chl product has no uncertainty field, so chl has no mask.
 
 ### 4.4 Frequency window and persistence
 
+- **A front counts within 12.5 km** of the pixel, not only on it (§9.1).
 - **30 days**, a conventional monthly window. The 7-day frequency correlates
   0.82–0.83 with it, so offering both adds little. The config takes a list in
   case an SDM wants another scale.
@@ -516,7 +518,7 @@ reason 1 and breaks reason 2.
 
 | Variable | In native store | In h2ds | dtype / encoding | Units |
 |---|---|---|---|---|
-| `{name}_front` | yes | no | uint8: 0 no front, 1 front, 255 not assessed | 1 |
+| `{name}_front` | yes | no | float32: 1 front, 0 no front, NaN not assessed (§9.1) | 1 |
 | `{name}_grad` | yes | yes (conservative regrid) | float32, or `int16` under `store_dtype` | K km⁻¹ (sst); km⁻¹, of log10(mg m⁻³) (chl) |
 | `{name}_ffreq{N}` | yes | yes (conservative regrid) | float32 | 1 |
 
@@ -694,6 +696,55 @@ recompute of the front layers (a few hours per variable), not a redesign.
 | Frequency vs distance to persistent fronts | ffreq30 / fdist_persist | **ffreq30** | §5.3–5.4: same cluster (ρ −0.86 to −0.87); frequency is bounded, robust and needs no persistence threshold | If a distance is wanted, the persistence threshold (§4.4) needs its own justification |
 | Error cut | fixed 0.84 K / per-year percentile | **fixed 0.84 K** | §4.3: fixed is honest about weaker early years; p90–p99 leave the frequency at ρ = 1.00 | — |
 | Frequency window | 30 / 7 / other | **30** | §4.4: 7-day correlates 0.82–0.83 with 30 | Add a window via `frequency_days`; the stored mask makes it cheap |
+
+### 9.1 Decided while implementing
+
+**Frequency tolerance: a front within 12.5 km counts** (`frequency_radius_km`,
+a box in km on both axes). The prototype computed the frequency on 0.25°
+blocks, which absorbed the position noise. At the native 0.05°, an exact pixel
+hit is mostly that noise, since the analyses place a front to within tens of
+km (§2). Measured on two 30-day windows per variable against the block-level
+frequency the prototype validated:
+
+| Tolerance | Spearman ρ with the block frequency | Native pixels at zero |
+|---|---|---|
+| exact pixel | 0.987–0.997 | 69–70% |
+| **12.5 km** | 0.937–0.977 | 41–50% |
+| 25 km | 0.90–0.96 | 34–43% |
+
+The exact pixel keeps the ranking but leaves more than two thirds of the ocean
+at zero, so the layer is mostly a floor. 12.5 km is about a quarter of the
+~50 km effective resolution and half a 0.25° cell. It halves the zeros and
+keeps ρ above 0.93. At 25 km the gain in zeros is small and the loss in ρ is
+not.
+
+**The mask is float32 (1/0/NaN), not uint8 with a 255 fill.** A per-variable
+integer encoding has to be restated on every append, and the append path
+applies none. At about 2.5% ones, float32 compresses to little either way.
+
+**Compile drops the mask.** Compile carries every store variable into h2ds, so
+`native_only_vars` names `{name}_front` and the compiler removes it after the
+var_key's processor. Validation refuses a config whose `compiled_vars` lists it.
+
+**History.** A converted dataset's first days are seeded from the store's own
+masks for the 29 days before it. After a period is written, the frequency of
+the next 29 stored days is recomputed and written back. This keeps a REP
+rewrite of NRT days consistent with a run from scratch (pinned by
+`tests/test_front_layers.py::TestHistory`).
+
+**Transition.** Once a deployed `compiled_vars` lists the new outputs, native
+extraction over years without them raises. Enable `front_layers` in the
+deployed config together with the backfill (phase 4), not before. The repo
+config declares them already.
+
+**Real-data smoke test** (June–July 2024, the repo config):
+
+| | Fronts, % of assessed pixels | Not assessed | grad p50 | Time |
+|---|---|---|---|---|
+| sst | 3.70% | 5.2% | 0.0080 K km⁻¹ | 93 s |
+| chl | 3.83% | — | 0.0023 km⁻¹ | 120 s |
+
+These are consistent with the prototype.
 
 ## 10. Reproducibility
 

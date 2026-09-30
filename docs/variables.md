@@ -8,10 +8,10 @@ All variables configured in `config.yaml`. Each key maps to one data stream with
 
 | Key | Source | Provider | NRT | Output variables |
 |---|---|---|---|---|
-| `sst` | CMEMS | Satellite L4 | yes | `analysed_sst`, `analysis_error`, `sst_fdist` |
+| `sst` | CMEMS | Satellite L4 | yes | `sst`, `analysis_error`, `sst_std`, `sst_fdist`, `sst_grad`, `sst_ffreq30` |
 | `ssh` | CMEMS | Satellite L4 | yes | `adt`, `sla`, `ugos`, `vgos`, `gke` |
 | `mld` | CMEMS | Model (NEMO) | no | `mld` |
-| `chl` | CMEMS | Satellite L4 | no | `chl`, `chl_fdist` |
+| `chl` | CMEMS | Satellite L4 | no | `chl`, `chl_fdist`, `chl_grad`, `chl_ffreq30` |
 | `seapodym` | CMEMS | Model (SEAPODYM) | no | `mnkc_epi`, `mnkc_umeso`, `mnkc_mumeso`, `npp`, `zooc`, `zeu` |
 | `o2` | CMEMS | Model (PISCES) | no | `o2_0`, `o2_100`, `o2_500`, `o2_1000` |
 | `fsle` | AVISO | FTP | yes | `fsle_max` |
