@@ -7,7 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Changed
+## [0.9.0] - 2026-09-30
+
+### Breaking
 
 - **Breaking (install):** the plotting stack (cartopy, matplotlib, plotly,
   statsmodels, ipython) moved from the core dependencies to a `viz` extra. A
@@ -18,15 +20,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   replaced by named `layers` (`15s`, `60s`, `0.25deg` → file name) plus
   `compile_layer` and `extract_layer`. An old config fails at load. Config is
   now the only place a layer's file name lives.
-- Bathy extraction reads one layer for points and geometries alike, chosen by
-  `extract_layer` or `Extractor(bathy_layer=...)`, instead of the input type
-  deciding the grid (0.25° for csv, 15s for shp).
-- A geometry's `bathy_std` is now the polygon mean of the layer's stored std,
-  the same estimator as for points and as `sst_std`/`adt_std`, rather than a
-  std of depth within the polygon.
+- **Breaking (values): compile regrids by resolution.** Every variable used to be
+  put on the h2ds grid by point interpolation, which, onto a coarser grid, reads
+  the 2×2 source cells around each target centre and ignores the rest (4 of 25
+  for sst at 0.25°). A variable finer than the grid is now the area-weighted mean
+  of every source cell in the target cell, skipping NaN, so coastal cells keep a
+  value; same-resolution and coarser variables stay linear. Values in h2ds change
+  on recompile. `regrid:` per variable overrides the method (`nearest` for the
+  eddy identity columns). See `docs/api/compiler.md#regridding`.
+- **Breaking (API/config): the compile grid is declared in config.** `cells_per_degree`
+  and `values_at` on the `h2ds` entry replace `Compiler.run(dx=..., dy=...)`, which
+  is gone; the eddy rasterisation reads the same keys. A store holding another
+  grid (or other depth levels) is refused rather than unioned with.
+- **Breaking (values): distances are measured on the sphere.**
+  `haversine_min_distance_kdtree` indexed (lat, lon) as a plane, so a degree of
+  longitude counted as 111 km everywhere: east-west distances were overstated by
+  1/cos(lat) (2× at 60°N). Eddy and front distances computed after this release
+  differ from stored ones; stores are corrected by recomputing (see Upgrade notes).
+- **Breaking (config): BOA front layers are declared in config.** The thresholds
+  moved from `fronts.py` into `boa_fronts` (keyed by output name, threshold in
+  the source's units). A config without `boa_fronts` writes no front layers; the
+  shipped config declares `sst_fdist` and `chl_fdist` as before.
 
 ### Added
 
+- **Per-variable depth levels:** `depth_levels: {thetao: [0, 50]}` publishes
+  `thetao_0`, `thetao_50`, so a store may mix 2-D and 3-D variables with their own
+  levels; extraction can choose levels per request
+  (`var_dict={"dyn_rep": {"thetao": [0, 50]}}`). The older `compile_depth_slices` /
+  `extract_depth_slices` lists still work.
+- **`derived_vars`:** convert-time rolling std and kinetic energy declared in
+  config by their inputs (`sst_std`, `adt_std`, `sla_std`, `gke` moved there from
+  the processors), optionally at chosen depths only.
 - Every command logs, before it does anything, which project root it resolved
   and how (`H2MARE_ROOT`, a config.yaml above the working directory, or the
   library fallback), whether a config.yaml is there, and the `STORE_ROOT`. A
@@ -47,7 +72,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (AVISO FTP downloads, `parquet2csv`, geometry extraction) are deliberately
   left alone: they wait on the network or the disk, where more threads than
   cores is the point.
-
 - `source_renames` in a variable's config entry maps its source variable names
   onto the names it publishes (`{analysed_sst: sst}`), closing the loop between
   `source_vars` and `compiled_vars` in the one place both are declared. Applied
@@ -57,9 +81,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `boa_fronts` also writes, two sources onto one name, a self-map, and a
   `compiled_vars` still listing a renamed-away source; a rename naming a
   variable the raw files do not hold fails the convert by name.
+- `scripts/recompute_fronts.py` rewrites the front-distance layers from the
+  stored field, without the raw files; `scripts/rechunk_store.py` rewrites a
+  store in the chunk layout the pipeline would choose now.
+- Convert, compile, parquet and CMEMS subset downloads log chunk progress (i/n).
 
 ### Changed
 
+- Bathy extraction reads one layer for points and geometries alike, chosen by
+  `extract_layer` or `Extractor(bathy_layer=...)`, instead of the input type
+  deciding the grid (0.25° for csv, 15s for shp).
+- A geometry's `bathy_std` is now the polygon mean of the layer's stored std,
+  the same estimator as for points and as `sst_std`/`adt_std`, rather than a
+  std of depth within the polygon.
 - The `sst`, `chl` and `mld` renames moved out of their convert-time processors
   into `source_renames` in config. `process_mld` only renamed `mlotst`, so it
   and its registry entry are gone — a variable needing nothing but a rename now
@@ -67,7 +101,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   nothing needs re-converting. A caller reusing a registered processor through
   `convert_netcdf_to_zarr` must do the rename itself, as that path is
   config-free.
-
 - `scripts/bathymetry.py` builds a 60s layer next to the 15s one, both as tiled
   Zarr (`etopo2022_<res>_…_bathy-std.zarr`) holding `bathy` and a 3×3 rolling
   `bathy_std` (the entry's `derived_vars`), with the ETOPO source's global and
@@ -81,6 +114,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   imports it before publishing. Its actions are pinned to commit SHAs, and only
   the publish job may mint a PyPI token. CI's branch-name check reads the branch
   through the environment rather than pasting it into the script.
+- Stores keep one depth level per chunk, so reading a level no longer
+  decompresses them all (a 23-level store's surface read: 0.44 s → 0.04 s).
+- The eddies convert works a month at a time through a staging store, loads the
+  raw atlas once, and runs one nearest-eddy search per day: memory is bounded by a
+  month instead of a year (the old path ran out of memory), and a year converts in
+  ~330 s instead of ~430 s. Its grid is now 1/12° on grid lines (`cells_per_degree:
+  12`).
+- The conservative regrid applies its weights sparsely (13× faster than a dense
+  contraction, bit-identical values).
 
 ### Fixed
 
@@ -108,9 +150,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (1998–2002) carry it on disk. It is NaN now — `haversine_min_distance_kdtree`
   returns NaN for an empty target set — and a distance is also NaN wherever the
   source field itself is, rather than wherever `global_land_mask` calls land.
-- **Stores on disk still hold the old layers.** Rewrite them with
-  `scripts/recompute_fronts.py sst chl --apply` (no raw files needed), then
-  `compile` and `parquet` over the same window.
 - **An eddy day that failed to rasterise was dropped silently.** The worker
   logged the exception and returned nothing, and the period was written one
   day short, logged as SUCCESS for its full length, with provenance spanning
@@ -140,6 +179,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Compile now refuses a climatology that does not cover the data's grid, naming
   the file, and puts one that does onto the data's own labels. The shipped
   climatologies match the shipped grid exactly, so nothing changes there.
+- Front detection workers start by spawn rather than fork, which deadlocked on
+  Linux (CI hung for six hours).
+- Staging directories left by an interrupted eddies run are cleared.
+- A store carrying a `missing_value` that contradicts its `_FillValue` (chl's
+  inherited -999) can be rewritten.
+- The REP-updated check, the compiler's catalogs and the Extractor's native reads
+  use the caller's own `app_config` and store root, not the process-wide ones, so
+  a project reading another project's var_keys works.
+- `ZarrCatalog.open_dataset(dates=...)` accepts a `DatetimeIndex`, `Series` or
+  array; compile opens Zarr bathy layers.
+- `plot_records_on_field` plots depth-sliced columns (`thetao_0`) from the native
+  store, so it works in a project that never compiles.
+- Downloaders say when a requested range is outside the provider's coverage,
+  instead of "already up to date".
+- copernicusmarine log lines are no longer printed twice.
+- The `compiled_vars` check prints the corrected list when depth columns
+  disagree.
+
+### Upgrade notes
+
+- Install `h2mare[viz]` if you plot.
+- Move the bathy entry to `layers` / `compile_layer` / `extract_layer`
+  (`docs/configuration.md#the-bathy-key`); an old config fails at load.
+- Recompile h2ds (`uv run h2mare compile`) and refresh Parquet to pick up the new
+  regridding; values change, most near coasts and for fine-grid sources.
+- The front-distance layers on disk predate the coastline, empty-day and sphere
+  fixes. Rewrite them with `scripts/recompute_fronts.py sst chl --apply` (no raw
+  files needed), then compile and parquet. A replacement for the BOA layers is
+  designed in `plans/front-layers.md`.
+- An eddies store converted before the sphere fix holds planar distances;
+  re-convert it.
 
 ## [0.8.1] - 2026-09-14
 
