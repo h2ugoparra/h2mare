@@ -1,6 +1,6 @@
 # Front layers for species distribution models
 
-Status: design, nothing implemented. Two parameters are open (§9).
+Status: design, nothing implemented. Decisions settled 2026-09-30 (§9).
 Written 2026-09-30 against `dev` @ 855a0d0. Every number below comes from the
 scripts in [`front-layers/prototype/`](front-layers/prototype/README.md), run
 read-only against the deployed sst and chl stores.
@@ -24,15 +24,17 @@ that purpose, from a detector suited to the L4 products they come from.
 | Decision | Value | Evidence |
 |---|---|---|
 | sst smoothing σ | 5 km | §4.1: no noise floor; ±50% leaves the published layers at ρ ≥ 0.98 |
-| chl smoothing σ | **7 km (open)** | §4.1: removes the noise floor below 30 km; ±50% moves the layers (ρ 0.91–0.93) |
-| Thresholds | low = p75, high = **p90 (open)** of the smoothed gradient, as fixed physical values | §4.2: stable within ±3% over 2004–2024; p95 moves the layers (ρ 0.88–0.91) |
+| chl smoothing σ | **7 km** | §4.1: removes the noise floor below 30 km; ±50% moves the layers (ρ 0.91–0.93) |
+| Thresholds | low = p75, high = **p90** of the smoothed gradient, as fixed physical values | §4.2: stable within ±3% over 2004–2024; p95 moves the layers (ρ 0.88–0.91) |
 | sst | low 0.0155, high 0.0299 °C/km | 3-year mean percentiles |
 | log10 chl | low 0.0035, high 0.0070 per km | 3-year mean percentiles |
 | Low/high ratio | 2:1 | §4.2: 3:1 leaves the published layers at ρ ≥ 0.97 |
 | sst confidence cut | `analysis_error` > 0.84 K, fixed | §4.3: p90–p99 all give frequency ρ = 1.00 |
 | Frequency window | 30 days | §4.4 |
 
-The two open parameters are to be settled by testing variants in the SDMs (§9).
+The two sensitive parameters (high threshold, chl σ) were adopted at their
+recommended defaults without an SDM test; §9 records the decision and how to
+revisit it.
 
 ## 1. Background
 
@@ -230,12 +232,12 @@ A Gaussian of width σ keeps exp(−(2πσ/λ)²) of the power at wavelength λ:
   not optimised. §4.5 shows it does not need to be: ±50% leaves the published
   layers (gradient, frequency) at ρ ≥ 0.98; only the daily front fraction moves
   (ρ 0.90–0.92).
-- **chl, 7 km (1.5 cells): open.** Chosen to remove the noise floor below ~30 km
+- **chl, 7 km (1.5 cells), adopted (§9).** Chosen to remove the noise floor below ~30 km
   (88–99% of that power) while keeping at least half the power at 60 km. It is a
   trade-off, and §4.5 shows it matters: σ × 0.5 lets noise back in (front pixels
   nearly double; frequency ρ 0.91), and σ × 1.5 removes structure (frequency
-  ρ 0.93). The spectrum supports 6–9 km; §9 proposes testing 5 / 7 / 10 km in
-  the SDMs.
+  ρ 0.93). The spectrum supports 6–9 km. Testing 5 / 7 / 10 km in the SDMs was
+  proposed and skipped (§9); 7 km is the spectral choice.
 - **Correction during the work:** prototype v1 converted σ to cells using the
   latitude spacing on both axes, which made it narrower than intended east–west
   at high latitude. v2 (above) is what the implementation uses.
@@ -281,9 +283,10 @@ The spread across 20 years is ±3% for sst and ±2.5% for chl.
 4. **Ratio 2:1** (p75/p90 ≈ 0.52 for sst, 0.50 for chl), the low end of the
    2:1–3:1 range usually recommended for Canny. §4.5 shows 3:1 leaves the
    published layers at ρ ≥ 0.97, so the choice barely matters; 2:1 keeps fronts a little more connected.
-5. **The high threshold is open (§9).** It decides *which* fronts count: many
-   moderate fronts (p85) or only the major ones (p95). That is an ecological
-   question the data cannot answer.
+5. **The high threshold is the sensitive one.** It decides *which* fronts count:
+   many moderate fronts (p85) or only the major ones (p95). That is an
+   ecological question the data cannot answer; p90 was adopted as the default
+   without an SDM test (§9).
 
 **Prototype v1** used 2024 alone, with the v1 σ: sst 0.0157 / 0.0312 °C/km, chl
 0.0037 / 0.0076 per km. It produced the full-year results in §5.
@@ -667,8 +670,8 @@ arrive in all three places.
 ## 8. Phases
 
 1. **This plan** (docs PR).
-2. **SDM test of the open parameters (§9):** generate full-year 2024 layers for
-   the variants into a scratch store, for the user to fit.
+2. ~~**SDM test of the sensitive parameters:**~~ skipped; the defaults were
+   adopted (§9). Still available later if SDM results call for it.
 3. **Implementation PR:** detector module, config spec and validation, convert
    step with seeding and the rewrite rule, CF attrs, tests, docs
    (`docs/configuration.md`, `docs/variables.md`, a CHANGELOG entry).
@@ -676,15 +679,21 @@ arrive in all three places.
    compute).
 5. **Retire BOA** (§6.7) in a later release.
 
-## 9. Open decisions
+## 9. Decisions
 
-| Decision | Options | Recommendation | How to decide |
-|---|---|---|---|
-| High threshold | p85 / **p90** / p95 | p90 as default | Fit SDMs on 2024 layers for each; pick by cross-validated performance (AUC/TSS). It decides *which* fronts count, which is ecological |
-| chl σ | 5 / **7** / 10 km | 7 km (spectrum) | Same SDM test; σ matters for chl (§4.5) |
-| Frequency vs distance to persistent fronts | **ffreq30** / fdist_persist | ffreq30 | Same cluster (ρ −0.86 to −0.87). Choose by interpretability; if distance, the persistence threshold (§4.4) needs its own justification |
-| Error cut | **fixed 0.84 K** / per-year percentile | fixed | §4.3: fixed is honest about weaker early years |
-| Frequency window | **30** / 7 / other | 30 | Only if an SDM wants another scale; the stored mask makes adding one cheap |
+**Decided 2026-09-30: the recommended defaults are adopted without an SDM test.**
+Settling the two sensitive parameters ecologically (fitting SDMs on variant
+layers) was proposed and skipped. The defaults below are what gets built. Both
+stay in config, so if SDM results later point elsewhere, changing them costs a
+recompute of the front layers (a few hours per variable), not a redesign.
+
+| Decision | Options considered | Adopted | Basis | If revisited |
+|---|---|---|---|---|
+| High threshold | p85 / p90 / p95 | **p90** (sst 0.0299 °C/km, chl 0.0070 per km) | §4.2: the middle of the range; the sensitive parameter (p95: ρ 0.88–0.91) | Fit SDMs on 2024 layers for each; pick by cross-validated performance (AUC/TSS). It decides *which* fronts count, which is ecological |
+| chl σ | 5 / 7 / 10 km | **7 km** | §4.1: removes the noise floor below ~30 km, keeps ≥ half the power at 60 km | Same SDM test; σ matters for chl (§4.5) |
+| Frequency vs distance to persistent fronts | ffreq30 / fdist_persist | **ffreq30** | §5.3–5.4: same cluster (ρ −0.86 to −0.87); frequency is bounded, robust and needs no persistence threshold | If a distance is wanted, the persistence threshold (§4.4) needs its own justification |
+| Error cut | fixed 0.84 K / per-year percentile | **fixed 0.84 K** | §4.3: fixed is honest about weaker early years; p90–p99 leave the frequency at ρ = 1.00 | — |
+| Frequency window | 30 / 7 / other | **30** | §4.4: 7-day correlates 0.82–0.83 with 30 | Add a window via `frequency_days`; the stored mask makes it cheap |
 
 ## 10. Reproducibility
 
