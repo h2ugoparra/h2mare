@@ -14,6 +14,7 @@ SCRIPTS = Path(__file__).resolve().parent.parent / "scripts"
 
 #: script -> the per-var_key function its main() loops over
 _WORKERS = {
+    "backfill_front_layers": "run",
     "recompute_fronts": "run",
     "rechunk_store": "run",
     "repair_axis_drift": "repair",
