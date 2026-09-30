@@ -1,10 +1,50 @@
 """Shared fixtures for h2mare test suite."""
 
+import os
 from datetime import date
+from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import polars as pl
 import pytest
+
+from h2mare.config import get_settings
+
+REPO = Path(__file__).resolve().parent.parent
+
+
+# ---------------------------------------------------------------------------
+# The config under test
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="session", autouse=True)
+def repo_config() -> "object":
+    """
+    Run the suite against the repo's own config.yaml, whatever the machine has.
+
+    ``H2MARE_ROOT`` is a user-wide setting on a developer box — pointed at
+    whichever project is being worked on — and it outranks the repo's .env,
+    because python-dotenv does not override an existing variable. Pointed at
+    another project it takes the whole suite with it: seven tests failed
+    against a config that simply does not define the var_keys they name, which
+    says something about the machine and nothing about the code.
+
+    CI has no ``H2MARE_ROOT`` and finds the repo by its config.yaml. This makes
+    a local run agree with it, and is why ``get_settings`` documents its cache
+    as clearable.
+    """
+    previous = os.environ.get("H2MARE_ROOT")
+    os.environ["H2MARE_ROOT"] = str(REPO)
+    get_settings.cache_clear()
+    yield
+    if previous is None:
+        os.environ.pop("H2MARE_ROOT", None)
+    else:
+        os.environ["H2MARE_ROOT"] = previous
+    get_settings.cache_clear()
+
 
 # ---------------------------------------------------------------------------
 # DataFrame factories
@@ -94,3 +134,51 @@ def multivar_indexer(parquet_dir, multivar_df):
     idx = ParquetIndexer(parquet_dir)
     idx.add_data(multivar_df)
     return idx
+
+
+# ---------------------------------------------------------------------------
+# Front detection
+# ---------------------------------------------------------------------------
+
+
+class SerialPool:
+    """
+    Stand-in for ``mp.Pool`` that runs in the calling process.
+
+    Detection is the same code either way, and a real pool costs a process
+    spawn per test on Windows; ``test_fronts.py::TestRealPool`` keeps that path
+    honest.
+    """
+
+    def __init__(self, processes=None):
+        self.processes = processes
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def map(self, fn, iterable):
+        return [fn(x) for x in iterable]
+
+
+@pytest.fixture
+def interim_dir(tmp_path, monkeypatch) -> Path:
+    """
+    Point INTERIM_DIR at tmp_path and return it.
+
+    Front detection stages there, so without this a test would write into
+    whatever store the machine has deployed.
+    """
+    settings = SimpleNamespace(INTERIM_DIR=tmp_path / "interim")
+    monkeypatch.setattr("h2mare.processing.core.fronts.get_settings", lambda: settings)
+    return settings.INTERIM_DIR
+
+
+@pytest.fixture
+def serial_pool(monkeypatch):
+    """Run front detection in-process rather than across a pool."""
+    monkeypatch.setattr(
+        "h2mare.processing.core.fronts._pool", lambda n_workers: SerialPool(n_workers)
+    )

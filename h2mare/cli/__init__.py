@@ -4,6 +4,7 @@ import sys
 import warnings
 
 import typer
+from loguru import logger
 
 from h2mare.cli.audit import audit
 from h2mare.cli.catalog import catalog
@@ -12,6 +13,7 @@ from h2mare.cli.main import run
 from h2mare.cli.nc2zarr import convert
 from h2mare.cli.parquet2zarr import parquet2zarr
 from h2mare.cli.zarr2parquet import parquet
+from h2mare.config import get_settings
 from h2mare.utils.logging import configure_logging
 
 app = typer.Typer(
@@ -84,10 +86,14 @@ def _silence_known_benign_warnings() -> None:
 
 @app.callback()
 def _configure() -> None:
-    """Configure the console and logging once for every h2mare command."""
+    """
+    Configure the console and logging once for every h2mare command, and say
+    which project, config and store root the command resolved.
+    """
     _use_utf8_console()
     _silence_known_benign_warnings()
     configure_logging()
+    logger.info(get_settings().describe_resolution())
 
 
 app.command("run", help="Download and convert data for one or more variable keys.")(run)

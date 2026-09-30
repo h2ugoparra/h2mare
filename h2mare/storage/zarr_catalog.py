@@ -10,7 +10,7 @@ paths and composes the two halves it delegates to: a
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Literal, Optional, Sequence, Union
+from typing import Any, Literal, Optional, Sequence
 
 import numpy as np
 import pandas as pd
@@ -21,7 +21,7 @@ from h2mare.config import AppConfig, get_settings
 from h2mare.models import TimeStep
 from h2mare.storage.zarr_index import ZarrIndex, _variables_list
 from h2mare.storage.zarr_reader import ZarrReader
-from h2mare.types import BBox, DateLike, DateRange, FilePeriod
+from h2mare.types import BBox, DateLike, DateRange, DatesLike, FilePeriod
 from h2mare.utils.datetime_utils import end_of_day
 from h2mare.utils.labels import create_label_from_dataset
 from h2mare.utils.paths import resolve_store_path
@@ -203,9 +203,7 @@ class ZarrCatalog:
         """Return a summary of added / removed / modified zarr files."""
         return self._index.get_change_summary()
 
-    def map_dates_to_paths(
-        self, dates: Union[DateLike, Sequence[DateLike]]
-    ) -> dict[str, list[pd.Timestamp]]:
+    def map_dates_to_paths(self, dates: DatesLike) -> dict[str, list[pd.Timestamp]]:
         """Map zarr file paths to their corresponding dates."""
         return self._index.map_dates_to_paths(dates)
 
@@ -219,7 +217,7 @@ class ZarrCatalog:
 
     def open_dataset(
         self,
-        dates: DateLike | Sequence[DateLike] | None = None,
+        dates: DatesLike | None = None,
         start_date: DateLike | None = None,
         end_date: DateLike | None = None,
         bbox: BBox | Sequence[float] | None = None,

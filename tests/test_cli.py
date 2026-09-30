@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import msgspec
 import pandas as pd
+from loguru import logger
 from typer.testing import CliRunner
 
 from h2mare.cli import _configure, _use_utf8_console
@@ -293,7 +294,7 @@ class TestConsoleEncoding:
             ),
             "variables": {"sst"},
             "total_timesteps": 10444,
-            "store_root": "D:/GlobalData/CMEMS_SST",
+            "store_root": "D:/data/CMEMS_SST",
             "catalog_path": "sst_zarr_catalog.parquet",
             "last_scanned": pd.Timestamp("2026-08-10"),
         }
@@ -325,6 +326,17 @@ class TestConsoleEncoding:
         monkeypatch.setattr("h2mare.cli.configure_logging", lambda *a, **k: None)
         _configure()
         assert calls == ["console"]
+
+    def test_every_command_says_where_it_resolved(self, monkeypatch):
+        """The project root, config and STORE_ROOT, before any work begins."""
+        monkeypatch.setattr("h2mare.cli.configure_logging", lambda *a, **k: None)
+        messages: list[str] = []
+        sink = logger.add(messages.append, level="INFO", format="{message}")
+        try:
+            _configure()
+        finally:
+            logger.remove(sink)
+        assert any(m.startswith("Project root ") for m in messages)
 
 
 # ---------------------------------------------------------------------------

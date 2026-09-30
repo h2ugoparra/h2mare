@@ -18,7 +18,7 @@ from loguru import logger
 
 from h2mare.models import StoreDtype, TimeStep
 from h2mare.storage.zarr_index import ZarrIndex
-from h2mare.types import BBox, DateLike, DateRange
+from h2mare.types import BBox, DateLike, DateRange, DatesLike
 from h2mare.utils.datetime_utils import end_of_day, normalize_dates
 from h2mare.utils.spatial import sel_padded_bbox
 
@@ -128,7 +128,7 @@ class ZarrReader:
 
     def open_dataset(
         self,
-        dates: DateLike | Sequence[DateLike] | None = None,
+        dates: DatesLike | None = None,
         start_date: DateLike | None = None,
         end_date: DateLike | None = None,
         bbox: BBox | Sequence[float] | None = None,
@@ -207,7 +207,7 @@ class ZarrReader:
 
     def _open_sparse_dates(
         self,
-        dates: DateLike | Sequence[DateLike],
+        dates: DatesLike,
         bbox: BBox | None,
         variables: str | Sequence[str] | None,
         chunks: dict | str | None,
@@ -647,10 +647,14 @@ class ZarrReader:
             bbox: [xmin, ymin, xmax, ymax]
 
         Returns:
-            Spatially subset dataset
+            Spatially subset dataset. A dataset without lat/lon (or y/x) cannot
+            be subset and is returned whole, with a warning.
 
         Raises:
-            ValueError: If bbox format is invalid
+            ValueError: If the selection itself fails — an axis that is not
+                monotonic, say. That used to be logged and the *unclipped*
+                dataset returned, so a caller asking for a region got the whole
+                domain as though it were the region.
         """
         # Determine coordinate names (support lat/lon or y/x)
         lat_coord = "lat" if "lat" in ds.coords else "y"
@@ -669,5 +673,6 @@ class ZarrReader:
                 ds, bbox.to_tuple(), lat_coord=lat_coord, lon_coord=lon_coord
             )
         except Exception as e:
-            logger.error(f"Failed to apply bbox: {e}")
-            return ds
+            raise ValueError(
+                f"[{self.var_key}] could not subset to {bbox}: {type(e).__name__}: {e}"
+            ) from e

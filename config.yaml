@@ -3,9 +3,10 @@
 # -----------------------
 variables:
   sst:
-    local_folder: CMEMS_SST
-    archive_raw: false
+    local_folder: CMEMS_SST_010_011
     source_vars: [analysed_sst, analysis_error]
+    source_renames:
+      analysed_sst: sst
     compiled_vars: [sst, analysis_error, sst_std, sst_fdist]
     dataset_id_rep: METOFFICE-GLO-SST-L4-REP-OBS-SST
     dataset_id_nrt: METOFFICE-GLO-SST-L4-NRT-OBS-SST-V2
@@ -14,10 +15,14 @@ variables:
     subset: true
     filename_date_range: true
     bbox: [-80, 0, 10, 70]
+    derived_vars:
+      sst_std: {op: rolling_std, source: sst, window: 3}
+    # Belkin & O'Reilly (2009): threshold in the source's units, here °C.
+    boa_fronts:
+      sst_fdist: {source: sst, threshold: 0.4}
 
   ssh:
-    local_folder: CMEMS_SSH
-    archive_raw: false
+    local_folder: CMEMS_PHY_008_047
     source_vars: [adt, sla, ugos, vgos]
     compiled_vars: [adt, sla, ugos, vgos, adt_std, sla_std, gke]
     dataset_id_rep: cmems_obs-sl_glo_phy-ssh_my_allsat-l4-duacs-0.125deg_P1D
@@ -27,11 +32,16 @@ variables:
     subset: true
     filename_date_range: true
     bbox: [-180, -90, 180, 90]
+    derived_vars:
+      adt_std: {op: rolling_std, source: adt, window: 3}
+      sla_std: {op: rolling_std, source: sla, window: 3}
+      gke: {op: kinetic_energy, source: [ugos, vgos]}
 
   mld:
-    local_folder: CMEMS_MLD
-    archive_raw: false
+    local_folder: CMEMS_PHY_001_030/mld
     source_vars: [mlotst]
+    source_renames:
+      mlotst: mld
     compiled_vars: [mld]
     dataset_id_rep: cmems_mod_glo_phy_my_0.083deg_P1D-m
     source: cmems
@@ -41,8 +51,7 @@ variables:
     bbox: [-80, 0, 10, 70]
 
   thetao:
-    local_folder: CMEMS_Thetao
-    archive_raw: false
+    local_folder: CMEMS_PHY_001_030/thetao
     source_vars: [thetao]
     compiled_vars: [thetao_100, thetao_200, thetao_500, thetao_1000]
     dataset_id_rep: cmems_mod_glo_phy_my_0.083deg_P1D-m
@@ -55,6 +64,20 @@ variables:
     compile_depth_slices: [100, 200, 500, 1000]
 
   chl:
+    local_folder: CMEMS_BGC_009_104
+    source_vars: [CHL]
+    source_renames:
+      CHL: chl
+    compiled_vars: [chl, chl_fdist]
+    dataset_id_rep: cmems_obs-oc_glo_bgc-plankton_my_l4-gapfree-multi-4km_P1D
+    source: cmems
+    pattern: (\d{4}-\d{2}-\d{2})(?:-(\d{4}-\d{2}-\d{2}))?
+    subset: true
+    filename_date_range: true
+    bbox: [-80, 0, 10, 70]
+    # Belkin & O'Reilly (2009): threshold in the source's units, here mg.m-3.
+    boa_fronts:
+      chl_fdist: {source: chl, threshold: 0.06}
     # Confirmed empty at source, not lost in transit: re-downloading each
     # of these from CMEMS returns a normal 14.6 MB file in which all
     # 3,628,800 pixels are fill. Neighbouring days come back ~60% finite
@@ -69,20 +92,10 @@ variables:
       - '2000-11-17'
       - '2001-11-18'
       - '2002-12-31'
-    local_folder: CMEMS_Chla_4km_daily
-    archive_raw: false
-    source_vars: [CHL]
-    compiled_vars: [chl, chl_fdist]
-    dataset_id_rep: cmems_obs-oc_glo_bgc-plankton_my_l4-gapfree-multi-4km_P1D
-    source: cmems
-    pattern: (\d{4}-\d{2}-\d{2})(?:-(\d{4}-\d{2}-\d{2}))?
-    subset: true
-    filename_date_range: true
-    bbox: [-80, 0, 10, 70]
+    
 
   seapodym:
-    local_folder: CMEMS_2nd_productivity/mnkc
-    archive_raw: false
+    local_folder: CMEMS_BGC_001_033/mnkc
     source_vars: [mnkc_epi, mnkc_umeso, mnkc_mumeso, npp, zooc, zeu, mnkc_lmeso, mnkc_hmlmeso, mnkc_mlmeso]
     compiled_vars: [mnkc_epi, mnkc_umeso, mnkc_mumeso, npp, zooc, zeu,mnkc_lmeso, mnkc_hmlmeso, mnkc_mlmeso]
     dataset_id_rep: cmems_mod_glo_bgc_my_0.083deg-lmtl_P1D-i
@@ -92,8 +105,7 @@ variables:
     bbox: [-180, -80, 180, 90]
 
   o2:
-    local_folder: CMEMS_Biochemical
-    archive_raw: false
+    local_folder: CMEMS_BGC_001_029
     source_vars: [o2]
     compiled_vars: [o2_0, o2_100, o2_500, o2_1000]
     dataset_id_rep: cmems_mod_glo_bgc_my_0.25deg_P1D-m
@@ -106,11 +118,6 @@ variables:
     compile_depth_slices: [0, 100, 500, 1000]
     
   fsle:
-    # AVISO never published this day: the remote NRT listing jumps
-    # nrt_..._20250601_... -> nrt_..._20250603_..., so there is no file to
-    # fetch and no way to fill the gap. Recorded so the checks stop
-    # reporting an unfixable day on every run.
-    known_gaps: ['2025-06-02']
     local_folder: AVISO_FSLE
     archive_raw: true
     source_vars: [fsle_max]
@@ -121,9 +128,15 @@ variables:
     pattern: _(\d{8})_*
     bbox: [-80, 0, 10, 70]
     rename_lonlat: true
+    # AVISO never published this day: the remote NRT listing jumps
+    # nrt_..._20250601_... -> nrt_..._20250603_..., so there is no file to
+    # fetch and no way to fill the gap. Recorded so the checks stop
+    # reporting an unfixable day on every run.
+    known_gaps: ['2025-06-02']
+  
 
   eddies:
-    local_folder: AVISO_Eddy_Trajectory
+    local_folder: AVISO_EDDIES/META3.2
     archive_raw: true
     source_vars: [
       time,
@@ -148,10 +161,35 @@ variables:
     bbox: [-80, 0, 10, 70]
     trajectory_format: true
     rename_lonlat: true
+    # The atlas gives eddy centres as continuous positions, so this grid is a
+    # sampling choice, not a source resolution. 12 (1/12°) matches the finest
+    # grid h2ds would be compiled to, so the rasterisation never has to be
+    # interpolated upwards, and keeps the distance field within ~19% of a small
+    # eddy's radius. The store on disk is still the older 0.1° one, and convert
+    # refuses to write into it on another grid: move its *.zarr files aside and
+    # convert every period to regenerate it.
+    cells_per_degree: 12
+    values_at: grid_line
+    # Each of these holds a property of whichever eddy is nearest, so it is
+    # constant over that eddy's neighbourhood and a mean across a boundary
+    # describes neither eddy — a track ID averaged with its neighbour's names
+    # an eddy that does not exist. dist_km and normdist are left out on
+    # purpose: those two are continuous fields and do average.
+    regrid:
+      ac_track: nearest
+      ac_ndays: nearest
+      ac_amp: nearest
+      ac_speed: nearest
+      ac_speedrad_km: nearest
+      c_track: nearest
+      c_ndays: nearest
+      c_amp: nearest
+      c_speed: nearest
+      c_speedrad_km: nearest
+    n_workers: 4
   
   atm-instante:
-    local_folder: CDS_Atm_instante
-    archive_raw: false
+    local_folder: ERA5_SINGLE_LEVELS/instant
     time_step: hourly
     store_dtype: int16
     source_vars: [
@@ -168,8 +206,7 @@ variables:
     bbox: [-80, 0, 10, 70]
 
   atm-accum-avg:
-    local_folder: CDS_Atm_accum
-    archive_raw: false
+    local_folder: ERA5_SINGLE_LEVELS/accum
     time_step: hourly
     store_dtype: int16
     source_vars: [
@@ -190,8 +227,7 @@ variables:
     bbox: [-80, 0, 10, 70]
 
   radiation:
-    local_folder: CDS_Radiation
-    archive_raw: false
+    local_folder: ERA5_SINGLE_LEVELS/radiation
     time_step: hourly
     store_dtype: int16
     source_vars: [
@@ -208,8 +244,7 @@ variables:
     bbox: [-80, 0, 10, 70]
 
   waves:
-    local_folder: CDS_Waves
-    archive_raw: false
+    local_folder: ERA5_SINGLE_LEVELS/waves
     time_step: hourly
     store_dtype: int16  
     source_vars: [
@@ -224,19 +259,27 @@ variables:
     bbox: [-80, 0, 10, 70]
 
   bathy:
-    local_folder: ETOPO_Topography
-    archive_raw: false
+    local_folder: ETOPO/2022
     source_vars: [z]
     compiled_vars: [bathy, bathy_std]
     dataset_id_rep: Etopo_v1
     source: noaa
     bbox: [-80, 0, 10, 70]
-    data_file: etopo_0.25deg_80W-10E-0N-70N_mean-std_surface.nc
-    data_file_hires: etopo_15s_80W-10E-0N-70N_surface.zarr
+    # Static layers under <store_root>/ETOPO_Topography/, written by
+    # scripts/bathymetry.py. 15s/60s: native grid, bathy + 3x3 rolling
+    # bathy_std. 0.25deg: mean + std of the 15s cells inside each cell.
+    layers:
+      15s: etopo2022_15s_80W-10E-0N-70N_bathy-std.zarr
+      60s: etopo2022_60s_80W-10E-0N-70N_bathy-std.zarr
+      0.25deg: etopo_0.25deg_80W-10E-0N-70N_mean-std_surface.nc
+    compile_layer: 0.25deg
+    extract_layer: 15s        # Extractor(bathy_layer=...) overrides per run
+    # Applied by scripts/bathymetry.py to the native (15s, 60s) layers only.
+    derived_vars:
+      bathy_std: {op: rolling_std, source: bathy, window: 3}
 
   moon:
     local_folder: MOON_Phases
-    archive_raw: false
     source_vars: [moon_phase]
     compiled_vars: [moon_phase]
     dataset_id_rep: ephem4.2
@@ -244,12 +287,18 @@ variables:
 
   h2ds:
     local_folder: h2ds
-    archive_raw: false
     source_vars: []
     compiled_vars: []
     dataset_id_rep: compiled-data-0.25deg-P1D
     source: h2mare
     bbox: [-80, 0, 10, 70]
+    # The compile grid: 4 cells per degree is 0.25°, cell-centred, which is what
+    # this store holds, with the values at cell centres. Changing either key
+    # needs a new store (its own local_folder and dataset_id_rep) — the write
+    # path refuses to merge one grid into another. See "Where the values sit"
+    # in docs/configuration.md.
+    cells_per_degree: 4
+    values_at: cell_center
 
 
 # Fixed root attributes for h2ds. Everything here is a choice - what the
@@ -289,7 +338,12 @@ global_attrs:
   geospatial_lat_units: degrees_north
   geospatial_lon_resolution: 0.25
   geospatial_lon_units: degrees_east
-  comment: For variables with less than 0.25 spatial resolution (all except o2), upscalling was done using xarray interp function with linear method
+  comment: >-
+    Each variable is put on the 0.25 degree grid by comparing its native resolution with the
+    target: a finer source is area-averaged over the source cells its target cell covers, and
+    a source at the same resolution or coarser is interpolated bilinearly. The eddy identifier
+    and attribute columns (track, ndays, amp, speed, speedrad_km) take the value of the nearest
+    source cell instead, because a mean of two eddies describes neither.
 
 variable_attrs:
 # SST
@@ -308,7 +362,7 @@ variable_attrs:
     short_name: SST Std
     long_name: Standard deviation of analysed sea surface temperature
     units: degree_C
-    comment: Derived from a rolling mean (3*3 cells) from sst native resolution.
+    comment: Derived from a rolling standard deviation (3*3 cells) from sst native resolution.
     product_id_rep: SST_GLO_SST_L4_REP_Observations_010_011
     product_id_nrt: SST_GLO_SST_L4_NRT_Observations_010_001
     dataset_id_rep: METOFFICE-GLO-SST-L4-REP-OBS-SST
@@ -350,7 +404,7 @@ variable_attrs:
     short_name: ADT Std
     long_name: Standard deviation of absolute dynamic topography
     units: m
-    comment: Derived from a rolling mean (3*3 cells) from adt native resolution.
+    comment: Derived from a rolling standard deviation (3*3 cells) from adt native resolution.
     product_id_rep: SEALEVEL_GLO_PHY_L4_MY_008_047
     product_id_nrt: SEALEVEL_GLO_PHY_L4_NRT_008_046
     dataset_id_rep: cmems_obs-sl_glo_phy-ssh_my_allsat-l4-duacs-0.125deg_P1D
@@ -371,7 +425,7 @@ variable_attrs:
     short_name: SLA Std
     long_name: Standard deviation of sea level anomaly
     units: m
-    comment: Derived from a rolling mean (3*3 cells) from sla native resolution.
+    comment: Derived from a rolling standard deviation (3*3 cells) from sla native resolution.
     product_id_rep: SEALEVEL_GLO_PHY_L4_MY_008_047
     product_id_nrt: SEALEVEL_GLO_PHY_L4_NRT_008_046
     dataset_id_rep: cmems_obs-sl_glo_phy-ssh_my_allsat-l4-duacs-0.125deg_P1D
@@ -1055,6 +1109,16 @@ native_attr_overrides:
       cell_methods: null  # hourly instantaneous
     mdts:
       cell_methods: null
+
+  # The native layers (15s, 60s) written by scripts/bathymetry.py; the shared
+  # table above describes the 0.25deg layer compiled into h2ds.
+  bathy:
+    bathy:
+      comment: ETOPO 2022 v1 surface elevation on its native grid (15 or 60 arc-sec, see product_id), subset to the bathy bbox.
+        Height above the geoid, positive up, so sea floor values are negative.
+    bathy_std:
+      comment: Standard deviation of bathy over a 3x3 window of native cells centred on each cell, indicating how rough or
+        steep the terrain is. Edge cells use the part of the window that holds data.
  
  
 

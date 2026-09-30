@@ -15,7 +15,7 @@ import xarray as xr
 from loguru import logger
 
 from h2mare.config import AppConfig, get_settings
-from h2mare.models import SYSTEM_VAR_KEYS
+from h2mare.models import SYSTEM_VAR_KEYS, depth_levels_for
 from h2mare.storage.coverage import (
     resolve_date_range,
     split_time_range,
@@ -27,7 +27,11 @@ from h2mare.storage.provenance import (
 )
 from h2mare.storage.recovery import recover_zarr_store
 from h2mare.storage.storage import write_append_zarr
-from h2mare.storage.xarray_helpers import apply_cf_attrs, chunk_dataset
+from h2mare.storage.xarray_helpers import (
+    apply_cf_attrs,
+    check_grid_compatible,
+    chunk_dataset,
+)
 from h2mare.storage.zarr_catalog import ZarrCatalog
 from h2mare.types import BBox, DateLike, DateRange, FilePeriod
 from h2mare.utils.datetime_utils import normalize_date
@@ -35,10 +39,9 @@ from h2mare.utils.paths import store_root_for
 from h2mare.utils.spatial import GridBuilder
 from h2mare.validators import validate_file_period, validate_var_key
 
-# Output grid resolution in degrees — matches the standard CMEMS/Copernicus
-# 0.25° daily grid used across all compiled h2ds variables.
-DX = 0.25
-DY = 0.25
+#: Grid used when the compiled var_key's config entry declares none: 4 cells
+#: per degree (0.25°), cell-centred. What every existing h2ds store is on.
+DEFAULT_CELLS_PER_DEGREE = 4
 
 # How far back an incremental compile looks for a null day it could refill.
 # The check reads values, so it has to be bounded or every compile would walk
@@ -89,9 +92,11 @@ class Compiler:
     """
     Merges the per-variable Zarr stores into the compiled product (``h2ds``).
 
-    Each variable is read from its own native store, interpolated onto the
-    common 0.25° daily grid, and merged into one dataset written per period
-    (a file per year by default). What a given var_key contributes is decided
+    Each variable is read from its own native store, put on the daily grid the
+    ``h2ds`` config entry declares (``cells_per_degree``, ``values_at``) by
+    ``utils.spatial.regrid_to`` — an area-weighted mean where the store is
+    finer, linear interpolation where it is not — and merged into one dataset
+    written per period (a file per year by default). What a given var_key contributes is decided
     by ``compiler_registry.COMPILE_PROCESSORS``; anything unregistered goes
     through ``compile_default``.
 
@@ -110,13 +115,15 @@ class Compiler:
         date_format: Literal["year", "date", "yearmonth"] = "year",
     ):
         """
-        Class function to compile zarr files from each var_key to a pre defined spatial res (set at 0.25) grid with daily interpolated data.
+        Compile each var_key's store onto the grid ``var_key``'s config entry declares.
 
         Args:
             var_key (str, optional): Var key name of compiled data. Defaults to 'h2ds'.
             app_config (AppConfig, optional): Configuration data for var keys. Defaults to AppConfig.
-            remote_store_root (Path, optional): Store directory where all environmental data lives (currently D:).
-            local_store_root (Path], optional): Local data directory where compiled data lives (currently C:)
+            remote_store_root (Path, optional): Default root of the source stores.
+                Defaults to ``STORE_ROOT``; a var_key's own ``store_root`` wins.
+            local_store_root (Path, optional): Where ``zarr_backup`` copies the
+                compiled files. Defaults to ``ZARR_DIR/<local_folder>``.
             file_period: Temporal granularity ('year' or 'month') for file storage. Defaults to 'year'.
             date_format: string date format for output file name.
         """
@@ -158,11 +165,9 @@ class Compiler:
         Catalog for *var_key*, rooted under this compiler's ``remote_store_root``.
 
         Built explicitly rather than left to resolve from settings so that a
-        relocated store root reaches the compiler's own reads. These catalogs
-        used to default to ``STORE_ROOT``, so a run pointed elsewhere wrote h2ds
-        to the override while reading its sources from the configured root.
-        Identical to the old behaviour whenever the two agree, which is every
-        run that does not relocate anything.
+        relocated store root reaches the compiler's own reads. Left to default
+        to ``STORE_ROOT``, a run pointed elsewhere would write h2ds to the
+        override while reading its sources from the configured root.
 
         ``remote_store_root`` is the *default* root, not the final answer — a
         source variable may name its own in config.yaml, and a compile has to
@@ -171,8 +176,12 @@ class Compiler:
         """
         var_config = self.app_config.variables[var_key]
         root = store_root_for(var_config, self.remote_store_root)
+        # The compiler's own config, not the catalog's settings default: a
+        # var_key known only to the app_config this compiler was handed would
+        # otherwise fail validation, or resolve to another entry of that name.
         return ZarrCatalog(
             var_key,
+            app_config=self.app_config,
             store_root=root / var_config.local_folder,
             **kwargs,
         )
@@ -182,8 +191,6 @@ class Compiler:
         start_date: Optional[DateLike] = None,
         end_date: Optional[DateLike] = None,
         var_keys: Optional[list[str]] = None,
-        dx: float = DX,
-        dy: float = DY,
         zarr_backup: bool = False,
         zarr_backup_dir: Optional[Path] = None,
     ) -> None:
@@ -202,8 +209,6 @@ class Compiler:
                 the store (see above).
             var_keys: Variable keys to include. ``None`` compiles all configured
                 variables (incremental mode).
-            dx: Output grid cell width in degrees. Defaults to 0.25.
-            dy: Output grid cell height in degrees. Defaults to 0.25.
             zarr_backup: Copy written zarr files to the local store. Defaults to False.
             zarr_backup_dir: Override destination for the zarr backup. Defaults to local_store_root.
         """
@@ -236,7 +241,8 @@ class Compiler:
             )
             return
 
-        self.base_grid = GridBuilder(self.bbox, dx, dy).generate_grid()
+        self.base_grid = self._build_base_grid()
+        self._check_store_grid()
 
         # time chunks
         chunks = split_time_range(requested_range, self.file_period)
@@ -244,7 +250,7 @@ class Compiler:
         written_paths: list[Path] = []
 
         for i, chunk in enumerate(chunks, 1):
-            logger.debug(
+            logger.info(
                 f"Chunk {i}/{len(chunks)}: {chunk.start.date()} -> {chunk.end.date()}"
             )
 
@@ -318,6 +324,44 @@ class Compiler:
             f"({requested_range.start.date()} → {requested_range.end.date()}) "
             f"in {time.perf_counter() - t0:.1f}s"
         )
+
+    def _build_base_grid(self) -> xr.Dataset:
+        """
+        The grid this compile writes on, from the compiled var_key's config.
+
+        Declared as a whole number of cells per degree and a place for the
+        values to sit, so the resolution is exact and the phase is deliberate.
+        An entry naming neither gets 0.25° with values at cell centres, which is
+        what every existing h2ds store holds.
+        """
+        cells = self.var_config.cells_per_degree or DEFAULT_CELLS_PER_DEGREE
+        values_at = self.var_config.values_at
+        step = 1 / cells
+        where = "cell centres" if values_at == "cell_center" else "grid lines"
+        logger.info(
+            f"Base grid: 1/{cells}° ({step:.6g}°), values at {where}, over {self.bbox}"
+        )
+        return GridBuilder(self.bbox, step, step, values_at=values_at).generate_grid()
+
+    def _check_store_grid(self) -> None:
+        """
+        Refuse a run whose base grid is not the one the store already holds.
+
+        The write path would merge a different grid into the store rather than
+        reject it — every variable NaN at the other grid's cells.
+        :func:`check_grid_compatible` is the check that catches it, and it runs
+        there too; doing it here as well turns a changed ``cells_per_degree``
+        or ``values_at`` into a failure before the first chunk is read
+        rather than after one has been computed.
+        """
+        existing = sorted(self.catalog.store_root.glob("*.zarr"))
+        if not existing:
+            return
+        with xr.open_zarr(existing[-1], consolidated=False) as stored:
+            try:
+                check_grid_compatible(stored, self.base_grid)
+            except ValueError as e:
+                raise ValueError(f"{existing[-1].name}: {e}") from None
 
     # =========== DATE RANGE RESOLUTION ===========
     def _compute_source_coverage(self) -> dict[str, DateRange]:
@@ -587,6 +631,7 @@ class Compiler:
         # Lazy import breaks the compiler.py ↔ compiler_registry.py cycle.
         from h2mare.processing.compiler_registry import (
             COMPILE_PROCESSORS,
+            _compile_depth_var,
             compile_default,
         )
 
@@ -603,7 +648,14 @@ class Compiler:
             if not self._has_overlap(var_key, date_range, catalog):
                 return None
 
-        processor = COMPILE_PROCESSORS.get(var_key, compile_default)
+        processor = COMPILE_PROCESSORS.get(var_key)
+        if processor is None:
+            # Depth handling follows the config, not the name, so a new 3-D
+            # var_key needs no registry entry.
+            has_levels = depth_levels_for(
+                var_key, self.app_config.variables.get(var_key)
+            )
+            processor = _compile_depth_var if has_levels else compile_default
         return processor(self, catalog, date_range)
 
     # ============== UTILITIES ===================
@@ -638,9 +690,9 @@ class Compiler:
         try:
             shutil.copytree(remote_path, local_path, dirs_exist_ok=True)
         except (PermissionError, OSError) as e:
-            # Return rather than fall through: the success line used to sit
-            # outside this handler, so a failed backup was logged as an error
-            # and then announced as "File copied!" on the very next line.
+            # Return rather than fall through: the success line below sits
+            # outside this handler, so falling through would log a failed backup
+            # as an error and then announce "File copied!" on the next line.
             logger.exception(f"Failed to copy {remote_path} to {local_path}: {e}")
             return
 

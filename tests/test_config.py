@@ -1,8 +1,10 @@
 """Tests for config.py — Settings class."""
 
+import os
 import warnings
 
 import pytest
+from loguru import logger
 
 from h2mare.config import Settings, get_settings
 
@@ -56,6 +58,68 @@ class TestFindProjectRoot:
         monkeypatch.delenv("STORE_ROOT", raising=False)
         s = Settings()
         assert s.BASE_DIR.is_absolute()
+
+
+class TestDescribeResolution:
+    """
+    A user-wide H2MARE_ROOT points any checkout at another project's config and
+    stores, and nothing said so: commands ran against it without a line in the
+    log naming where they were.
+    """
+
+    def test_names_h2mare_root_as_the_source(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("H2MARE_ROOT", str(tmp_path))
+        monkeypatch.setenv("STORE_ROOT", str(tmp_path / "stores"))
+        line = Settings().describe_resolution()
+
+        assert str(tmp_path.resolve()) in line
+        assert "H2MARE_ROOT environment variable" in line
+        assert "no config.yaml there" in line
+        assert f"STORE_ROOT {(tmp_path / 'stores').resolve()}" in line
+
+    def test_names_the_config_found_above_the_working_directory(
+        self, tmp_path, monkeypatch
+    ):
+        monkeypatch.delenv("H2MARE_ROOT", raising=False)
+        monkeypatch.delenv("STORE_ROOT", raising=False)
+        (tmp_path / "config.yaml").write_text(_MINIMAL_CONFIG_YAML)
+        monkeypatch.chdir(tmp_path)
+        line = Settings().describe_resolution()
+
+        assert "config.yaml found above the working directory" in line
+        assert "; config.yaml;" in line
+        assert "STORE_ROOT not set" in line
+
+
+class TestH2mareRootInDotenv:
+    def test_is_ignored_and_kept_out_of_the_environment(self, tmp_path, monkeypatch):
+        """
+        Regression: the root is chosen before .env is read, so H2MARE_ROOT there
+        never moved this process — but load_dotenv put it in os.environ, where
+        every spawn worker read it and resolved another project's root.
+        """
+        monkeypatch.delenv("H2MARE_ROOT", raising=False)
+        monkeypatch.delenv("STORE_ROOT", raising=False)
+        (tmp_path / "config.yaml").write_text(_MINIMAL_CONFIG_YAML)
+        (tmp_path / ".env").write_text(f"H2MARE_ROOT={tmp_path / 'elsewhere'}\n")
+        monkeypatch.chdir(tmp_path)
+        messages: list[str] = []
+        sink = logger.add(messages.append, level="WARNING", format="{message}")
+        try:
+            s = Settings()
+        finally:
+            logger.remove(sink)
+
+        assert s.BASE_DIR == tmp_path.resolve()
+        assert "H2MARE_ROOT" not in os.environ
+        assert any("Ignoring H2MARE_ROOT" in m for m in messages)
+
+    def test_a_real_environment_variable_is_left_alone(self, tmp_path, monkeypatch):
+        (tmp_path / ".env").write_text("H2MARE_ROOT=/somewhere/else\n")
+        monkeypatch.setenv("H2MARE_ROOT", str(tmp_path))
+        monkeypatch.delenv("STORE_ROOT", raising=False)
+        Settings()
+        assert os.environ["H2MARE_ROOT"] == str(tmp_path)
 
 
 # ---------------------------------------------------------------------------
@@ -115,6 +179,34 @@ class TestGetStoreDir:
         monkeypatch.delenv("STORE_ROOT", raising=False)
         s = Settings()
         assert s.STORE_ROOT is None
+
+
+class TestMaxWorkers:
+    """
+    H2MARE_MAX_WORKERS is a ceiling on every pool, for a machine smaller than
+    the one a site's default was measured on. A malformed value is ignored
+    rather than raised: Settings() runs on any import.
+    """
+
+    def _settings(self, tmp_path, monkeypatch, value=None):
+        monkeypatch.setenv("H2MARE_ROOT", str(tmp_path))
+        if value is None:
+            monkeypatch.delenv("H2MARE_MAX_WORKERS", raising=False)
+        else:
+            monkeypatch.setenv("H2MARE_MAX_WORKERS", value)
+        return Settings()
+
+    def test_unset_leaves_each_site_its_own_default(self, tmp_path, monkeypatch):
+        assert self._settings(tmp_path, monkeypatch).MAX_WORKERS is None
+
+    def test_a_whole_number_is_read(self, tmp_path, monkeypatch):
+        assert self._settings(tmp_path, monkeypatch, "3").MAX_WORKERS == 3
+
+    @pytest.mark.parametrize("value", ["", "many", "3.5", "0", "-2"])
+    def test_an_unusable_value_is_ignored(self, tmp_path, monkeypatch, value):
+        """Ignored, not raised — a typo in a tuning knob must not stop a
+        command that starts no pool at all."""
+        assert self._settings(tmp_path, monkeypatch, value).MAX_WORKERS is None
 
 
 class TestOverrideStoreRoot:
@@ -430,8 +522,12 @@ class TestExampleConfigStaysValid:
 
     def test_a_three_dimensional_variable_declares_its_depth_levels(self):
         """A 3-D variable declaring neither depth key is refused at compile time."""
-        o2 = self._example()["variables"]["o2"]
-        assert o2.get("compile_depth_slices"), (
+        from types import SimpleNamespace
+
+        from h2mare.models import depth_levels_for
+
+        o2 = SimpleNamespace(**self._example()["variables"]["o2"])
+        assert depth_levels_for("o2", o2), (
             "the 3-D example would be refused by _compile_depth_var"
         )
 

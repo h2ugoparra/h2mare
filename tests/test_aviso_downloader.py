@@ -78,6 +78,27 @@ def dl_no_nrt(tmp_path):
 # ---------------------------------------------------------------------------
 
 
+class TestNothingToDownloadMessage:
+    def test_before_coverage_warns_instead_of_up_to_date(self, dl_no_nrt):
+        from loguru import logger
+
+        rep = DateRange("2010-01-01", "2023-12-31")
+        messages: list[str] = []
+        sink = logger.add(messages.append, level="INFO", format="{level}|{message}")
+        try:
+            with (
+                patch.object(dl_no_nrt, "_create_download_tasks", return_value=[]),
+                patch.object(dl_no_nrt, "get_rep_availability", return_value=rep),
+            ):
+                assert dl_no_nrt.run("1994-01-01", "1994-01-31") is False
+        finally:
+            logger.remove(sink)
+
+        text = "".join(messages)
+        assert "up to date" not in text
+        assert "WARNING|'fsle': requested 1994-01-01 to 1994-01-31" in text
+
+
 class TestGetRepAvailability:
     def test_calls_get_dataset_files_with_rep_id(self, dl):
         fake_files = ["rep/file1.nc", "rep/file2.nc"]
@@ -212,6 +233,24 @@ class TestWarnIfRepUpdated:
         msg = mock_logger.warning.call_args[0][0]
         assert "2022-12-31" in msg
         assert "2023-12-31" in msg
+
+    def test_the_catalog_consulted_is_this_downloader_s(self, dl):
+        """
+        Its own config and store, not whatever the machine has deployed.
+
+        Resolving through get_settings() read another store's catalog, and for
+        a var_key the deployed config did not define the constructor raised
+        into the debug branch — the check turning itself off, silently, on any
+        machine pointed elsewhere. It is why these tests passed or failed
+        depending on H2MARE_ROOT.
+        """
+        with patch("h2mare.storage.zarr_catalog.ZarrCatalog") as MockCatalog:
+            MockCatalog.return_value.df = pd.DataFrame()
+            dl._warn_if_rep_updated(pd.Timestamp("2023-12-31"))
+
+        kwargs = MockCatalog.call_args.kwargs
+        assert kwargs["app_config"] is dl.app_config
+        assert kwargs["store_root"] == dl.store_root
 
     def test_no_warning_when_api_end_date_matches_catalog(self, dl, tmp_path):
         catalog_df = pd.DataFrame(
@@ -625,3 +664,55 @@ class TestFtpConnectionLifecycle:
 
         dead.close.assert_called_once()
         assert dl.ftp is fresh
+
+
+# ---------------------------------------------------------------------------
+# get_all_files_recursively — the FTP listing everything downstream trusts
+# ---------------------------------------------------------------------------
+
+
+def _fake_mlsd(tree: dict, fail_on: str | None = None):
+    """An ftp.mlsd over *tree* ({dir: {name: subtree or None}}); None = file."""
+
+    def mlsd(path=""):
+        if path == fail_on:
+            raise EOFError("connection dropped")
+        node = tree
+        for part in filter(None, path.split("/")):
+            node = node[part]
+        yield (".", {"type": "cdir"})
+        for name, sub in node.items():
+            yield (name, {"type": "dir" if isinstance(sub, dict) else "file"})
+
+    return mlsd
+
+
+_TREE = {
+    "2020": {"fsle_20200101.nc": None, "fsle_20200102.nc": None},
+    "2021": {"fsle_20210101.nc": None},
+}
+
+
+class TestListing:
+    def test_walks_every_directory(self, dl):
+        dl.ftp.mlsd = _fake_mlsd(_TREE)
+        assert dl.get_all_files_recursively() == [
+            "2020/fsle_20200101.nc",
+            "2020/fsle_20200102.nc",
+            "2021/fsle_20210101.nc",
+        ]
+
+    def test_a_directory_that_fails_to_list_fails_the_listing(self, dl):
+        """
+        Regression: the error was logged and the other years returned as the
+        whole dataset — a REP range a year short, and files never queued.
+        """
+        dl.ftp.mlsd = _fake_mlsd(_TREE, fail_on="2021")
+        with pytest.raises(RuntimeError, match="Listing '2021' on the AVISO FTP"):
+            dl.get_all_files_recursively()
+
+    def test_availability_is_not_computed_from_a_partial_list(self, dl):
+        dl.ftp.mlsd = _fake_mlsd(_TREE, fail_on="2021")
+        with patch.object(type(dl), "adjust_ftp_path_to_dataset"):
+            with pytest.raises(RuntimeError):
+                dl.get_rep_availability()

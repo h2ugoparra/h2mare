@@ -28,24 +28,24 @@ All variables configured in `config.yaml`. Each key maps to one data stream with
 ### `sst` — Sea Surface Temperature
 - **Dataset (rep):** `METOFFICE-GLO-SST-L4-REP-OBS-SST`
 - **Dataset (nrt):** `METOFFICE-GLO-SST-L4-NRT-OBS-SST-V2`
-- **Resolution:** 0.05°, resampled to 0.25°
-- **Variables:** analysed SST (°C), analysis error (K), distance to nearest SST front (km)
+- **Resolution:** 0.05°, area-averaged onto the 0.25° grid
+- **Variables:** analysed SST (°C), analysis error (K), distance to nearest SST front (km — Belkin–O'Reilly detection at a 0.4 °C gradient threshold, declared in `boa_fronts`)
 
 ### `ssh` — Sea Surface Height
 - **Dataset (rep):** `cmems_obs-sl_glo_phy-ssh_my_allsat-l4-duacs-0.125deg_P1D`
 - **Dataset (nrt):** `cmems_obs-sl_glo_phy-ssh_nrt_allsat-l4-duacs-0.125deg_P1D`
-- **Resolution:** 0.125°, resampled to 0.25°
+- **Resolution:** 0.125°, area-averaged onto the 0.25° grid
 - **Variables:** ADT (m), SLA (m), geostrophic velocities u/v (m s⁻¹), geostrophic kinetic energy (m² s⁻²)
 
 ### `mld` — Mixed Layer Depth
 - **Dataset (rep):** `cmems_mod_glo_phy_my_0.083deg_P1D-m`
-- **Resolution:** 0.083°, resampled to 0.25°
+- **Resolution:** 0.083°, area-averaged onto the 0.25° grid
 - **Variables:** mixed layer depth (m) — depth where density increase corresponds to a 0.2 °C temperature decrease relative to 10 m
 
 ### `chl` — Chlorophyll-a
 - **Dataset (rep):** `cmems_obs-oc_glo_bgc-plankton_my_l4-gapfree-multi-4km_P1D`
-- **Resolution:** 4 km, resampled to 0.25°
-- **Variables:** CHL concentration (mg m⁻³), distance to nearest CHL front (km)
+- **Resolution:** 4 km, area-averaged onto the 0.25° grid
+- **Variables:** CHL concentration (mg m⁻³), distance to nearest CHL front (km — Belkin–O'Reilly detection at a 0.06 mg m⁻³ gradient threshold, declared in `boa_fronts`)
 
 ### `seapodym` — Micronekton (SEAPODYM)
 - **Dataset (rep):** `cmems_mod_glo_bgc_my_0.083deg-lmtl_P1D-i`
@@ -88,5 +88,5 @@ These keys are not downloaded — they are generated during the compile step.
 
 | Key | Description |
 |---|---|
-| `bathy` | Ocean bathymetry from ETOPO 2022 v1 at 0.25°. Mean depth (m) and std per grid cell. Source files are configured via `data_file` (0.25° grid, used by compiler and CSV extraction) and `data_file_hires` (native resolution, used by SHP extraction) in `config.yaml`. |
+| `bathy` | Ocean bathymetry from ETOPO 2022 v1 at 0.25°. Mean depth (m) and std per grid cell. Files are named per layer under `layers` in `config.yaml` and built by `scripts/bathymetry.py`: `15s` and `60s` (native grid, `bathy_std` a 3×3 rolling std) and `0.25deg` (std of the 15s cells in each cell). Compile reads `compile_layer`; extraction reads `extract_layer` or `Extractor(bathy_layer=...)`, for CSV and SHP alike. |
 | `moon` | Lunar illumination (%) computed from the `ephem` library. Same value broadcast across all grid cells per day. |

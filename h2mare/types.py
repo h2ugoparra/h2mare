@@ -12,11 +12,17 @@ from datetime import date, datetime
 from enum import Enum
 from typing import Literal, Optional, Sequence, cast
 
+import numpy as np
 import pandas as pd
 import polars as pl
 import xarray as xr
 
 DateLike = str | pd.Timestamp | datetime | date
+
+#: One date or several. The pandas and numpy containers are named because the
+#: pandas stubs do not count a DatetimeIndex (what pd.date_range returns) or a
+#: Series as a Sequence, so type checkers rejected them where they work.
+DatesLike = DateLike | Sequence[DateLike] | pd.Index | pd.Series | np.ndarray
 
 #: Which store a var_key is read from. ``native`` is its own per-variable Zarr,
 #: ``compiled`` is the h2ds every var_key is merged into, and ``auto`` picks per
@@ -24,6 +30,20 @@ DateLike = str | pd.Timestamp | datetime | date
 #: side (``processing.extractor``) and the read side
 #: (``storage.var_routing``) name it, and neither may import the other.
 ReadFrom = Literal["auto", "native", "compiled"]
+
+#: How a variable is put on the compile base grid. ``auto`` compares the native
+#: and target resolutions and picks ``linear`` or ``conservative``; the others
+#: pin the choice. Lives here rather than beside the regridder because the
+#: config model (``models``) validates it too, and must not pull in the
+#: regridder's dependencies to do so.
+RegridMethod = Literal["auto", "linear", "nearest", "conservative"]
+
+#: Where a grid's values sit. ``cell_center`` puts them at cell centres
+#: (``xmin + (k + 0.5)·step``), ``grid_line`` on the step's own multiples
+#: (``xmin + k·step``), where the grid lines cross. Independent of the step:
+#: both are valid grids at any resolution, and which one a store wants depends
+#: on its sources — see "Where the values sit" in docs/configuration.md.
+GridValuesAt = Literal["cell_center", "grid_line"]
 
 
 def to_datetime(value) -> datetime:
@@ -83,8 +103,8 @@ class DateRange:
         # against it is False, so the ordering check below waves it through and
         # a range of NaT..NaT travels on as if it named real dates. Rejecting it
         # at the one point every construction path goes through also covers the
-        # from_* classmethods — from_pandas has no emptiness check of its own
-        # and used to return NaT to NaT for an empty frame.
+        # from_* classmethods — from_pandas has no emptiness check of its own,
+        # so an empty frame reaches here as NaT to NaT.
         if pd.isna(self.start) or pd.isna(self.end):
             raise ValueError(
                 f"DateRange bounds must be real dates, got start={self.start!r}, "

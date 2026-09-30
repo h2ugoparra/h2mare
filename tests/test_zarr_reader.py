@@ -151,6 +151,20 @@ class TestApplyBbox:
 
         assert out is ds
 
+    def test_a_failed_selection_raises_rather_than_returning_everything(self):
+        """
+        Regression: a selection that raised was logged and the unclipped
+        dataset returned, so asking for a region silently gave the whole domain.
+        """
+        reader = _reader()
+        ds = xr.Dataset(
+            {"v": (("lat", "lon"), np.ones((3, 4)))},
+            coords={"lat": [30.0, 35.0, 40.0], "lon": [0.0, -10.0, 10.0, -5.0]},
+        )
+
+        with pytest.raises(ValueError, match="could not subset to"):
+            reader._apply_bbox(ds, BBox.from_tuple((-6.0, 30.0, 1.0, 40.0)))
+
 
 class TestSnapAxesToReference:
     """

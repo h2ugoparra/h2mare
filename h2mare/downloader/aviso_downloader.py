@@ -129,24 +129,38 @@ class AVISODownloader(BaseDownloader):
 
     # ==================== FTP Connection ====================
     def get_all_files_recursively(self, path=""):
-        """Recursively get all files using MLSD (more reliable if supported)"""
-        all_files = []
-        try:
-            for item_name, item_facts in self.ftp.mlsd(path):
-                # Skip . and .. directories
-                if item_name in [".", ".."]:
-                    continue
+        """
+        Recursively get all files using MLSD (more reliable if supported).
 
-                # Build full path
-                full_path = f"{path}/{item_name}" if path else item_name
-                # Check if it's a directory
-                if item_facts.get("type") == "dir":
-                    # Recursively get files from subdirectory
-                    all_files.extend(self.get_all_files_recursively(full_path))
-                elif item_facts.get("type") == "file":
-                    all_files.append(full_path)
+        A directory that cannot be listed fails the whole listing. Everything
+        downstream treats this list as the dataset: the REP/NRT boundary is its
+        latest date and the download tasks are filtered from it. So a partial
+        list — which is what logging the error and carrying on returned, one
+        year short when a per-year directory dropped — moved the boundary and
+        left files undownloaded, with nothing marking the run as failed.
+        """
+        try:
+            entries = list(self.ftp.mlsd(path))
         except Exception as e:
-            logger.error(f"Error accessing {path}: {e}")
+            raise RuntimeError(
+                f"Listing '{path or '/'}' on the AVISO FTP failed "
+                f"({type(e).__name__}: {e}); not working from a partial file list."
+            ) from e
+
+        all_files = []
+        for item_name, item_facts in entries:
+            # Skip . and .. directories
+            if item_name in [".", ".."]:
+                continue
+
+            # Build full path
+            full_path = f"{path}/{item_name}" if path else item_name
+            # Check if it's a directory
+            if item_facts.get("type") == "dir":
+                # Recursively get files from subdirectory
+                all_files.extend(self.get_all_files_recursively(full_path))
+            elif item_facts.get("type") == "file":
+                all_files.append(full_path)
 
         return sorted(all_files)
 
@@ -543,7 +557,11 @@ class AVISODownloader(BaseDownloader):
         tasks = self._create_download_tasks(requested_range)
 
         if not tasks:
-            logger.info(f"'{self.var_key}' is already up to date — skipping.")
+            self._log_nothing_to_download(
+                requested_range,
+                self.get_rep_availability(),
+                self.get_nrt_availability(),
+            )
             return False
 
         logger.debug(f"Created {len(tasks)} download task(s)")

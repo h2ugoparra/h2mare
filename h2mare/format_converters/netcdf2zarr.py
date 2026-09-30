@@ -18,6 +18,8 @@ from loguru import logger
 from h2mare.config import AppConfig, get_settings
 from h2mare.format_converters.base import BaseConverter
 from h2mare.models import StoreDtype, step_freq
+from h2mare.processing.core.fronts import apply_boa_fronts, clear_staging
+from h2mare.processing.derived import apply_derived_vars
 from h2mare.processing.registry import PROCESSORS
 from h2mare.storage.audit import format_date_blocks, known_gap_days
 from h2mare.storage.provenance import (
@@ -33,6 +35,7 @@ from h2mare.storage.xarray_helpers import (
     chunk_dataset,
     int16_encoding,
     rename_dims,
+    rename_source_vars,
     snap_grid_coords,
 )
 from h2mare.storage.zarr_catalog import ZarrCatalog
@@ -117,6 +120,10 @@ def convert_netcdf_to_zarr(
             the same slot a registry processor occupies in
             ``Netcdf2Zarr.process_dataset``. To reuse a registered processor,
             wrap it: ``processor=lambda ds: PROCESSORS["sst"](ds, cfg, "sst")``.
+            A registered processor names variables as config's
+            ``source_renames`` leaves them (``sst``, not ``analysed_sst``), and
+            this config-free path applies no renames — do it in the callable
+            first if the files still carry their source names.
         apply_rename: Apply ``rename_dims`` (``longitude/latitude/valid_time`` →
             ``lon/lat/time``). Set ``False`` when the files already use canonical
             dim names.
@@ -279,6 +286,13 @@ class Netcdf2Zarr(BaseConverter):
         # data stranded in a backup is restored.
         recover_zarr_store(self.store_root)
 
+        # Front staging is cleared per period; anything still here was left by
+        # a run that died outright, and is a full copy of a period's layer.
+        if clear_staging(self.var_key):
+            logger.warning(
+                f"[{self.var_key}] Removed front staging left by an interrupted run"
+            )
+
         # Trajectory-format variables (e.g. eddies) require spatial binning
         # before zarr storage — bypass the standard open_mfdataset pipeline.
         if self.var_config.trajectory_format:
@@ -295,10 +309,10 @@ class Netcdf2Zarr(BaseConverter):
             # Distinguish two ways of getting nothing. A window that matches no
             # downloaded file is a legitimate no-op (already warned about in
             # _group_map). Files that yield no date at all is a fault: every raw
-            # file failed the pattern. That used to be reported as "0 period(s)"
-            # success, after which _cleanup_downloads deleted the files — so a
-            # download that had worked was silently discarded, the store never
-            # changed, and the run exited 0.
+            # file failed the pattern. Reported as a "0 period(s)" success it
+            # would take the downloads with it: _cleanup_downloads deletes the
+            # files, so a download that worked is discarded, the store never
+            # changes, and the run exits 0.
             if self._get_file_date_series().empty:
                 raise RuntimeError(
                     f"[{self.var_key}] {len(self._get_downloaded_files())} "
@@ -313,7 +327,8 @@ class Netcdf2Zarr(BaseConverter):
             )
             return False
 
-        for period, paths in file_groups.items():
+        for i, (period, paths) in enumerate(file_groups.items(), 1):
+            logger.info(f"Processing period {i}/{len(file_groups)}: {period}")
             self._process_period(period, paths)
 
         self.catalog.refresh(force=True)
@@ -674,7 +689,6 @@ class Netcdf2Zarr(BaseConverter):
             logger.debug(f"Removed spent download manifest {manifest_path}")
 
     def _process_period(self, period, paths: list[Path]) -> None:
-        logger.info(f"Processing period (year/year-month): {period}")
 
         # Keep the object open_mfdataset returned. process_dataset rebinds its
         # argument, so without this the only reference to it is lost — and
@@ -725,9 +739,14 @@ class Netcdf2Zarr(BaseConverter):
             ) from e
         finally:
             # Idempotent, so the success path closing early costs nothing; this
-            # is here for the failure path, which previously leaked the handles
-            # and left the store directory locked on Windows.
+            # is here for the failure path, which otherwise leaks the handles
+            # and leaves the store directory locked on Windows.
             _close_all(ds, ds_raw)
+            # The front layers were read out of here by the write above, so the
+            # staging has served its purpose either way. After the closes: a
+            # period's layer is a full copy of it, and nothing should still be
+            # reading one when it goes.
+            clear_staging(self.var_key)
 
     # ========= WRITE VERIFICATION =========
 
@@ -894,9 +913,22 @@ class Netcdf2Zarr(BaseConverter):
         if self.var_config.source != "cds":
             ds = rename_dims(ds)
 
+        # Before the processor, so its body, boa_fronts, derived_vars and the CF
+        # attrs all name variables the way config.yaml does (sst, not
+        # analysed_sst). Config is the only place the map lives.
+        ds = rename_source_vars(ds, self.var_config.source_renames, self.var_key)
+
         processor = PROCESSORS.get(self.var_key)
         if processor:
             ds = processor(ds, self.var_config, self.var_key)
+
+        # After the processor, so boa_fronts and derived_vars both name
+        # variables as it leaves them. Fronts first, so
+        # a derived layer may read a front distance but not the other way
+        # round. Detection stages each layer to disk; _process_period clears
+        # the staging once the period has been written.
+        ds = apply_boa_fronts(ds, self.var_config.boa_fronts, self.var_key)
+        ds = apply_derived_vars(ds, self.var_config.derived_vars, self.var_key)
 
         # Snap lon/lat to a canonical grid so float-noise drift between a source's
         # reprocessed periods can't union into a doubled axis on read/append.
@@ -1010,9 +1042,9 @@ class Netcdf2Zarr(BaseConverter):
             str: with year or year/month
 
         The separator is a forward slash, which ``Path`` resolves to a nested
-        directory on every platform. It used to be a literal backslash, so on
-        POSIX ``store_root / "2021\\3"`` named a *single* directory containing
-        a backslash instead of ``2021/3``.
+        directory on every platform. A literal backslash does not: on POSIX
+        ``store_root / "2021\\3"`` names a *single* directory containing a
+        backslash instead of ``2021/3``.
         """
         if isinstance(period, int):
             return str(period)

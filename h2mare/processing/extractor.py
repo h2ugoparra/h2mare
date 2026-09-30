@@ -8,10 +8,11 @@ import hashlib
 import json
 import time
 import warnings
+from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import cached_property
 from pathlib import Path
-from typing import Literal, Optional, Sequence, Union, overload
+from typing import Literal, Optional, Sequence, Union, cast, overload
 
 import ephem
 import geopandas as gpd
@@ -24,19 +25,25 @@ from rasterio.errors import NotGeoreferencedWarning
 from scipy.spatial import KDTree
 
 from h2mare import AppConfig, get_settings
-from h2mare.models import step_freq
+from h2mare.models import check_depth_levels, depth_levels_for, step_freq
 from h2mare.storage.var_routing import compiled_var_key
+from h2mare.storage.xarray_helpers import select_depth_levels
 from h2mare.storage.zarr_catalog import ZarrCatalog
 from h2mare.types import BBox, DateRange, ReadFrom
 from h2mare.utils.datetime_utils import end_of_day
 from h2mare.utils.logging import configure_extraction_logging, log_time
-from h2mare.utils.paths import store_root_for
+from h2mare.utils.paths import static_layer_path, store_root_for
 from h2mare.utils.spatial import sel_padded_bbox
 
 #: How the input's own timestamps are read. ``auto`` infers it from the data;
 #: ``daily`` and ``hourly`` state it outright. Purely about parsing ``time_col``
 #: — which store answers is :data:`~h2mare.types.ReadFrom`.
 TimeCadence = Literal["auto", "daily", "hourly"]
+
+#: What ``run()`` accepts per var_key: one variable, a list of them, ``None``
+#: for everything, or ``{variable: depths | None}`` to also choose the depth
+#: levels (metres) of 3-D variables for this request only.
+VarSelection = Union[str, list[str], Mapping[str, Optional[Sequence[int]]], None]
 
 #: Coordinate columns that ride out of ``to_dataframe()`` alongside the real
 #: values. Carried by every engine result, so they are stripped before a join
@@ -170,9 +177,9 @@ def _warn_if_wholly_failed(result: pd.DataFrame, errors: list[Exception]) -> Non
     A few NaN rows are ordinary — geometries outside the grid clip to nothing,
     and that is data, not a fault. Every row failing is not: it means the
     dataset could not be clipped at all, usually because rioxarray cannot
-    identify the spatial dims or there is no CRS. That used to surface only as
-    a DEBUG line per geometry, leaving an all-null column looking like absent
-    data rather than a broken precondition.
+    identify the spatial dims or there is no CRS. Left to the DEBUG line each
+    geometry logs, it reads as an all-null column — absent data rather than a
+    broken precondition.
     """
     if result.empty or not errors:
         return
@@ -188,6 +195,147 @@ def _warn_if_wholly_failed(result: pd.DataFrame, errors: list[Exception]) -> Non
     )
 
 
+#: Relative slack on the half-cell tolerance, so a sample on a cell's outer
+#: edge, give or take float noise, still belongs to that cell.
+_TOL_SLACK = 1e-6
+
+# cast: the pandas stubs type every Timedelta constructor as possibly NaT.
+_ONE_DAY = cast(pd.Timedelta, pd.Timedelta(days=1))
+_ONE_HOUR = cast(pd.Timedelta, pd.Timedelta(hours=1))
+
+
+def _axis_half_widths(values: np.ndarray) -> np.ndarray:
+    """
+    How far each point of a 1-D axis reaches: half the spacing around it.
+
+    Takes the wider side, which only matters on an irregular axis. The end
+    points reuse their one neighbour's gap. An axis of one point has no spacing
+    to measure, so it reaches everywhere (inf) and nothing is refused on it.
+    """
+    v = np.asarray(values, dtype="float64")
+    if v.size < 2:
+        return np.full(v.size, np.inf)
+    gaps = np.abs(np.diff(v))
+    left = np.concatenate([gaps[:1], gaps])
+    right = np.concatenate([gaps, gaps[-1:]])
+    return np.maximum(left, right) / 2
+
+
+def _outside_grid(
+    ds: xr.Dataset | xr.DataArray,
+    query_lons: np.ndarray,
+    query_lats: np.ndarray,
+    lat_idx: np.ndarray | None = None,
+    lon_idx: np.ndarray | None = None,
+) -> np.ndarray:
+    """
+    True for each query point that its nearest cell does not contain.
+
+    A nearest-neighbour search always answers, so a point east of the grid
+    lands on the eastern edge cell and a 0–360 longitude on whichever edge is
+    closest, and both would read that cell's value as their own. A point is
+    only inside a cell when it is within half the spacing of its centre.
+
+    Without the indices, the nearest cell is found per axis, which is what the
+    search on a rectilinear grid comes to.
+    """
+    misses = np.zeros(len(query_lons), dtype=bool)
+    for name, q, idx in (("lon", query_lons, lon_idx), ("lat", query_lats, lat_idx)):
+        axis = np.asarray(ds[name].values, dtype="float64")
+        q = np.asarray(q, dtype="float64")
+        if idx is None:
+            idx = ds.indexes[name].get_indexer(q, method="nearest")
+        half = _axis_half_widths(axis)[idx]
+        misses |= np.abs(q - axis[idx]) > half * (1 + _TOL_SLACK)
+    return misses
+
+
+def infer_time_step(ds: xr.Dataset | xr.DataArray) -> pd.Timedelta | None:
+    """
+    The cadence of *ds*'s time axis: its smallest spacing between steps.
+
+    The smallest, not the typical: a daily axis with a missing day still has
+    daily steps around it, whereas its median over a short gappy axis reads
+    two days, and a day-wide tolerance would then lend the gap its neighbour's
+    value. None with fewer than two distinct steps.
+    """
+    if "time" not in ds.coords:
+        return None
+    times = np.unique(ds["time"].values.astype("datetime64[ns]").astype("int64"))
+    if times.size < 2:
+        return None
+    return pd.to_timedelta(int(np.diff(times).min()), unit="ns")
+
+
+def _nearest_steps(grid: pd.DatetimeIndex, query: pd.DatetimeIndex) -> np.ndarray:
+    """
+    Nearest *grid* index for each *query* instant; *grid* sorted ascending.
+
+    Both sides are pinned to nanoseconds before the integer cast: a Zarr axis
+    decodes to ``[ns]`` while pandas parses input strings to ``[us]``, and
+    int64 counts of different units compare as nonsense.
+    """
+    grid_ns = grid.to_numpy().astype("datetime64[ns]").astype("int64")
+    q = query.to_numpy().astype("datetime64[ns]").astype("int64")
+    right = np.searchsorted(grid_ns, q).clip(0, len(grid_ns) - 1)
+    left = (right - 1).clip(0, len(grid_ns) - 1)
+    return np.where(
+        np.abs(grid_ns[right] - q) <= np.abs(grid_ns[left] - q), right, left
+    )
+
+
+def _to_day(times: pd.DatetimeIndex) -> pd.DatetimeIndex:
+    """*times* truncated to midnight of the day they fall in."""
+    return pd.DatetimeIndex(times.to_numpy().astype("datetime64[D]"))
+
+
+def _match_times(
+    ds: xr.Dataset | xr.DataArray,
+    query_times,
+    time_step: pd.Timedelta | None,
+) -> tuple[np.ndarray, np.ndarray]:
+    """
+    The time step answering each query, and whether one does at all.
+
+    - **Daily** axis: a sample takes the day it falls in. Nearest-instant would
+      send everything after noon to the next day, whose midnight stamp is
+      closer. A day missing from the axis answers nothing, rather than lending
+      its neighbour's value.
+    - **Any other** step: the nearest step, if it is within half a step.
+    - ``time_step=None`` (a single-step axis, nothing to measure): the nearest
+      step, unchecked.
+
+    Returns:
+        ``(indices, answered)``, both aligned to *query_times*. Where
+        ``answered`` is False the index is only a placeholder.
+    """
+    grid = pd.DatetimeIndex(ds["time"].values)
+    query = pd.DatetimeIndex(pd.to_datetime(query_times))
+
+    if time_step == _ONE_DAY:
+        grid, query = _to_day(grid), _to_day(query)
+        idx = _nearest_steps(grid, query)
+        return idx, np.asarray(grid[idx] == query)
+
+    idx = _nearest_steps(grid, query)
+    if time_step is None:
+        return idx, np.ones(len(query), dtype=bool)
+    return idx, np.asarray(abs(grid[idx] - query) <= time_step / 2)
+
+
+def _log_unanswered(n_space: int, n_time: int) -> None:
+    """Say how many samples were returned as NaN, and why."""
+    if n_space:
+        logger.warning(
+            f"{n_space} sample(s) fall outside the dataset's grid; returned as NaN."
+        )
+    if n_time:
+        logger.warning(
+            f"{n_time} sample(s) have no time step for their date (a day missing "
+            f"from the store, or beyond its axis); returned as NaN."
+        )
+
+
 def _extract_geometry(
     id: str,
     date,
@@ -195,6 +343,7 @@ def _extract_geometry(
     ds: xr.DataArray | xr.Dataset,
     index_col: str,
     errors: list[Exception] | None = None,
+    time_idx: int | None = None,
 ) -> dict:
     """
     Extract data and return as dictionary for a single geometry row.
@@ -208,6 +357,9 @@ def _extract_geometry(
         date (): date value of the geometry row.
         geom (): geometry of the geometry row.
         ds (xr.DataArray | xr.Dataset): in-memory xarray object.
+        time_idx: Position on ``ds``'s time axis answering this row, as
+            resolved by :func:`_match_times`; negative when none does, which
+            returns the row as NaN. Required when ``ds`` has a time axis.
 
     Returns:
         dict: dictionary with index, variable names and extracted values.
@@ -216,8 +368,22 @@ def _extract_geometry(
     data_vars: list[str] = [str(v) for v in ds.data_vars] if is_dataset else []
     single_var_name: str = str(ds.name) if (not is_dataset and ds.name) else "value"
 
-    if date is not None:
-        ds = ds.sel(time=date, method="nearest")
+    nan_result: dict = {index_col: id}
+    if is_dataset:
+        nan_result.update({var: float("nan") for var in data_vars})
+    else:
+        nan_result[single_var_name] = float("nan")
+
+    if "time" in ds.dims:
+        if time_idx is None:
+            # Outside the try: the except below would turn this into a NaN row.
+            raise ValueError(
+                "_extract_geometry needs time_idx for a dataset with a time "
+                "axis; without it the clip would average every time step."
+            )
+        if time_idx < 0:
+            return nan_result
+        ds = ds.isel(time=time_idx)
 
     try:
         clipped = ds.rio.clip([geom], drop=True, all_touched=True).mean()
@@ -245,64 +411,6 @@ def _extract_geometry(
             errors.append(e)
 
     # --- Return NaNs for failed geometry to preserve structure ---
-    nan_result: dict = {index_col: id}
-    if is_dataset:
-        nan_result.update({var: float("nan") for var in data_vars})
-    else:
-        nan_result[single_var_name] = float("nan")
-
-    return nan_result
-
-
-def _extract_geometry_bathy(
-    id: str, geom, ds: xr.DataArray | xr.Dataset, index_col: str
-) -> dict:
-    """
-    Extract bathymetry data (mean and std over the clipped geometry) and
-    return as dictionary for a single geometry row. As in
-    :func:`_extract_geometry`, failures return NaNs without retrying.
-
-    Args:
-        id (str): index value of the geometry row.
-        geom (): geometry of the geometry row.
-        ds (xr.DataArray | xr.Dataset): in-memory xarray object.
-
-    Returns:
-        dict: dictionary with index, variable names and extracted values.
-    """
-    is_dataset = isinstance(ds, xr.Dataset)
-    data_vars: list[str] = [str(v) for v in ds.data_vars] if is_dataset else []
-    single_var_name: str = str(ds.name) if (not is_dataset and ds.name) else "value"
-
-    try:
-        clipped = ds.rio.clip([geom], drop=True, all_touched=True)
-        mean_ds = clipped.mean(dim=None)
-        std_ds = clipped.std(dim=None)
-
-        result: dict = {index_col: id}
-
-        if is_dataset:
-            for var in clipped.data_vars:
-                result[f"{var}"] = mean_ds[var].item()
-                result[f"{var}_std"] = std_ds[var].item()
-        else:
-            result[single_var_name] = mean_ds.item()
-            result[f"{single_var_name}_std"] = std_ds.item()
-
-        return result
-
-    except (OSError, ValueError, RuntimeError) as e:
-        # Per-geometry detail only — see _extract_geometry.
-        logger.debug(f"Extraction failed for id={id}: {e}")
-
-    # --- Return NaNs for failed geometry to preserve structure ---
-    nan_result: dict = {index_col: id}
-    if is_dataset:
-        nan_result.update({var: float("nan") for var in data_vars})
-    else:
-        nan_result[single_var_name] = float("nan")
-        nan_result[f"{single_var_name}_std"] = float("nan")
-
     return nan_result
 
 
@@ -381,6 +489,34 @@ def warn_on_subdaily_store(var_key: str, var_config, ds: xr.Dataset) -> None:
     )
 
 
+def split_depth_request(
+    var_key: str, vars: VarSelection
+) -> tuple[str | list[str] | None, dict[str, list[int]]]:
+    """
+    Separate a ``{variable: depths | None}`` selection into names and levels.
+
+    The dict's keys are the variables requested, exactly as a list would name
+    them; a non-``None`` value chooses that variable's depth levels for this
+    request, over whatever config declares. Any other selection passes through
+    with no levels.
+    """
+    if vars is None or isinstance(vars, (str, list)):
+        return vars, {}
+
+    override: dict[str, list[int]] = {}
+    for name, levels in vars.items():
+        if levels is None:
+            continue
+        if not isinstance(levels, (list, tuple)):
+            raise TypeError(
+                f"var_dict[{var_key!r}][{name!r}] must be a list of depths in "
+                f"metres or None; got {levels!r}"
+            )
+        check_depth_levels(f"var_dict[{var_key!r}][{name!r}]", list(levels))
+        override[name] = list(levels)
+    return list(vars), override
+
+
 def split_vars_by_source(
     requested: list[str] | None,
     stored: list[str],
@@ -411,13 +547,13 @@ def split_vars_by_source(
 
     ``has_depth`` disables the reconciliation entirely, because for a 3-D
     variable ``compiled_vars`` and the store are not comparable: the store holds
-    one variable on a ``depth`` axis (``thetao``) while ``compiled_vars`` names
-    the columns it becomes after slicing (``thetao_100``, …). Nor can the check
-    simply be deferred until after the expansion — extraction slices at
-    ``extract_depth_slices`` while ``compiled_vars`` follows
-    ``compile_depth_slices``, and config explicitly allows the two to differ
-    (``o2`` extracts 3 levels and compiles 4). There is nothing to reconcile;
-    :meth:`Extractor._preprocess_depth_slices` owns which levels appear.
+    variables on a ``depth`` axis (``thetao``) while ``compiled_vars`` names
+    the columns they become after slicing (``thetao_100``, …). Nor can the check
+    simply be deferred until after the expansion — extraction slices at its own
+    levels (``extract_depth_levels``, or levels chosen in the request) while
+    ``compiled_vars`` follows ``depth_levels``, and the two may differ. There is
+    nothing to reconcile; :meth:`Extractor._slice_depth` owns which levels
+    appear.
 
     Returns:
         ``(from_native, from_compiled)``. For a daily store ``from_compiled`` is
@@ -578,6 +714,7 @@ class Extractor:
         crs: int | None = 4326,
         time_cadence: TimeCadence = "auto",
         read_from: ReadFrom = "auto",
+        bathy_layer: Optional[str] = None,
         log_file: Optional[Union[str, Path]] = None,
     ):
         """
@@ -613,6 +750,10 @@ class Extractor:
                 store is on the 0.25° base grid and carries the pipeline's units
                 (ERA5 ``msl`` in hPa), while an hourly native store holds the raw
                 source as published (``msl`` in Pa).
+            bathy_layer (str, optional): bathy layer to extract from, a key of
+                ``layers`` in the bathy config entry (e.g. ``"15s"``, ``"60s"``).
+                Defaults to that entry's ``extract_layer``. Applies to csv and
+                shp inputs alike.
             log_file (str | Path, optional): Extraction log file for this session.
                 Defaults to LOGS_DIR/extractor.log (first Extractor in the
                 process decides; subsequent values are ignored).
@@ -629,6 +770,18 @@ class Extractor:
         self.read_from: ReadFrom = read_from
 
         self.app_config = app_config or get_settings().app_config
+
+        # Checked here rather than when bathy is reached, so a misspelt layer
+        # fails before any other var_key is extracted.
+        bathy_cfg = self.app_config.variables.get("bathy")
+        if bathy_layer is not None and bathy_layer not in (
+            getattr(bathy_cfg, "layers", None) or {}
+        ):
+            raise ValueError(
+                f"bathy_layer {bathy_layer!r} is not one of the bathy layers "
+                f"{sorted(getattr(bathy_cfg, 'layers', None) or {})}"
+            )
+        self.bathy_layer = bathy_layer
 
         self.store_root = (
             Path(store_root) if store_root is not None else get_settings().STORE_ROOT
@@ -931,7 +1084,7 @@ class Extractor:
     # ===================  PROCESS DATA ===================
 
     def process_single_varkey(
-        self, var_key: str, vars: str | list[str] | None = None, n_workers: int = 8
+        self, var_key: str, vars: VarSelection = None, n_workers: int = 8
     ) -> pd.DataFrame:
         """
         Run extraction process for a single var_key.
@@ -939,14 +1092,18 @@ class Extractor:
         Parameters:
             var_key : str
                 Key to identify variable in config.
-            vars : str, list[str], None
+            vars : str, list[str], dict[str, list[int] | None], None
                 Specific variables for extraction associated with the specified var_key. This avoids extracting all vars inside the var_key.
+                A dict names the variables as its keys and, where a value is given,
+                the depth levels (metres) to slice that 3-D variable at for this
+                request, instead of the ones in config.
             n_workers : int, optional
                 Number of parallel workers for geometries (shp) extraction, by default 8.
 
         Returns:
             pd.DataFrame with extracted values.
         """
+        vars, depth_override = split_depth_request(var_key, vars)
         vars = [vars] if isinstance(vars, str) else vars
 
         # An empty list is the documented way to say "everything this var_key
@@ -956,6 +1113,12 @@ class Extractor:
         # to remember there are two.
         if not vars:
             vars = None
+
+        if depth_override and var_key in ("moon", "bathy"):
+            raise ValueError(
+                f"[{var_key}] has no depth axis; depth levels cannot be chosen "
+                f"for it ({depth_override})."
+            )
 
         # Moon and bathy first since they do not need data from ZarCatalog
         if var_key == "moon":
@@ -971,12 +1134,23 @@ class Extractor:
             subdaily_input=self.input_is_subdaily,
         )
 
+        if source == "compiled" and depth_override:
+            raise ValueError(
+                f"[{var_key}] depth levels {depth_override} can only be chosen "
+                f"when reading its own store, and this request is answered from "
+                f"the compiled store, which holds the fixed columns compile "
+                f"published. Name those columns instead, or pass "
+                f"read_from='native'."
+            )
+
         if source == "compiled":
             # Date-only query against an hourly var_key: the daily numbers it
             # publishes live in the compiled store, not in its own.
             return self._extract_compiled(var_key, vars, var_cfg, n_workers)
 
-        vr_catalog = ZarrCatalog(var_key, store_root=self._store_dir(var_cfg))
+        vr_catalog = ZarrCatalog(
+            var_key, app_config=self.app_config, store_root=self._store_dir(var_cfg)
+        )
         dates_resolved = self._resolve_coverage(vr_catalog)
         data_resolved = self._subset_to_coverage(dates_resolved)
         bounds = self._define_bbox(data_resolved)
@@ -992,6 +1166,11 @@ class Extractor:
 
         warn_on_subdaily_store(var_key, var_cfg, ds)
         has_depth = "depth" in ds.dims
+        if depth_override and not has_depth:
+            raise ValueError(
+                f"[{var_key}] depth levels were given for "
+                f"{sorted(depth_override)}, but its store has no depth axis."
+            )
         from_native, from_compiled = split_vars_by_source(
             vars,
             [str(v) for v in ds.data_vars],
@@ -1004,15 +1183,20 @@ class Extractor:
         # axis left in place is not an error, it is silently averaged away by
         # the geometry engine's dimensionless .mean().
         if has_depth:
-            ds = self._preprocess_depth_slices(ds, var_key, var_cfg)
-            if from_native:
-                ds = self._select_depth_columns(ds, from_native, var_key)
+            ds = self._slice_depth(
+                ds, var_key, var_cfg, from_native or None, depth_override
+            )
         elif from_native:
             ds = ds[from_native]
 
         ds = ds.sortby("time")
 
-        result = self._extract(data_resolved, ds, n_workers)
+        # The cadence comes from config, not from the axis just opened: that
+        # holds only the dates asked for, so its spacing says nothing about
+        # the store's. A daily store answers each sample with the day it falls
+        # in; an hourly one with the nearest hour.
+        time_step = _ONE_HOUR if step_freq(var_cfg) == "h" else _ONE_DAY
+        result = self._extract(data_resolved, ds, n_workers, time_step)
 
         if from_compiled:
             # Reached only when this var_key converts hourly, so its derived
@@ -1047,8 +1231,15 @@ class Extractor:
         data_resolved,
         ds: xr.Dataset,
         n_workers: int,
+        time_step: pd.Timedelta | None = None,
     ) -> pd.DataFrame:
-        """Run the point or geometry engine, whichever this input calls for."""
+        """
+        Run the point or geometry engine, whichever this input calls for.
+
+        ``time_step`` is the store's cadence, which decides how a sample's time
+        is matched to the axis (see :func:`_match_times`). None infers it from
+        ``ds``'s own axis, and is what a static layer (no time axis) passes.
+        """
         if self.input_type == "shp":
             if not isinstance(data_resolved, gpd.GeoDataFrame):
                 raise TypeError("Data must be a GeoDataFrame for shapefile extraction")
@@ -1066,9 +1257,9 @@ class Extractor:
             if rename:
                 ds = ds.rename(rename)
 
-            # Strictly before ensure_crs, as _extract_bathy and
-            # extract_from_dataset already are. write_crs names the grid-mapping
-            # coordinate after the one the variables' `grid_mapping` attribute
+            # Strictly before ensure_crs, as extract_from_dataset already is.
+            # write_crs names the grid-mapping coordinate after the one the
+            # variables' `grid_mapping` attribute
             # already points at — but it can only find that attribute by walking
             # variables that have resolvable spatial dims. On a store whose
             # lon/lat carry no CF attributes (the compiled h2ds), that walk finds
@@ -1083,11 +1274,17 @@ class Extractor:
             ds = self.ensure_crs(data_resolved, ds)
 
             return self.extract_from_shp(
-                data_resolved, ds, self.index_col, n_workers=n_workers
+                data_resolved,
+                ds,
+                self.index_col,
+                n_workers=n_workers,
+                time_step=time_step,
             )
 
         elif self.input_type == "csv":
-            return self.extract_from_csv(data_resolved, ds, self.index_col)
+            return self.extract_from_csv(
+                data_resolved, ds, self.index_col, time_step=time_step
+            )
 
         raise ValueError(f"Unsupported input_type: {self.input_type}")
 
@@ -1184,7 +1381,7 @@ class Extractor:
         )
 
         ds = ds[wanted].sortby("time")
-        return self._extract(data_resolved, ds, n_workers=n_workers)
+        return self._extract(data_resolved, ds, n_workers, _ONE_DAY)
 
     def extract_from_dataset(
         self,
@@ -1302,9 +1499,7 @@ class Extractor:
     @overload
     def run(
         self,
-        var_dict: Optional[
-            Union[str, list[str], dict[str, str | list[str] | None]]
-        ] = ...,
+        var_dict: Optional[Union[str, list[str], Mapping[str, VarSelection]]] = ...,
         output_path: None = ...,
         n_workers: int = ...,
     ) -> pd.DataFrame: ...
@@ -1312,18 +1507,14 @@ class Extractor:
     @overload
     def run(
         self,
-        var_dict: Optional[
-            Union[str, list[str], dict[str, str | list[str] | None]]
-        ] = ...,
+        var_dict: Optional[Union[str, list[str], Mapping[str, VarSelection]]] = ...,
         output_path: str | Path = ...,
         n_workers: int = ...,
     ) -> None: ...
 
     def run(
         self,
-        var_dict: Optional[
-            Union[str, list[str], dict[str, str | list[str] | None]]
-        ] = None,
+        var_dict: Optional[Union[str, list[str], Mapping[str, VarSelection]]] = None,
         output_path: Optional[str | Path] = None,
         n_workers: int = 8,
     ) -> pd.DataFrame | None:
@@ -1331,8 +1522,10 @@ class Extractor:
         Extract all or specified var_key and respective variables, and save dataframe with extracted data.
 
         Args:
-            var_dict (str | list[str] | dict[str, str  |  list[str]  |  None] | None, optional: Var_key str or list of strings or dict specifiying vars in var_key.
+            var_dict (str | list[str] | Mapping[str, VarSelection] | None, optional: Var_key str or list of strings or dict specifiying vars in var_key.
                 Defaults to None, extracting all available var_keys and respective variables.
+                A ``{variable: depths | None}`` value also chooses the depth levels
+                (metres) of 3-D variables for this run, over those in config.
             output_path (str | Path | None): Path to save file. If None, it returns a dataframe with all results.
             n_workers (int, optional): Workers for shp parallel processing. Defaults to 8.
 
@@ -1340,10 +1533,11 @@ class Extractor:
             >>> var_dict = {
             >>>     'seapodym': [],
             >>>     'radiation': ['tisr', 'ssrd', 'slhf'],
+            >>>     'dyn_rep': {'thetao': [0, 50], 'zos': None},
             >>>     }
             >>>
-            >>> extractor = Extractor(file_path=input_path, time_col='ls_date', index_col='idlance')
-            >>> results = extractor.run(output_path, var_dict=var_dict, n_workers=12)
+            >>> extractor = Extractor(file_path=input_path, time_col='date', index_col='id_row')
+            >>> results = extractor.run(var_dict, output_path=output_path, n_workers=12)
         """
         t0 = time.perf_counter()
         # job="extract" routes every message in this scope (including from the
@@ -1380,7 +1574,7 @@ class Extractor:
 
     def _run_impl(
         self,
-        var_dict: Optional[Union[str, list[str], dict[str, str | list[str] | None]]],
+        var_dict: Optional[Union[str, list[str], Mapping[str, VarSelection]]],
         n_workers: int,
     ) -> tuple[pd.DataFrame, bool]:
         """Extraction loop body; returns (results, all_succeeded)."""
@@ -1564,25 +1758,17 @@ class Extractor:
         and every row silently lands on index 0: one arbitrary time returned
         for the whole input, varying only by location.
         """
-        grid_times = ds.time.values.astype("datetime64[ns]").astype("int64")
-        q = (
-            pd.to_datetime(query_times)
-            .to_numpy()
-            .astype("datetime64[ns]")
-            .astype("int64")
-        )
-
-        right = np.searchsorted(grid_times, q).clip(0, len(grid_times) - 1)
-        left = (right - 1).clip(0, len(grid_times) - 1)
-        return np.where(
-            np.abs(grid_times[right] - q) <= np.abs(grid_times[left] - q),
-            right,
-            left,
+        return _nearest_steps(
+            pd.DatetimeIndex(ds.time.values),
+            pd.DatetimeIndex(pd.to_datetime(query_times)),
         )
 
     @staticmethod
     def extract_from_csv(
-        data: pd.DataFrame, ds: xr.Dataset | xr.DataArray, index_col: str
+        data: pd.DataFrame,
+        ds: xr.Dataset | xr.DataArray,
+        index_col: str,
+        time_step: pd.Timedelta | None = None,
     ) -> pd.DataFrame:
         """
         Point extraction from a dataframe. If run as staticmethod, time, lat and lon cols should be named 'time', 'lat' and 'lon', resp.
@@ -1603,30 +1789,46 @@ class Extractor:
               nearest-time lookup uses ``np.searchsorted`` and returns wrong indices
               on an unsorted axis. No CRS is required.
 
+        A sample is returned as NaN, not snapped, when the nearest cell does not
+        contain it (outside the grid) or when no time step answers its date
+        (see :func:`_match_times`): a nearest-neighbour search always finds
+        *something*, and that something would read as the sample's own value.
+
         Parameters:
             ds (xr.Dataset | xr.DataArray): dataset with coords lon, lat and optionally time.
+            time_step: The store's cadence. One day means each sample takes the
+                day it falls in. None infers it from ``ds``'s time axis.
 
         Returns:
             pd.DataFrame: extracted variables with previous index set
         """
         valid = data[data["lon"].notna() & data["lat"].notna()]
         coords = {index_col: valid.index}
+        lons, lats = valid["lon"].to_numpy(), valid["lat"].to_numpy()
 
-        lat_idx, lon_idx = Extractor._nearest_grid_indices(
-            ds, valid["lon"].to_numpy(), valid["lat"].to_numpy()
-        )
+        lat_idx, lon_idx = Extractor._nearest_grid_indices(ds, lons, lats)
+        misses = _outside_grid(ds, lons, lats, lat_idx, lon_idx)
+        n_space = int(misses.sum())
 
         isel_kwargs: dict = {
             "lon": xr.DataArray(lon_idx, dims=index_col, coords=coords),
             "lat": xr.DataArray(lat_idx, dims=index_col, coords=coords),
         }
 
-        if "time" in ds.coords:
-            time_idx = Extractor._nearest_time_indices(ds, valid["time"].values)  # type: ignore
+        n_time = 0
+        if "time" in ds.dims:
+            step = time_step if time_step is not None else infer_time_step(ds)
+            time_idx, answered = _match_times(ds, valid["time"].values, step)  # type: ignore
+            n_time = int((~answered & ~misses).sum())
+            misses |= ~answered
             isel_kwargs["time"] = xr.DataArray(time_idx, dims=index_col, coords=coords)
 
         ds = load_dataset_to_memory(ds.isel(**isel_kwargs))
         result = ds.to_dataframe()
+        if misses.any():
+            values = [i for i, c in enumerate(result.columns) if c not in ds.coords]
+            result.iloc[np.flatnonzero(misses), values] = np.nan
+            _log_unanswered(n_space, n_time)
         return result.reindex(data.index)
 
     @staticmethod
@@ -1635,6 +1837,7 @@ class Extractor:
         ds: xr.Dataset | xr.DataArray,
         index_col: str,
         n_workers: int = 8,
+        time_step: pd.Timedelta | None = None,
     ) -> pd.DataFrame:
         """
         Extract data from shapefile using multiprocessing starmap.
@@ -1656,6 +1859,8 @@ class Extractor:
             gdf (gpd.GeoDataFrame): geodataframe with geometries and time column.
             ds (xr.Dataset): xarray dataset with dask arrays.
             n_workers (int, optional): Number of workers for parallel processing of geometries. Defaults to 8.
+            time_step: The store's cadence, as for :meth:`extract_from_csv`. A
+                row whose date no time step answers is returned as NaN.
 
         Returns:
             pd.DataFrame with extracted values.
@@ -1674,16 +1879,19 @@ class Extractor:
 
         ds_computed = load_dataset_to_memory(ds)
 
-        has_time = "time" in ds.coords
-
-        if has_time:
+        if "time" in ds_computed.dims:
+            step = time_step if time_step is not None else infer_time_step(ds_computed)
+            time_idx, answered = _match_times(ds_computed, data.time.values, step)
+            _log_unanswered(0, int((~answered).sum()))
             tasks = [
-                (id, date, geom, ds_computed, index_col)
-                for id, date, geom in zip(data.index, data.time, data.geometry)
+                (id, date, geom, ds_computed, index_col, int(t) if ok else -1)
+                for id, date, geom, t, ok in zip(
+                    data.index, data.time, data.geometry, time_idx, answered
+                )
             ]
         else:
             tasks = [
-                (id, None, geom, ds_computed, index_col)
+                (id, None, geom, ds_computed, index_col, None)
                 for id, geom in zip(data.index, data.geometry)
             ]
 
@@ -1704,7 +1912,8 @@ class Extractor:
         errors: list[Exception] = []
         with ThreadPoolExecutor(max_workers=n_workers) as executor:
             futures = [
-                executor.submit(_extract_geometry, *task, errors) for task in tasks
+                executor.submit(_extract_geometry, *task[:5], errors, task[5])
+                for task in tasks
             ]
             for future in as_completed(futures):
                 result = future.result()
@@ -1719,181 +1928,161 @@ class Extractor:
         self, data: pd.DataFrame | gpd.GeoDataFrame, n_workers: int = 8
     ) -> pd.DataFrame:
         """
-        Extract bathymetry data for geometries (shp - original 15s res, calculates mean and std where the geom touches)
-        and points (csv - from coarser 0.25deg res with mean and std already calculated).
+        Extract bathymetry from one static layer, whatever the input type.
+
+        The layer is ``self.bathy_layer`` or else ``extract_layer`` from config,
+        a key of the bathy ``layers``. Each layer holds ``bathy`` and a
+        precomputed ``bathy_std`` (built by ``scripts/bathymetry.py``), so points
+        take the nearest cell and geometries the polygon mean of both — the same
+        estimator either way, and the same one the other ``_std`` columns use.
         """
         vkey = "bathy"
         var_cfg = self.app_config.variables[vkey]
-        store_root = self._store_dir(var_cfg)
-
-        if self.input_type == "shp":
-            if var_cfg.data_file_hires is None:
-                raise ValueError(
-                    "bathy config entry is missing required 'data_file_hires' field"
-                )
-            data_path = store_root / var_cfg.data_file_hires
-        elif self.input_type == "csv":
-            if var_cfg.data_file is None:
-                raise ValueError(
-                    "bathy config entry is missing required 'data_file' field"
-                )
-            data_path = store_root / var_cfg.data_file
-
-        else:
-            raise ValueError(f"Unsupported input_type: {self.input_type!r}")
+        layer = self.bathy_layer or var_cfg.extract_layer
+        data_path = static_layer_path(var_cfg, layer, self._store_dir(var_cfg))
 
         bounds = self._define_bbox(data)
 
         # Same two lines the store-backed paths log, so a run reads the same
         # whichever var_key produced it. The path carries the file name rather
-        # than stopping at the root: bathy is a single file picked by input type
-        # — the hi-res tiled zarr for geometries, the 0.25 deg netCDF for points
-        # — so the root alone would not say which of the two was read. There is
-        # no date range to report in its place; the layer is static.
-        logger.info(f"Extracting {vkey} data from {data_path}")
+        # than stopping at the root, since the layer decides which file is read.
+        # There is no date range to report in its place; the layer is static.
+        logger.info(f"Extracting {vkey} data from layer {layer!r}: {data_path}")
         logger.info(f"{data.shape[0]} samples | static, no time axis | {bounds}")
 
-        # The hi-res layer (shp path) is a spatially-tiled Zarr store; the 0.25°
-        # layer (csv path) stays netCDF. Open by suffix so the bbox .sel() below
-        # reads only the overlapping tiles instead of the full grid.
+        # Native layers are spatially-tiled Zarr stores, the 0.25° layer is
+        # netCDF. Both stay lazy, so only the tiles the input touches are read.
         if data_path.suffix == ".zarr":
             ds = xr.open_zarr(data_path)
         else:
             ds = xr.open_dataset(data_path)
-        ds_bbox = BBox.from_dataset(ds)
 
-        if not bounds.overlaps(ds_bbox):
+        wanted = _declared_vars(var_cfg) or [str(v) for v in ds.data_vars]
+        missing = [v for v in wanted if v not in ds.data_vars]
+        if missing:
+            raise ValueError(
+                f"[{vkey}] layer {layer!r} ({data_path.name}) holds "
+                f"{sorted(map(str, ds.data_vars))}, not {missing}. Rebuild it with "
+                f"scripts/bathymetry.py."
+            )
+        ds = ds[wanted]
+
+        if not bounds.overlaps(BBox.from_dataset(ds)):
             logger.warning(
                 f"Data input bbox does not overlap with store data for {vkey}"
             )
 
-        if isinstance(data, gpd.GeoDataFrame):
-            ds = (
-                ds.sel(
-                    lon=slice(bounds.xmin, bounds.xmax),
-                    lat=slice(bounds.ymin, bounds.ymax),
-                ).rename({"z": "bathy", "lon": "x", "lat": "y"})
-            ).compute()
+        if self.input_type == "shp":
+            return self._extract(data, ds, n_workers)
 
-            ds = self.ensure_crs(data, ds)
-
-            tasks = [
-                (id, geom, ds, self.index_col)
-                for id, geom in zip(data.index, data.geometry)
-            ]
-
-            out = []
-            with ThreadPoolExecutor(max_workers=n_workers) as executor:
-                futures = [
-                    executor.submit(_extract_geometry_bathy, *task) for task in tasks
-                ]
-                for future in as_completed(futures):
-                    result = future.result()
-                    if result is not None:
-                        out.append(result)
-
-        else:
-            ds = (
-                ds.sel(
-                    lon=slice(bounds.xmin, bounds.xmax),
-                    lat=slice(bounds.ymin, bounds.ymax),
-                )
-            ).compute()
-
-            out = ds.sel(
-                lon=xr.DataArray(
-                    data["lon"].values,
-                    dims=self.index_col,
-                    coords={self.index_col: data.index},
-                ),
-                lat=xr.DataArray(
-                    data["lat"].values,
-                    dims=self.index_col,
-                    coords={self.index_col: data.index},
-                ),
+        # Not extract_from_csv: its KDTree holds every grid cell, which at 15″
+        # is hundreds of millions of points. The layers are regular grids, so a
+        # vectorised nearest .sel finds the cells and reads only their tiles.
+        valid = data[data["lon"].notna() & data["lat"].notna()]
+        coords = {self.index_col: valid.index}
+        lons, lats = valid["lon"].to_numpy(), valid["lat"].to_numpy()
+        out = (
+            ds.sel(
+                lon=xr.DataArray(lons, dims=self.index_col, coords=coords),
+                lat=xr.DataArray(lats, dims=self.index_col, coords=coords),
                 method="nearest",
-            ).to_dataframe()
-
-        if isinstance(out, list):
-            return pd.DataFrame(out).set_index(self.index_col)
-        return out
-
-    @staticmethod
-    def _resolve_depth_slices(var_key: str, var_config) -> list[int]:
-        """
-        Depth levels to slice at, falling back to the compile-time ones.
-
-        ``extract_depth_slices`` is optional and several 3-D variables omit it
-        (``thetao``). Left unsliced, the ``depth`` axis survives into extraction
-        and the geometry engine's dimensionless ``.mean()`` silently averages it
-        away — a single 0-1000 m number reported under the plain variable name.
-        So fall back to ``compile_depth_slices``, which is the same variable's
-        own statement of which levels are worth publishing, and makes extraction
-        agree with the compiled store and Parquet.
-        """
-        levels = getattr(var_config, "extract_depth_slices", None)
-        if levels is not None:
-            return list(levels)
-
-        fallback = getattr(var_config, "compile_depth_slices", None)
-        if fallback is None:
-            raise ValueError(
-                f"[{var_key}] has a depth axis but declares no depth levels. "
-                f"Set extract_depth_slices (or compile_depth_slices) in its "
-                f"config entry — without them the depth axis would be averaged "
-                f"away into one value spanning the whole range."
             )
-
-        logger.info(
-            f"[{var_key}] no extract_depth_slices; slicing at the "
-            f"compile_depth_slices levels instead: {list(fallback)}"
+            .compute()
+            .to_dataframe()
         )
-        return list(fallback)
+        # The nearest .sel above snaps a point beyond the layer onto its edge.
+        outside = _outside_grid(ds, lons, lats)
+        if outside.any():
+            out.loc[out.index[outside], wanted] = np.nan
+            _log_unanswered(int(outside.sum()), 0)
+        return out.reindex(data.index)
 
-    def _select_depth_columns(
-        self, ds: xr.Dataset, requested: list[str], var_key: str
+    def _slice_depth(
+        self,
+        ds: xr.Dataset,
+        var_key: str,
+        var_config,
+        requested: list[str] | None,
+        override: dict[str, list[int]],
     ) -> xr.Dataset:
         """
-        Subset an expanded 3-D dataset by the names the caller actually sees.
+        Slice a store with a depth axis down to the columns the caller asked for.
 
-        After expansion the columns are ``<var_key>_<level>``, so that is what
-        ``vars=`` names here. The bare ``var_key`` is accepted as "every level",
-        which is what asking for the variable itself means.
+        Levels are the extraction ones from config (``extract_depth_levels``
+        over ``depth_levels``, see ``models.depth_levels_for``) with *override*
+        — levels chosen in the request — replacing them per variable. Left
+        unsliced, a depth axis would be averaged away by the geometry engine's
+        dimensionless ``.mean()`` into one value spanning the whole range.
+
+        *requested* may name, besides 2-D variables:
+          - a 3-D variable, meaning every level it is sliced at;
+          - a single ``<variable>_<level>`` column;
+          - the var_key itself, meaning everything (the older single-variable
+            stores, where the variable and the var_key share a name).
+
+        Only the variables requested are sliced, so a 3-D variable nobody asked
+        for needs no levels.
         """
-        available = [str(v) for v in ds.data_vars]
-        wanted = [v for v in requested if v != var_key]
-        if not wanted:
-            return ds
+        levels = depth_levels_for(var_key, var_config, "extract")
+        levels.update(override)
+        if not levels:
+            raise ValueError(
+                f"[{var_key}] has a depth axis but declares no depth levels. Set "
+                f"depth_levels (or extract_depth_levels) in its config entry, or "
+                f"choose them in the request — var_dict={{'{var_key}': "
+                f"{{'<variable>': [0, 100]}}}} — without them the depth axis "
+                f"would be averaged away into one value spanning the whole range."
+            )
 
-        missing = sorted(set(wanted) - set(available))
+        store_vars = [str(v) for v in ds.data_vars]
+        unknown = sorted(set(levels) - set(store_vars))
+        if unknown:
+            raise ValueError(
+                f"[{var_key}] depth levels name {unknown}, which the store does "
+                f"not hold. Store variables: {sorted(store_vars)}."
+            )
+
+        if requested is None or (var_key in requested and var_key not in store_vars):
+            logger.info(f"[{var_key}] slicing at depth levels {levels}")
+            return select_depth_levels(ds, levels, var_key)
+
+        needed: list[str] = []
+        for name in requested:
+            parent = name if name in store_vars else None
+            if parent is None:
+                parent = next((v for v in levels if name.startswith(f"{v}_")), None)
+            if parent is None:
+                raise ValueError(
+                    f"[{var_key}] cannot extract '{name}': the store holds "
+                    f"{sorted(store_vars)}, and depth columns are named "
+                    f"<variable>_<level>."
+                )
+            if parent not in needed:
+                needed.append(parent)
+
+        needed_levels = {v: lv for v, lv in levels.items() if v in needed}
+        logger.info(f"[{var_key}] slicing at depth levels {needed_levels}")
+        sliced = select_depth_levels(ds[needed], needed_levels, var_key)
+
+        available = [str(v) for v in sliced.data_vars]
+        columns: list[str] = []
+        missing: list[str] = []
+        for name in requested:
+            if name in available:
+                columns.append(name)
+            elif name in needed_levels:
+                columns.extend(f"{name}_{level}" for level in needed_levels[name])
+            else:
+                missing.append(name)
         if missing:
             raise ValueError(
-                f"[{var_key}] cannot extract {missing}: this variable is sliced "
-                f"by depth, and at the configured levels it yields {available}. "
-                f"Pass one of those, '{var_key}' for all of them, or change "
-                f"extract_depth_slices."
+                f"[{var_key}] cannot extract {missing}: at the levels in use it "
+                f"yields {available}. Pass one of those, a variable name for all "
+                f"its levels, choose levels in the request (var_dict="
+                f"{{'{var_key}': {{'<variable>': [levels]}}}}), or change "
+                f"extract_depth_levels (extract_depth_slices)."
             )
-        return ds[wanted]
-
-    def _preprocess_depth_slices(
-        self, ds: xr.Dataset | xr.DataArray, var_key: str, var_config
-    ) -> xr.Dataset:
-        """Slice a 3-D variable at configured depth levels, returning one column per depth."""
-        depth_intervals = self._resolve_depth_slices(var_key, var_config)
-        da = ds[var_key].sel(depth=depth_intervals, method="nearest")
-        ds_out = xr.Dataset(
-            {
-                f"{var_key}_{int(d.values)}": da.sel(depth=d)
-                .squeeze(drop=True)
-                .drop_vars("depth")
-                for d in da.depth
-            }
-        )
-        rename_map = {
-            f"{var_key}_{int(d.values)}": f"{var_key}_{target}"
-            for d, target in zip(da.depth, depth_intervals)
-        }
-        return ds_out.rename(rename_map)
+        return sliced[list(dict.fromkeys(columns))]
 
     def _extract_moon_phase(
         self, data: pd.DataFrame | gpd.GeoDataFrame
@@ -1925,22 +2114,20 @@ class Extractor:
     # ======================= HELPERS =========================
     def _normalize_var_dict(
         self,
-        var_dict: Optional[
-            Union[str, list[str], dict[str, str | list[str] | None]]
-        ] = None,
-    ) -> dict[str, str | list[str] | None]:
+        var_dict: Optional[Union[str, list[str], Mapping[str, VarSelection]]] = None,
+    ) -> dict[str, VarSelection]:
         """
         Helper function to resolves var_dict arg from ``run()``
 
         Args:
-            var_dict (Optional[Union[str, list[str], dict[str, str  |  list[str]  |  None]]], optional): _description_. Defaults to None.
+            var_dict (Optional[Union[str, list[str], Mapping[str, VarSelection]]], optional): _description_. Defaults to None.
 
         Raises:
             TypeError: if type list[str] but elements not str
             TypeError: No valid var_dict
 
         Returns:
-            dict[str, str | list[str] | None]: _description_
+            dict[str, VarSelection]: _description_
         """
         if var_dict is None:
             # Exclude compiled-output variables (source: h2mare) from default extraction
@@ -1956,8 +2143,8 @@ class Extractor:
             )
             return {k: None for k in all_var_keys}
 
-        elif isinstance(var_dict, dict):
-            return var_dict
+        elif isinstance(var_dict, Mapping):
+            return dict(var_dict)
 
         # single var_key
         elif isinstance(var_dict, str):

@@ -8,22 +8,34 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Literal, Optional
 
-import cartopy.crs as ccrs
-import cartopy.feature as cfeature
 import geopandas as gpd
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import plotly.express as px
 import polars as pl
 import xarray as xr
 from loguru import logger
 
 from h2mare.config import get_settings
+from h2mare.models import depth_levels_for
 from h2mare.storage.var_routing import catalog_for_var
+from h2mare.storage.xarray_helpers import select_depth_levels
 from h2mare.storage.zarr_catalog import ZarrCatalog
 from h2mare.types import BBox, ReadFrom
 from h2mare.validators import validate_columns, validate_var_key
+
+# The plotting stack is the optional `viz` extra. Said here, where it is first
+# needed, rather than as a bare "No module named 'cartopy'".
+try:
+    import cartopy.crs as ccrs
+    import cartopy.feature as cfeature
+    import matplotlib.pyplot as plt
+    import plotly.express as px
+except ImportError as e:
+    raise ImportError(
+        f"h2mare's plotting needs the viz extra "
+        f"({(e.name or 'a package').split('.')[0]} is not installed): "
+        "pip install 'h2mare[viz]'"
+    ) from e
 
 _PANEL_WIDTH = 3.0  # inches per panel column
 _WSPACE = -0.15  # fractional horizontal gap between panels
@@ -610,6 +622,27 @@ def field_for_plot(ds: xr.Dataset, var: str) -> tuple[xr.DataArray, str]:
     return da, ""
 
 
+def _native_depth_slice(var: str, var_key: str) -> tuple[str, int] | None:
+    """``(variable, level)`` when *var* is a depth slice of a 3-D store variable.
+
+    ``thetao_0`` is not a name any store holds: the native store keeps
+    ``thetao`` on a depth axis and the slice only exists once extraction or
+    compile cuts it. :func:`catalog_for_var` routes such a name to the compiled
+    store, which a project that never compiles does not have, so the slice is
+    cut from the native field instead — the same nearest-depth selection
+    extraction makes. Derived slices (``ke_0``, ``thetao_std_0``) have no
+    native variable and return None.
+    """
+    parent, _, level = var.rpartition("_")
+    if not parent or not level.isdigit():
+        return None
+    app_config = get_settings().app_config
+    var_config = app_config.variables[validate_var_key(var_key, app_config)]
+    if parent not in depth_levels_for(var_key, var_config, purpose="extract"):
+        return None
+    return parent, int(level)
+
+
 def plot_records_on_field(
     data: pd.DataFrame | gpd.GeoDataFrame,
     var_key: str,
@@ -650,12 +683,19 @@ def plot_records_on_field(
             so a daily h2ds column of an hourly var_key plots the daily field that
             extraction returned. ``"native"`` pins the var_key's own store, which
             is how you look at the raw hourly field behind such a column.
+            A depth slice of a stored 3-D variable (``thetao_0``) is cut from
+            the native store under ``"auto"`` and ``"native"``, so it plots
+            without a compiled store; ``"compiled"`` still reads the h2ds column.
     """
     if var is None:
         var = _default_var_for(var_key)
         logger.info(f"var not set; plotting '{var}' for '{var_key}'.")
 
-    cat = catalog_for_var(var, var_key, read_from=read_from)
+    depth_slice = _native_depth_slice(var, var_key) if read_from != "compiled" else None
+    open_var = depth_slice[0] if depth_slice else var
+    cat = catalog_for_var(
+        open_var, var_key, read_from="native" if depth_slice else read_from
+    )
     is_geo = isinstance(data, gpd.GeoDataFrame)
     if is_geo:
         data = _to_wgs84(data)
@@ -671,19 +711,21 @@ def plot_records_on_field(
         bbox = (minx - offset, miny - offset, maxx + offset, maxy + offset)
 
         try:
-            ds = cat.open_dataset(dates=date, bbox=bbox, variables=var)  # type: ignore[arg-type]
+            ds = cat.open_dataset(dates=date, bbox=bbox, variables=open_var)  # type: ignore[arg-type]
         except FileNotFoundError:
             # open_dataset raises for a date the store has no file for; it never
-            # returns None, so the check that used to stand here was unreachable
-            # and the first uncovered record ended the loop instead of being
-            # skipped. Not re-raised with the original message: it lists every
-            # date the file does hold, which is a year of them.
+            # returns None, so catching is the only way to skip an uncovered
+            # record rather than end the loop on it. Not re-raised with the
+            # original message: it lists every date the file does hold, which is
+            # a year of them.
             logger.warning(
                 f"[{cat.var_key}] no data for {pd.to_datetime(date).date()}; "  # type: ignore[arg-type]
                 f"skipping this record."
             )
             continue
 
+        if depth_slice:
+            ds = select_depth_levels(ds, {open_var: [depth_slice[1]]}, owner=var_key)
         field, note = field_for_plot(ds, var)
 
         fig, ax = plt.subplots()

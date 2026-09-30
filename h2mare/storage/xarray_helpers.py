@@ -167,11 +167,14 @@ def chunk_dataset(
     cells (capped at the dim size) and fills the remaining byte budget with time.
     Tiling is what makes point/geometry extraction cheap: a small bbox reads only
     the overlapping tiles instead of decompressing the full grid for every
-    timestep. Non-spatial, non-time dims (e.g. depth) are chunked to 1 when a
-    full-grid per-step payload exceeds target_mb, preventing oversized chunks on
-    4-D datasets. Trade-off: tiling speeds up subset reads but makes full-grid
-    single-timestep reads (e.g. a global daily map) costlier, since the larger
-    time chunk pulls neighbouring timesteps per tile.
+    timestep. Non-spatial, non-time dims (e.g. depth) are always chunked to 1:
+    compile and extraction read a few levels, never the whole column, and a
+    level shared a chunk with every other level otherwise — reading one depth
+    decompressed them all (10× slower on a 23-level store), at the cost of
+    ~1/3 more disk from compressing each level alone. Trade-off: tiling speeds
+    up subset reads but makes full-grid single-timestep reads (e.g. a global
+    daily map) costlier, since the larger time chunk pulls neighbouring
+    timesteps per tile.
 
     ``"map"`` keeps spatial dims contiguous and pins the time chunk to
     ``map_time_chunk`` (default 14), so a small block of full-grid fields is the
@@ -213,11 +216,6 @@ def chunk_dataset(
         time_vars, key=lambda v: ds[v].sizes[time_dim] * ds[v].dtype.itemsize
     )
     da = ds[main_var]
-    time_idx = da.dims.index(time_dim)
-    bytes_per_step = (
-        int(np.prod([s for i, s in enumerate(da.shape) if i != time_idx]))
-        * da.dtype.itemsize
-    )
 
     if layout == "map":
         # Asymmetry vs "timeseries" is deliberate, do NOT "fix" it to mirror the
@@ -266,9 +264,8 @@ def chunk_dataset(
         if dim.lower() in spatial_dims:
             # Tile spatial dims so a small bbox reads only the overlapping tiles.
             dim_dict[dim] = min(spatial_chunk, int(size))
-        elif bytes_per_step <= target_bytes:
-            dim_dict[dim] = size
         else:
+            # Levels are indexed into, not read contiguously: one per chunk.
             dim_dict[dim] = 1
 
     non_time_size = int(np.prod(list(dim_dict.values()))) if dim_dict else 1
@@ -333,6 +330,102 @@ def convert360_180(_ds: xr.Dataset) -> xr.Dataset:
     return _ds
 
 
+#: (owner, name, level) triples already warned about by :func:`nearest_depth`:
+#: a compile slices the same levels once per period file, and one line per run
+#: says what a line per year would.
+_depth_warned: set[tuple[str, str, float]] = set()
+
+
+def nearest_depth(depths, level: float, owner: str, name: str) -> float:
+    """
+    The stored depth a requested *level* resolves to: the nearest one.
+
+    A request past the end of the axis is answered by its last level — that
+    is the design, and the shipped config relies on it: ``depth_range`` stops
+    the ``thetao`` download at 1000 m, so ``thetao_1000`` is the 902 m level,
+    the next one (1062 m) lying outside the band. Up to one level spacing past
+    either end, that clamp is silent.
+
+    Further than that it is almost certainly a mistake — 5000 m against an
+    axis ending at 1000 m, or a level list written for another store — and
+    the column would still be labelled with the depth that was asked for, so
+    it says so, once per run, naming the depth actually used.
+
+    Args:
+        depths: The store's depth axis, in metres.
+        level: Requested depth, in metres.
+        owner: var_key named in the warning.
+        name: Variable or entry named in the warning.
+    """
+    axis = np.sort(np.asarray(depths, dtype="float64"))
+    i = int(np.abs(axis - level).argmin())
+    if axis.size > 1 and not axis[0] <= level <= axis[-1]:
+        end_gap = axis[1] - axis[0] if level < axis[0] else axis[-1] - axis[-2]
+        key = (owner, name, float(level))
+        if abs(axis[i] - level) > end_gap and key not in _depth_warned:
+            _depth_warned.add(key)
+            logger.warning(
+                f"[{owner}] {name}: {level:g} m is past the store's depth axis "
+                f"({axis[0]:g}..{axis[-1]:g} m), so it is read from the "
+                f"{axis[i]:g} m level, {abs(axis[i] - level):g} m away, while "
+                f"still named for {level:g} m. Check the requested levels "
+                f"against this store's depth_range."
+            )
+    return float(axis[i])
+
+
+def select_depth_levels(
+    ds: xr.Dataset, levels: dict[str, list[int]], owner: str
+) -> xr.Dataset:
+    """
+    Replace each 3-D variable by one 2-D column per configured depth level.
+
+    ``levels`` maps a store variable to its depths in metres (as resolved by
+    ``models.depth_levels_for``); a variable listed there becomes
+    ``<variable>_<level>``, matched to the store's axis by nearest depth and
+    named after the *requested* level (``thetao_1000`` off the 902 m level, the
+    deepest the store holds). A level far past either end of the axis is
+    warned about (:func:`nearest_depth`). Variables
+    without a depth axis pass through, so a store may mix 2-D and 3-D fields.
+
+    A 3-D variable left out is refused rather than passed on: a depth axis
+    that survives is averaged away by the geometry engine or leaks into h2ds.
+    ``owner`` is the var_key named in the errors.
+    """
+    unknown = sorted(set(levels) - {str(v) for v in ds.data_vars})
+    if unknown:
+        raise ValueError(
+            f"[{owner}] depth_levels names {unknown}, which the store does not "
+            f"hold. Store variables: {sorted(str(v) for v in ds.data_vars)}."
+        )
+
+    out: dict[str, xr.DataArray] = {}
+    for name, da in ds.data_vars.items():
+        name = str(name)
+        has_depth = "depth" in da.dims
+        if name in levels:
+            if not has_depth:
+                raise ValueError(
+                    f"[{owner}] depth_levels lists '{name}', which has no depth "
+                    f"axis. Remove it from depth_levels."
+                )
+            for level in levels[name]:
+                stored = nearest_depth(da["depth"].values, level, owner, name)
+                out[f"{name}_{level}"] = da.sel(depth=stored).drop_vars("depth")
+        elif has_depth:
+            raise ValueError(
+                f"[{owner}] '{name}' has a depth axis but no depth levels. Add it "
+                f"to depth_levels (or compile_depth_slices / extract_depth_slices "
+                f"for a variable named like its var_key); left unsliced, its "
+                f"whole depth range would be averaged into one value."
+            )
+        else:
+            out[name] = da
+
+    result = xr.Dataset(out)
+    return result.drop_vars("depth", errors="ignore")
+
+
 def rename_dims(ds: xr.Dataset) -> xr.Dataset:
     """Rename 'longitude', 'latitude', and 'valid_time' (CDS-ERA5) to lon, lat, time."""
     mapping = {}
@@ -343,6 +436,49 @@ def rename_dims(ds: xr.Dataset) -> xr.Dataset:
     if "valid_time" in ds.sizes:
         mapping["valid_time"] = "time"
     return ds.rename(mapping)
+
+
+def rename_source_vars(
+    ds: xr.Dataset, renames: dict[str, str] | None, var_key: str = ""
+) -> xr.Dataset:
+    """
+    Rename source variables to the names their var_key publishes them under.
+
+    Driven by ``source_renames`` in config (``{analysed_sst: sst}``), which is
+    the map between a var_key's ``source_vars`` and its ``compiled_vars``.
+
+    A rename whose source is gone but whose target is already there is a no-op,
+    so a dataset that has been through here once can pass again. A rename whose
+    source is missing outright raises: config names a variable the file does not
+    have, which would otherwise surface much later as a column nothing wrote.
+
+    Args:
+        ds: Dataset as opened, with its source variable names.
+        renames: Source name -> published name. None or empty returns ``ds``.
+        var_key: Identity label for the error message only.
+
+    Returns:
+        The dataset with the renames applied.
+
+    Raises:
+        ValueError: A rename names a variable the dataset does not hold, under
+            either name.
+    """
+    if not renames:
+        return ds
+
+    label = f"[{var_key}] " if var_key else ""
+    mapping: dict[str, str] = {}
+    for src, out in renames.items():
+        if src in ds.variables:
+            mapping[src] = out
+        elif out not in ds.variables:
+            raise ValueError(
+                f"{label}source_renames maps '{src}' -> '{out}', but the dataset "
+                f"holds neither. It has {sorted(map(str, ds.data_vars))}."
+            )
+
+    return ds.rename_vars(mapping) if mapping else ds
 
 
 # Decimal places lon/lat labels are rounded to. The finest grid in the pipeline
@@ -383,6 +519,166 @@ def snap_grid_coords(ds: xr.Dataset, decimals: int = GRID_COORD_DECIMALS) -> xr.
     return ds.assign_coords(new_coords) if new_coords else ds
 
 
+#: How far two axes' steps may differ and still count as the same grid, relative
+#: to the step. Labels are rounded to ``GRID_COORD_DECIMALS`` on write, which
+#: moves a measured step by ~1e-6 of itself on a 280-cell axis. The differences
+#: worth catching are whole ratios apart — 0.25° against 1/12° is 3×.
+_STEP_REL_TOL = 1e-4
+
+
+def _axis_mismatch(stored: np.ndarray, incoming: np.ndarray, name: str) -> str | None:
+    """
+    Why *incoming* is not on the same lattice as *stored*, or None if it is.
+
+    Same lattice means same step and same cell phase; the two need not cover
+    the same extent, because widening a bbox legitimately adds cells at the
+    ends. Different step or phase is not a wider grid but a *second* grid,
+    which an append would union into one axis carrying both.
+    """
+    # Imported here: utils.spatial pulls in scipy and the land mask, which the
+    # write path should not load just to compare two axes.
+    from h2mare.utils.spatial import PHASE_TOL_CELLS, axis_step
+
+    if stored.size < 2 or incoming.size < 2:
+        # A single cell has no step to compare, so there is nothing to refuse.
+        return None
+
+    try:
+        stored_step = axis_step(stored)
+        incoming_step = axis_step(incoming)
+    except ValueError as e:
+        return (
+            f"'{name}' is not a regular axis ({e}). A stored axis like this is "
+            f"usually one that already carries two grids unioned together."
+        )
+
+    if abs(incoming_step - stored_step) > _STEP_REL_TOL * abs(stored_step):
+        return (
+            f"'{name}' step differs: stored {stored_step:.6g}°, "
+            f"incoming {incoming_step:.6g}°"
+        )
+
+    offset_cells = (incoming[0] - stored[0]) / stored_step
+    if abs(offset_cells - round(offset_cells)) > PHASE_TOL_CELLS:
+        return (
+            f"'{name}' cells sit out of phase: stored centres start at "
+            f"{stored[0]:.6g}°, incoming at {incoming[0]:.6g}°, which is "
+            f"{offset_cells:.3f} cells apart rather than a whole number"
+        )
+    return None
+
+
+def check_grid_compatible(stored: xr.Dataset, incoming: xr.Dataset) -> None:
+    """
+    Refuse to write data onto a store that is on a different grid.
+
+    An append merges the two with an outer join, which aligns labels that match
+    and *unions* those that do not. Two grids of different resolution therefore
+    produce one axis holding every cell of both, each variable NaN at the other
+    grid's cells — a store that is silently wrong rather than a write that
+    failed. Compiling at a different ``dx`` is the way to reach this, so the
+    check names the remedy: a different grid belongs in its own store.
+
+    Extent is not compared. Widening a bbox adds cells at the ends of the same
+    lattice, which merges correctly and is a supported thing to do.
+
+    Raises:
+        ValueError: if either horizontal axis differs in step or phase.
+    """
+    problems = [
+        reason
+        for name in ("lat", "lon")
+        if name in stored.coords and name in incoming.coords
+        for reason in [
+            _axis_mismatch(
+                np.asarray(stored[name].values, dtype="float64"),
+                np.asarray(incoming[name].values, dtype="float64"),
+                name,
+            )
+        ]
+        if reason is not None
+    ]
+    if problems:
+        raise ValueError(
+            "Incoming data is on a different grid than the store: "
+            + "; ".join(problems)
+            + ". An append would union the two into one axis holding both "
+            "grids. Write this grid to its own store instead — give it its own "
+            "`local_folder` and `dataset_id_rep` in config.yaml."
+        )
+
+
+def depth_mismatch(stored: xr.Dataset, incoming: xr.Dataset) -> str | None:
+    """
+    How *incoming*'s depth levels differ from *stored*'s, or None if they match.
+
+    Depth is compared by *equality*, not by step and phase like the horizontal
+    axes: model levels are irregular by design (0.494, 1.541, 2.646 … metres),
+    so there is no lattice to compare. The tolerance is the one
+    :data:`~h2mare.storage.zarr_reader.AXIS_SNAP_TOL` already sets for depth,
+    imported rather than restated so the two cannot drift apart.
+
+    A dataset without a depth coordinate is not compared: adding a 2-D variable
+    to a store whose other variables have depth, or the reverse, changes no
+    shared axis, because a variable keeps whatever dimensions it was written
+    with.
+
+    Returned rather than raised so the write path can refuse an append and
+    merely warn on a full rewrite from the one comparison.
+    """
+    # Imported here rather than at module scope: zarr_reader imports this module.
+    from h2mare.storage.zarr_reader import AXIS_SNAP_TOL
+
+    if "depth" not in stored.coords or "depth" not in incoming.coords:
+        return None
+
+    old = np.asarray(stored["depth"].values, dtype="float64")
+    new = np.asarray(incoming["depth"].values, dtype="float64")
+
+    if old.shape == new.shape and np.allclose(
+        old, new, rtol=0, atol=AXIS_SNAP_TOL["depth"]
+    ):
+        return None
+    return f"stored {_level_summary(old)}, incoming {_level_summary(new)}"
+
+
+def check_depth_compatible(stored: xr.Dataset, incoming: xr.Dataset) -> None:
+    """
+    Refuse to write one set of depth levels into a store that holds another.
+
+    The same outer join :func:`check_grid_compatible` guards on lat/lon applies
+    to ``depth``, with the same silent result: widening ``depth_range`` and
+    running on means the store's depth axis unions to hold both sets, and every
+    date written before the change reads NaN at the new levels.
+
+    Only for a write that keeps some of the stored data. Incoming data spanning
+    a whole file replaces it, which is how a store is legitimately moved onto
+    new levels — the caller decides which case it is.
+
+    Raises:
+        ValueError: if both carry a depth axis and the two differ.
+    """
+    reason = depth_mismatch(stored, incoming)
+    if reason is None:
+        return
+    raise ValueError(
+        f"Incoming data has different depth levels than the store: {reason}. "
+        f"An append would union the two into one axis holding both, leaving "
+        f"every already-stored date NaN at the levels it was written without. "
+        f"Changing `depth_range` or `depth_levels` means rewriting the store, "
+        f"not extending it: re-run with explicit --start-date/--end-date "
+        f"covering the whole period so each file is replaced, and note that "
+        f"levels the new run does not fetch are dropped."
+    )
+
+
+def _level_summary(levels: np.ndarray, limit: int = 4) -> str:
+    """``depth`` values for a message, abbreviated once there are many."""
+    shown = ", ".join(f"{v:g}" for v in levels[:limit])
+    suffix = f", … ({levels.size} levels)" if levels.size > limit else ""
+    return f"[{shown}{suffix}]"
+
+
 #: Attribute name prefixes carrying the source file's own encoding.
 _SOURCE_ENCODING_PREFIXES = ("GRIB_",)
 
@@ -393,6 +689,43 @@ _SOURCE_ENCODING_PREFIXES = ("GRIB_",)
 #: metres), which is what makes keeping them worse than dropping them — a
 #: consumer cannot tell the nonsense from the sensible.
 _SOURCE_ENCODING_ATTRS = ("valid_min", "valid_max")
+
+
+def drop_conflicting_missing_value(ds: xr.Dataset) -> xr.Dataset:
+    """
+    Drop a ``missing_value`` that contradicts the ``_FillValue`` beside it.
+
+    Reading a Zarr moves both into ``.encoding``, and xarray refuses to write
+    them back when they disagree: *"Variable None has conflicting _FillValue
+    (nan) and missing_value (-999.0). Cannot encode data."* So a store carrying
+    both cannot be rewritten from itself — which is what a front recompute, a
+    rechunk, or any overlapping append does.
+
+    ``chl`` is the one store here that carries it, inherited from the CMEMS
+    ocean-colour product and never true of what we stored: the array's fill is
+    NaN and no -999 appears in it. ``_FillValue`` is kept because it describes
+    the data; CF has deprecated ``missing_value`` in its favour anyway. Where
+    the two agree nothing is dropped, since nothing is wrong.
+    """
+    for name in list(ds.variables):
+        encoding = ds[name].encoding
+        fill, missing = encoding.get("_FillValue"), encoding.get("missing_value")
+        if missing is None or fill is None:
+            continue
+        # NaN != NaN, so compare that case by name rather than by value.
+        both_nan = (
+            isinstance(fill, float)
+            and isinstance(missing, float)
+            and np.isnan(fill)
+            and np.isnan(missing)
+        )
+        if not both_nan and fill != missing:
+            logger.debug(
+                f"{name}: dropping missing_value={missing}, which contradicts "
+                f"_FillValue={fill}"
+            )
+            encoding.pop("missing_value")
+    return ds
 
 
 def drop_source_encoding_attrs(ds: xr.Dataset, *, drop_grib: bool = True) -> xr.Dataset:
@@ -493,8 +826,8 @@ def apply_cf_attrs(ds: xr.Dataset, native_var_key: str | None = None) -> xr.Data
 
     Coordinates get :data:`_CF_COORD_ATTRS`. Without them a store is not merely
     under-documented: ``rio.clip`` resolves spatial dims by name and only falls
-    back to lon/lat when they carry CF attributes, which is why geometry
-    extraction against the CDS stores and h2ds used to clip to nothing but NaN.
+    back to lon/lat when they carry CF attributes, so without them geometry
+    extraction clips to nothing but NaN.
 
     Args:
         ds: Dataset to annotate, modified in place and returned.

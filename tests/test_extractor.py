@@ -293,6 +293,124 @@ class TestNearestTimeIndices:
 
 
 # ---------------------------------------------------------------------------
+# Samples no cell or time step answers
+# ---------------------------------------------------------------------------
+
+
+def _gappy_daily_ds() -> xr.Dataset:
+    """Daily axis missing Jan 3-4; sst is 10 x the day of the month everywhere."""
+    times = pd.to_datetime(["2020-01-01", "2020-01-02", "2020-01-05"])
+    lats, lons = [30.0, 35.0, 40.0], [-10.0, -5.0, 0.0]
+    data = np.array([10.0, 20.0, 50.0])[:, None, None] * np.ones((1, 3, 3))
+    return xr.Dataset(
+        {"sst": (["time", "lat", "lon"], data)},
+        coords={"time": times, "lat": lats, "lon": lons},
+    )
+
+
+class TestUnansweredSamplesAreNaN:
+    """
+    A nearest-neighbour search always finds *something*. A point beyond the
+    grid used to take the edge cell's value, a date missing from the axis its
+    neighbour's, and a sub-daily sample after noon the next day's — each one
+    returned as though it were the sample's own.
+    """
+
+    @staticmethod
+    def _csv(times, lons, lats, **kwargs) -> pd.DataFrame:
+        pts = pd.DataFrame({"time": pd.to_datetime(times), "lon": lons, "lat": lats})
+        return Extractor.extract_from_csv(pts, kwargs.pop("ds"), "row_id", **kwargs)
+
+    def test_point_beyond_the_grid_is_nan(self):
+        """
+        Regression: lon 5 and lon 350 against a grid ending at 0 both took the
+        eastern edge cell's value; lat 44 the northern edge's.
+        """
+        out = self._csv(
+            ["2020-01-01"] * 4,
+            lons=[1.0, 5.0, 350.0, -5.0],
+            lats=[30.0, 30.0, 30.0, 44.0],
+            ds=_make_distinct_ds(),
+        )
+        # lon 1.0 is inside the last cell (it reaches 2.5): t=0, lat_i=0, lon_i=2
+        assert out["sst"].iloc[0] == 2.0
+        assert out["sst"].iloc[1:].isna().all()
+
+    def test_irregular_axis_reaches_as_far_as_its_wider_side(self):
+        """The inner cell of [-10, -3, 0] spans 3.5° west of -3: -6 is inside it."""
+        ds = _make_spatial_ds(lons=[-10.0, -3.0, 0.0])
+        out = self._csv(["2020-01-01"], lons=[-6.0], lats=[30.0], ds=ds)
+        assert out["sst"].iloc[0] == 1.0
+
+    def test_missing_day_is_nan_rather_than_its_neighbour(self):
+        """Regression: Jan 3 is not on the axis and took Jan 2's value."""
+        out = self._csv(
+            ["2020-01-02", "2020-01-03"],
+            lons=[-5.0, -5.0],
+            lats=[35.0, 35.0],
+            ds=_gappy_daily_ds(),
+            time_step=pd.Timedelta(days=1),
+        )
+        assert out["sst"].iloc[0] == 20.0
+        assert np.isnan(out["sst"].iloc[1])
+
+    def test_inferred_step_is_daily_on_a_gappy_axis(self):
+        """
+        Inference takes the smallest spacing: the median of [1 day, 3 days]
+        would read 2 days, and a day-wide tolerance would hand Jan 3 Jan 2.
+        """
+        out = self._csv(["2020-01-03"], lons=[-5.0], lats=[35.0], ds=_gappy_daily_ds())
+        assert np.isnan(out["sst"].iloc[0])
+
+    def test_subdaily_sample_on_a_daily_axis_takes_its_own_day(self):
+        """
+        Regression: the day's step is stamped at midnight, so 23:30 on Jan 1 was
+        30 minutes from Jan 2's step and 23.5 hours from its own, and took Jan 2.
+        """
+        out = self._csv(
+            ["2020-01-01 08:00", "2020-01-01 23:30"],
+            lons=[-5.0, -5.0],
+            lats=[35.0, 35.0],
+            ds=_gappy_daily_ds(),
+            time_step=pd.Timedelta(days=1),
+        )
+        assert out["sst"].tolist() == [10.0, 10.0]
+
+    def test_hourly_axis_takes_the_nearest_hour_within_half_a_step(self):
+        times = pd.date_range("2020-01-01", periods=5, freq="h")
+        ds = xr.Dataset(
+            {
+                "t2m": (
+                    ["time", "lat", "lon"],
+                    np.arange(5.0)[:, None, None] * np.ones((1, 3, 3)),
+                )
+            },
+            coords={
+                "time": times,
+                "lat": [30.0, 35.0, 40.0],
+                "lon": [-10.0, -5.0, 0.0],
+            },
+        )
+        out = self._csv(
+            ["2020-01-01 02:20", "2020-01-01 06:00"],
+            lons=[-5.0, -5.0],
+            lats=[35.0, 35.0],
+            ds=ds,
+        )
+        assert out["t2m"].iloc[0] == 2.0
+        assert np.isnan(out["t2m"].iloc[1])  # 2 h past the last step
+
+    def test_geometry_on_a_missing_day_is_nan(self):
+        """Regression: the geometry engine's nearest .sel lent Jan 3 Jan 2's value."""
+        gdf = _make_geodf([box(-12, 28, -3, 36)] * 2, ["2020-01-02", "2020-01-03"])
+        out = _extractor(gdf).extract_from_dataset(_gappy_daily_ds(), n_workers=2)
+
+        out = out.sort_index()
+        assert out.loc[0, "sst"] == pytest.approx(20.0)
+        assert np.isnan(out.loc[1, "sst"])
+
+
+# ---------------------------------------------------------------------------
 # Atomic checkpoint helpers
 # ---------------------------------------------------------------------------
 
@@ -838,6 +956,43 @@ class TestProcessSingleVarkeyRouting:
         assert out["ekman_anom"].tolist() == [400.0, 400.0]  # same day, broadcast
         assert set(_atm_config().compiled_vars) <= set(out.columns)
 
+    @staticmethod
+    def _daily_tp_config() -> SimpleNamespace:
+        return SimpleNamespace(
+            compiled_vars=["tp"],
+            time_step=TimeStep.DAILY,
+            extract_depth_slices=None,
+            rename_lonlat=False,
+            local_folder="CDS_AtmAccumAvg",
+            store_root=None,
+        )
+
+    def test_daily_store_answers_subdaily_samples_with_their_own_day(self, monkeypatch):
+        """
+        Regression: sub-daily input kept its full stamps against a daily store,
+        whose steps sit at midnight, so every sample after noon took the next
+        day's value (101, not 100, for 23:30 on Jan 1).
+        """
+        self._patch_catalogs(monkeypatch, self._h2ds()[["tp"]], self._h2ds())
+        ext = self._extractor_for(
+            self._daily_tp_config(), ["2020-01-01 03:00:00", "2020-01-01 23:30:00"]
+        )
+
+        out = ext.process_single_varkey("atm-accum-avg")
+
+        assert out["tp"].tolist() == [100.0, 100.0]
+
+    def test_daily_store_leaves_a_missing_day_empty(self, monkeypatch):
+        """Regression: a day absent from the store took its neighbour's value."""
+        store = self._h2ds()[["tp"]].drop_sel(time=pd.Timestamp("2020-01-03"))
+        self._patch_catalogs(monkeypatch, store, self._h2ds())
+        ext = self._extractor_for(self._daily_tp_config(), ["2020-01-02", "2020-01-03"])
+
+        out = ext.process_single_varkey("atm-accum-avg")
+
+        assert out["tp"].iloc[0] == 101.0
+        assert np.isnan(out["tp"].iloc[1])
+
     def test_daily_store_never_touches_h2ds(self, monkeypatch):
         cfg = SimpleNamespace(
             compiled_vars=["tp"],
@@ -1098,6 +1253,28 @@ class TestStoreRootReachesTheReads:
         ext.process_single_varkey("atm-accum-avg")
 
         assert roots["atm-accum-avg"] == own / "CDS_AtmAccumAvg"
+
+    def test_native_read_uses_the_given_app_config(self, monkeypatch, tmp_path):
+        """
+        Regression: the native read built its catalog without ``app_config``, so
+        ZarrCatalog validated the var_key against the *process* config. An
+        Extractor handed another project's config failed on any var_key that
+        project has and this one lacks.
+        """
+        self._patch_recording_roots(monkeypatch)
+        recording = extractor_module.ZarrCatalog
+        configs: dict = {}
+
+        def _factory(var_key, **kw):
+            configs[var_key] = kw.get("app_config")
+            return recording(var_key, **kw)
+
+        monkeypatch.setattr(extractor_module, "ZarrCatalog", _factory)
+        ext = self._extractor_for(self._daily_cfg(), store_root=tmp_path)
+
+        ext.process_single_varkey("atm-accum-avg")
+
+        assert configs["atm-accum-avg"] is ext.app_config
 
 
 class TestPinnedReadFrom:
@@ -1446,6 +1623,198 @@ class TestDepthVariables:
         assert "thetao_1000" in msg
         assert "thetao_100" in msg  # what it does yield
         assert "extract_depth_slices" in msg
+
+
+def _mixed_config(**depth) -> SimpleNamespace:
+    """dyn_rep-shaped config: several store variables, none named like the key."""
+    return SimpleNamespace(
+        compiled_vars=None,
+        time_step=TimeStep.DAILY,
+        rename_lonlat=False,
+        source="cmems",
+        local_folder="dyn_rep",
+        store_root=None,
+        **depth,
+    )
+
+
+def _mixed_ds() -> xr.Dataset:
+    """thetao (= depth) and uo (= 10 x depth) on a depth axis, zos (= 7) flat."""
+    base = _depth_ds()
+    return xr.Dataset(
+        {
+            "thetao": base["thetao"],
+            "uo": base["thetao"] * 10,
+            "zos": base["thetao"].isel(depth=0, drop=True) * 0 + 7,
+        }
+    )
+
+
+class TestPerVariableDepthLevels:
+    """A store mixing 2-D and 3-D fields, each 3-D one at its own levels."""
+
+    _D = TestDepthVariables
+
+    def _extractor(self, cfg, monkeypatch, ds=None) -> Extractor:
+        ext = self._D()._extractor(
+            cfg, monkeypatch, ds if ds is not None else _mixed_ds()
+        )
+        ext.app_config = SimpleNamespace(
+            variables={"dyn_rep": cfg, "h2ds": _h2ds_config()}
+        )
+        return ext
+
+    @staticmethod
+    def _values(out) -> dict:
+        return {
+            c: out[c].tolist()[0]
+            for c in out.columns
+            if c not in extractor_module._COORD_COLS
+        }
+
+    def test_whole_store_slices_each_variable_at_its_levels(self, monkeypatch):
+        cfg = _mixed_config(depth_levels={"thetao": [0, 100], "uo": [500]})
+        out = self._extractor(cfg, monkeypatch).process_single_varkey("dyn_rep")
+
+        assert self._values(out) == {
+            "thetao_0": 0.0,
+            "thetao_100": 100.0,
+            "uo_500": 5000.0,
+            "zos": 7.0,
+        }
+
+    def test_a_named_variable_brings_all_its_levels(self, monkeypatch):
+        cfg = _mixed_config(depth_levels={"thetao": [0, 100], "uo": [500]})
+        out = self._extractor(cfg, monkeypatch).process_single_varkey(
+            "dyn_rep", vars=["thetao", "zos"]
+        )
+        assert set(self._values(out)) == {"thetao_0", "thetao_100", "zos"}
+
+    def test_a_single_level_column_can_be_named(self, monkeypatch):
+        cfg = _mixed_config(depth_levels={"thetao": [0, 100], "uo": [500]})
+        out = self._extractor(cfg, monkeypatch).process_single_varkey(
+            "dyn_rep", vars=["uo_500"]
+        )
+        assert self._values(out) == {"uo_500": 5000.0}
+
+    def test_an_unrequested_3d_variable_needs_no_levels(self, monkeypatch):
+        cfg = _mixed_config(depth_levels={"thetao": [0]})
+        ext = self._extractor(cfg, monkeypatch)
+
+        out = ext.process_single_varkey("dyn_rep", vars=["thetao", "zos"])
+        assert set(self._values(out)) == {"thetao_0", "zos"}
+
+        with pytest.raises(ValueError, match="'uo' has a depth axis"):
+            ext.process_single_varkey("dyn_rep")
+
+    def test_extract_override_is_merged_per_variable(self, monkeypatch):
+        cfg = _mixed_config(
+            depth_levels={"thetao": [0, 100], "uo": [500]},
+            extract_depth_levels={"thetao": [1000]},
+        )
+        out = self._extractor(cfg, monkeypatch).process_single_varkey("dyn_rep")
+        assert set(self._values(out)) == {"thetao_1000", "uo_500", "zos"}
+
+    def test_levels_for_a_variable_the_store_lacks_are_refused(self, monkeypatch):
+        cfg = _mixed_config(depth_levels={"thetao": [0], "so": [0]})
+        with pytest.raises(ValueError, match=r"name \['so'\]"):
+            self._extractor(cfg, monkeypatch).process_single_varkey(
+                "dyn_rep", vars=["thetao"]
+            )
+
+    def test_an_unknown_name_is_refused(self, monkeypatch):
+        cfg = _mixed_config(depth_levels={"thetao": [0]})
+        with pytest.raises(ValueError, match="cannot extract 'mlotst'"):
+            self._extractor(cfg, monkeypatch).process_single_varkey(
+                "dyn_rep", vars=["mlotst"]
+            )
+
+
+class TestDepthLevelsInTheRequest:
+    """var_dict={var_key: {variable: depths}} chooses levels for one run."""
+
+    _P = TestPerVariableDepthLevels
+
+    def _run(self, monkeypatch, vars, cfg=None, ds=None):
+        cfg = cfg or _mixed_config(depth_levels={"thetao": [0, 100]})
+        ext = self._P()._extractor(cfg, monkeypatch, ds)
+        return self._P._values(ext.process_single_varkey("dyn_rep", vars=vars))
+
+    def test_request_levels_replace_the_configured_ones(self, monkeypatch):
+        out = self._run(monkeypatch, {"thetao": [500], "zos": None})
+        assert out == {"thetao_500": 500.0, "zos": 7.0}
+
+    def test_request_levels_cover_a_variable_config_leaves_out(self, monkeypatch):
+        out = self._run(monkeypatch, {"uo": [0, 1000]})
+        assert out == {"uo_0": 0.0, "uo_1000": 10000.0}
+
+    def test_none_keeps_the_configured_levels(self, monkeypatch):
+        out = self._run(monkeypatch, {"thetao": None})
+        assert set(out) == {"thetao_0", "thetao_100"}
+
+    def test_an_empty_dict_means_everything(self, monkeypatch):
+        cfg = _mixed_config(depth_levels={"thetao": [0], "uo": [0]})
+        assert set(self._run(monkeypatch, {}, cfg=cfg)) == {"thetao_0", "uo_0", "zos"}
+
+    def test_the_config_is_left_untouched(self, monkeypatch):
+        cfg = _mixed_config(depth_levels={"thetao": [0, 100]})
+        self._run(monkeypatch, {"thetao": [500]}, cfg=cfg)
+        assert cfg.depth_levels == {"thetao": [0, 100]}
+
+    def test_levels_for_a_flat_variable_are_refused(self, monkeypatch):
+        with pytest.raises(ValueError, match="'zos', which has no depth axis"):
+            self._run(monkeypatch, {"zos": [0]})
+
+    def test_levels_for_a_store_without_depth_are_refused(self, monkeypatch):
+        flat = _mixed_ds()[["zos"]]
+        with pytest.raises(ValueError, match="store has no depth axis"):
+            self._run(monkeypatch, {"zos": [0]}, ds=flat)
+
+    @pytest.mark.parametrize(
+        ("levels", "error", "message"),
+        [
+            ([], ValueError, "empty level list"),
+            ([-10], ValueError, ">= 0"),
+            ([0, 0], ValueError, "duplicate"),
+            ([0.5], ValueError, "whole metres"),
+            (100, TypeError, "list of depths"),
+        ],
+    )
+    def test_malformed_request_levels_are_refused(
+        self, monkeypatch, levels, error, message
+    ):
+        with pytest.raises(error, match=message):
+            self._run(monkeypatch, {"thetao": levels})
+
+    def test_older_single_variable_store_takes_request_levels(self, monkeypatch):
+        cfg = _depth_config(compile_=[0, 100])
+        ext = TestDepthVariables()._extractor(cfg, monkeypatch, _depth_ds())
+
+        out = ext.process_single_varkey("thetao", vars={"thetao": [1000]})
+
+        assert out["thetao_1000"].tolist() == [1000.0, 1000.0]
+        assert "thetao_0" not in out.columns
+
+    def test_levels_cannot_be_chosen_from_the_compiled_store(self, monkeypatch):
+        R = TestProcessSingleVarkeyRouting
+        R()._patch_catalogs(monkeypatch, R._hourly_ds(), R._h2ds())
+        ext = R()._extractor_for(_atm_config(), ["2020-01-01", "2020-01-02"])
+
+        with pytest.raises(ValueError, match="compiled store"):
+            ext.process_single_varkey("atm-accum-avg", vars={"tp": [0]})
+
+    def test_levels_cannot_be_chosen_for_moon(self, monkeypatch):
+        cfg = _mixed_config(depth_levels={"thetao": [0]})
+        ext = self._P()._extractor(cfg, monkeypatch)
+        with pytest.raises(ValueError, match="no depth axis"):
+            ext.process_single_varkey("moon", vars={"moon_phase": [0]})
+
+    def test_run_accepts_a_read_only_mapping(self):
+        from types import MappingProxyType
+
+        ext = _make_extractor(["2020-01-01"])
+        selection = MappingProxyType({"dyn_rep": {"thetao": [0]}})
+        assert ext._normalize_var_dict(selection) == {"dyn_rep": {"thetao": [0]}}
 
 
 class TestSplitVarsBySourceDepth:
@@ -1913,3 +2282,120 @@ class TestInterruptedMidCheckpoint:
         _, all_succeeded = extractor._run_impl({"sst": None}, n_workers=1)
 
         assert not all_succeeded
+
+
+# ---------------------------------------------------------------------------
+# bathy: static layers
+# ---------------------------------------------------------------------------
+
+
+class TestExtractBathy:
+    """
+    Both input types read one configured layer, and a geometry's ``bathy_std``
+    is the polygon mean of the layer's precomputed std — not a std of depth
+    within the polygon.
+    """
+
+    # 10 x 10 cells of 0.1 deg centred on 0.0 .. 0.9.
+    _AXIS = np.round(np.arange(10) * 0.1, 1)
+
+    def _write_layer(self, path: Path, sign: float, with_std: bool = True) -> None:
+        i, j = np.meshgrid(np.arange(10), np.arange(10), indexing="ij")
+        data = {"bathy": (["lat", "lon"], sign * (i * 10.0 + j))}
+        if with_std:
+            data["bathy_std"] = (["lat", "lon"], 100.0 + i * 10 + j)
+        xr.Dataset(data, coords={"lat": self._AXIS, "lon": self._AXIS}).to_zarr(path)
+
+    def _config(self, tmp_path: Path, **over) -> SimpleNamespace:
+        (tmp_path / "ETOPO").mkdir()
+        self._write_layer(tmp_path / "ETOPO" / "b15.zarr", sign=1.0)
+        self._write_layer(tmp_path / "ETOPO" / "b60.zarr", sign=-1.0)
+        cfg = SimpleNamespace(
+            local_folder="ETOPO",
+            store_root=None,
+            layers={"15s": "b15.zarr", "60s": "b60.zarr"},
+            extract_layer="15s",
+            compiled_vars=["bathy", "bathy_std"],
+        )
+        for k, v in over.items():
+            setattr(cfg, k, v)
+        return cfg
+
+    def _points(self, tmp_path, cfg, **kwargs) -> pd.DataFrame:
+        df = pd.DataFrame(
+            {"time": ["2020-01-01"] * 2, "lon": [0.21, 0.69], "lat": [0.5, 0.31]}
+        )
+        ext = _extractor(
+            df,
+            app_config=SimpleNamespace(variables={"bathy": cfg}),
+            store_root=tmp_path,
+            **kwargs,
+        )
+        return ext.process_single_varkey("bathy")
+
+    def _polygon(self, tmp_path, cfg, **kwargs) -> pd.DataFrame:
+        # Strictly inside cells 0.2..0.4 on both axes (edges 0.15..0.45), so
+        # all_touched reaches exactly the 3 x 3 cells i, j in {2, 3, 4}.
+        gdf = _make_geodf([box(0.16, 0.16, 0.44, 0.44)], ["2020-01-01"])
+        ext = _extractor(
+            gdf,
+            app_config=SimpleNamespace(variables={"bathy": cfg}),
+            store_root=tmp_path,
+            **kwargs,
+        )
+        return ext.process_single_varkey("bathy")
+
+    def test_points_take_the_nearest_cell_of_the_default_layer(self, tmp_path):
+        out = self._points(tmp_path, self._config(tmp_path))
+
+        # (lat 0.5, lon 0.2) -> i=5, j=2; (lat 0.3, lon 0.7) -> i=3, j=7.
+        assert out["bathy"].tolist() == [52.0, 37.0]
+        assert out["bathy_std"].tolist() == [152.0, 137.0]
+
+    def test_point_beyond_the_layer_is_nan(self, tmp_path):
+        """Regression: a point east of the layer took its eastern edge cell's depth."""
+        df = pd.DataFrame(
+            {"time": ["2020-01-01"] * 2, "lon": [0.21, 1.5], "lat": [0.5, 0.5]}
+        )
+        ext = _extractor(
+            df,
+            app_config=SimpleNamespace(variables={"bathy": self._config(tmp_path)}),
+            store_root=tmp_path,
+        )
+
+        out = ext.process_single_varkey("bathy")
+
+        assert out["bathy"].iloc[0] == 52.0
+        assert out[["bathy", "bathy_std"]].iloc[1].isna().all()
+
+    def test_geometry_std_is_the_polygon_mean_of_the_std_layer(self, tmp_path):
+        out = self._polygon(tmp_path, self._config(tmp_path))
+
+        assert out["bathy"].iloc[0] == pytest.approx(33.0)
+        # A std of bathy inside the polygon would be ~8.2; the layer's mean is 133.
+        assert out["bathy_std"].iloc[0] == pytest.approx(133.0)
+
+    @pytest.mark.parametrize("extract", ["_points", "_polygon"])
+    def test_bathy_layer_overrides_config_for_either_input(self, tmp_path, extract):
+        out = getattr(self, extract)(
+            tmp_path, self._config(tmp_path), bathy_layer="60s"
+        )
+
+        assert (out["bathy"] < 0).all()
+
+    def test_extract_layer_from_config_is_the_default(self, tmp_path):
+        out = self._points(tmp_path, self._config(tmp_path, extract_layer="60s"))
+
+        assert (out["bathy"] < 0).all()
+
+    def test_undeclared_bathy_layer_fails_at_construction(self, tmp_path):
+        with pytest.raises(ValueError, match="bathy_layer '30s'"):
+            self._points(tmp_path, self._config(tmp_path), bathy_layer="30s")
+
+    def test_layer_without_std_says_to_rebuild(self, tmp_path):
+        cfg = self._config(tmp_path)
+        self._write_layer(tmp_path / "ETOPO" / "old.zarr", sign=1.0, with_std=False)
+        cfg.layers["old"] = "old.zarr"
+
+        with pytest.raises(ValueError, match="Rebuild"):
+            self._points(tmp_path, cfg, bathy_layer="old")

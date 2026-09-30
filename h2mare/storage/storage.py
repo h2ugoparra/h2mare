@@ -15,7 +15,14 @@ import pandas as pd
 import xarray as xr
 from loguru import logger
 
-from h2mare.storage.xarray_helpers import int16_scale, snap_grid_coords
+from h2mare.storage.xarray_helpers import (
+    check_depth_compatible,
+    check_grid_compatible,
+    depth_mismatch,
+    drop_conflicting_missing_value,
+    int16_scale,
+    snap_grid_coords,
+)
 from h2mare.types import BBox
 
 
@@ -160,6 +167,24 @@ def _time_bounds(ds: xr.Dataset) -> tuple[pd.Timestamp, pd.Timestamp]:
     """First and last actual timestamps on *ds*'s time axis."""
     times = ds.time.values
     return pd.Timestamp(times[0]), pd.Timestamp(times[-1])
+
+
+def _replaces_whole_store(ds_old: xr.Dataset, ds_new: xr.Dataset) -> bool:
+    """
+    Whether *ds_new* covers every timestamp *ds_old* holds, so none survives.
+
+    The same condition ``_resolve_overlap`` answers None to — kept as one
+    predicate so a write that discards the stored data and a check that assumes
+    it does cannot disagree. A dataset without a time axis (a static like bathy)
+    replaces nothing.
+    """
+    if "time" not in ds_old.dims or "time" not in ds_new.dims:
+        return False
+    if ds_old.sizes["time"] == 0 or ds_new.sizes["time"] == 0:
+        return False
+    old_first, old_last = _time_bounds(ds_old)
+    new_first, new_last = _time_bounds(ds_new)
+    return new_first <= old_first and new_last >= old_last
 
 
 def _check_packed_range(
@@ -343,105 +368,18 @@ def _append_data(var_key: str, ds_new: xr.Dataset, path: Path) -> None:
         path: file path created by ``ZarrCatalog(var_key).build_file_path()``
     """
     ds_old = xr.open_zarr(path, consolidated=False)
-    ds_old_vars = set(ds_old.data_vars)
-    ds_new_vars = set(ds_new.data_vars)
+    _check_append_compatible(ds_old, ds_new, path)
 
     # src_to_close tracks every dataset that holds open handles into path's zarr
     # store.  They must all be closed (and gc'd) before the backup-swap so that
     # Windows releases its file locks on the directory.
-    src_to_close: list[xr.Dataset] = []
-
-    if ds_new_vars.isdisjoint(ds_old_vars):
-        # Variable-addition: none of the incoming variables exist in the zarr yet.
-        # Merge so that all existing variables are preserved alongside the new ones.
-        logger.info(
-            f"Variable-addition: merging {sorted(ds_new_vars)} into {path.name}."
-        )
-        # Snap the on-disk grid too: ds_new is already snapped (write_append_zarr),
-        # so aligning ds_old here keeps the outer join from unioning a legacy
-        # noise-drifted grid against the rounded one.
-        ds_out = xr.merge([snap_grid_coords(ds_old), ds_new], join="outer")
-        chunk_sizes = {dim: sizes[0] for dim, sizes in ds_old.chunksizes.items()}
-        ds_out = ds_out.chunk(chunk_sizes)
-        src_to_close.append(ds_old)
+    if set(ds_new.data_vars).isdisjoint(ds_old.data_vars):
+        ds_out, src_to_close = _merge_new_variables(ds_old, ds_new, path)
     else:
-        # Time-extension: at least one shared variable — resolve temporal overlap
-        # then concatenate along the time dimension.
-        # ds_old is reopened inside _resolve_overlap; closing here avoids a
-        # redundant open handle (zarr stores are lazy so this is safe).
-        missing_vars = sorted(ds_old_vars - ds_new_vars)
-        old_chunk_sizes = {dim: sizes[0] for dim, sizes in ds_old.chunksizes.items()}
-        ds_old.close()
-
-        # Clean trailing append (same vars, same grid, strictly after the
-        # stored dates) extends the zarr in place — by year's end the rewrite
-        # path would otherwise copy ~a full year of data per incremental run.
-        if _try_append_fast_path(ds_new, path):
+        extended = _extend_in_time(ds_old, ds_new, path)
+        if extended is None:  # the fast path already wrote it in place
             return None
-
-        ds_resolved = _resolve_overlap(ds_new, path)
-
-        # ds_new is already snapped (write_append_zarr); snap the retained
-        # pieces of the existing store so concat aligns instead of unioning a
-        # legacy noise-drifted grid against the rounded one.
-        # Head and tail contribute only variables that ds_new carries AND that
-        # have a time dimension. Variables ds_new lacks are re-merged in full
-        # below (concatenating them here would NaN-fill them over ds_new's
-        # window); time-less statics (e.g. bathy) are not concatenated by
-        # xr.concat but merged with an exact-equality check, so a float-level
-        # recompute difference raises MergeError — the freshly compiled copy
-        # in ds_new wins instead.
-        def _shared_time_vars(d: xr.Dataset) -> xr.Dataset:
-            return d[
-                [v for v in d.data_vars if v in ds_new_vars and "time" in d[v].dims]
-            ]
-
-        parts = [ds_new]
-        if ds_resolved is not None:
-            parts.insert(0, _shared_time_vars(snap_grid_coords(ds_resolved)))
-            src_to_close.append(ds_resolved)
-
-        # Retain the existing tail beyond ds_new's window: an explicit
-        # middle-window compile (e.g. --start/--end covering March against a
-        # file that extends through June) would otherwise drop April-June.
-        new_end = pd.Timestamp(ds_new.time.values[-1])
-        ds_old_tail = xr.open_zarr(path, consolidated=False)
-        # Strictly after the incoming window's last instant. A `+ 1 day` bound
-        # here would skip every stored step falling later the same day as
-        # new_end — 23 of them on an hourly axis.
-        tail = ds_old_tail.sel(time=slice(new_end + _ONE_TICK, None))
-        if tail.sizes.get("time", 0):
-            parts.append(_shared_time_vars(snap_grid_coords(tail)))
-            src_to_close.append(ds_old_tail)
-        else:
-            ds_old_tail.close()
-
-        if len(parts) > 1:
-            # join is explicit because xarray's concat default changes from
-            # "outer" to "exact"; without it this call starts raising once that
-            # lands. "outer" pins today's behaviour — note it is also the
-            # failure mode the snapping above guards against, so a genuine grid
-            # mismatch here unions into a NaN-holed axis rather than failing.
-            ds_out = xr.concat(parts, dim="time", data_vars="minimal", join="outer")
-            # Rechunk to match the existing zarr layout and avoid dask
-            # chunk-alignment errors.
-            ds_out = ds_out.chunk(
-                {d: c for d, c in old_chunk_sizes.items() if d in ds_out.dims}
-            )
-        else:
-            ds_out = ds_new
-
-        if missing_vars:
-            # Variables absent from ds_new keep their stored values over the
-            # full existing span — including ds_new's window. Without this, a
-            # subset compile (e.g. `run -v ssh` appending only ssh columns)
-            # NaN-wiped every other variable across the appended range.
-            ds_old_keep = xr.open_zarr(path, consolidated=False)[missing_vars]
-            ds_out = xr.merge([ds_out, snap_grid_coords(ds_old_keep)], join="outer")
-            ds_out = ds_out.chunk(
-                {d: c for d, c in old_chunk_sizes.items() if d in ds_out.dims}
-            )
-            src_to_close.append(ds_old_keep)
+        ds_out, src_to_close = extended
 
     # Drop chunk encodings inherited from the on-disk store: when the retained
     # head is shorter than one zarr chunk, the stale encoding conflicts with
@@ -450,29 +388,19 @@ def _append_data(var_key: str, ds_new: xr.Dataset, path: Path) -> None:
         ds_out[var].encoding.pop("chunks", None)
         ds_out[var].encoding.pop("preferred_chunks", None)
 
+    # Same shape of problem, from the same re-read: a store carrying both
+    # _FillValue and a contradicting missing_value cannot be written back.
+    drop_conflicting_missing_value(ds_out)
+
     # Co-locate tmp with destination so rename stays on the same drive (atomic on Windows/NTFS)
     tmp_path = path.with_name(path.name + ".tmp")
-
-    logger.debug(f"Saving concatenated dataset to {tmp_path}")
-
     t0 = time.perf_counter()
-    for attempt in range(1, 4):
-        shutil.rmtree(tmp_path, ignore_errors=True)
-        try:
-            ds_out.to_zarr(tmp_path)
-            break
-        except Exception as e:
-            if attempt == 3:
-                raise RuntimeError(
-                    f"Failed saving concatenated dataset to {tmp_path}"
-                ) from e
-            logger.warning(
-                f"[Attempt {attempt}/3] Failed saving to {tmp_path}: {e}. Retrying."
-            )
-            time.sleep(2**attempt)
+    _write_tmp_with_retries(ds_out, tmp_path)
 
     # Release all file handles on path before the swap.  On Windows, open zarr
     # handles prevent shutil.move from renaming the directory ([WinError 32]).
+    # Kept in this frame on purpose: a helper taking ds_out as an argument
+    # would leave the caller holding a reference through the gc.collect().
     ds_out.close()
     for ds in src_to_close:
         ds.close()
@@ -482,6 +410,171 @@ def _append_data(var_key: str, ds_new: xr.Dataset, path: Path) -> None:
     _swap_into_place(tmp_path, path)
     logger.success(f"Saved in {time.perf_counter() - t0:.1f}s")
     return None
+
+
+def _check_append_compatible(
+    ds_old: xr.Dataset, ds_new: xr.Dataset, path: Path
+) -> None:
+    """
+    Refuse an append that would union two grids, or two sets of depth levels.
+
+    Before anything is merged: a store on another grid cannot be appended to,
+    only unioned with, and the union is silent. Both append paths go through
+    here, so this is the one place every write is checked. Closes *ds_old*
+    before raising.
+    """
+    try:
+        check_grid_compatible(ds_old, ds_new)
+        # Depth is refused only when something of the stored axis would survive
+        # to be unioned with. Incoming data spanning the whole file replaces it
+        # outright (_resolve_overlap returns None for exactly this case), which
+        # is how a store is legitimately moved onto new levels — but it also
+        # drops any level the new run did not fetch, so it is said out loud
+        # rather than left to be discovered in the data.
+        if _replaces_whole_store(ds_old, ds_new):
+            reason = depth_mismatch(ds_old, ds_new)
+            if reason is not None:
+                logger.warning(
+                    f"{path.name}: rewriting onto different depth levels "
+                    f"({reason}). The file is replaced, so levels it held and "
+                    f"this run did not fetch are dropped."
+                )
+        else:
+            check_depth_compatible(ds_old, ds_new)
+    except ValueError as e:
+        ds_old.close()
+        raise ValueError(f"{path.name}: {e}") from None
+
+
+def _merge_new_variables(
+    ds_old: xr.Dataset, ds_new: xr.Dataset, path: Path
+) -> tuple[xr.Dataset, list[xr.Dataset]]:
+    """
+    Variable-addition: none of the incoming variables exist in the zarr yet.
+
+    Merge so that all existing variables are preserved alongside the new ones.
+    Returns the dataset to write and the sources holding handles on *path*.
+    """
+    logger.info(
+        f"Variable-addition: merging {sorted(ds_new.data_vars)} into {path.name}."
+    )
+    # Snap the on-disk grid too: ds_new is already snapped (write_append_zarr),
+    # so aligning ds_old here keeps the outer join from unioning a legacy
+    # noise-drifted grid against the rounded one.
+    ds_out = xr.merge([snap_grid_coords(ds_old), ds_new], join="outer")
+    chunk_sizes = {dim: sizes[0] for dim, sizes in ds_old.chunksizes.items()}
+    return ds_out.chunk(chunk_sizes), [ds_old]
+
+
+def _extend_in_time(
+    ds_old: xr.Dataset, ds_new: xr.Dataset, path: Path
+) -> Optional[tuple[xr.Dataset, list[xr.Dataset]]]:
+    """
+    Time-extension: at least one shared variable.
+
+    Resolves the temporal overlap and concatenates the retained head, *ds_new*
+    and the retained tail along time; variables *ds_new* lacks are re-merged in
+    full. Returns the dataset to write and the sources holding handles on
+    *path*, or None when a clean trailing append was written in place.
+    """
+    ds_old_vars = set(ds_old.data_vars)
+    ds_new_vars = set(ds_new.data_vars)
+    src_to_close: list[xr.Dataset] = []
+
+    # ds_old is reopened inside _resolve_overlap; closing here avoids a
+    # redundant open handle (zarr stores are lazy so this is safe).
+    missing_vars = sorted(ds_old_vars - ds_new_vars)
+    old_chunk_sizes = {dim: sizes[0] for dim, sizes in ds_old.chunksizes.items()}
+    ds_old.close()
+
+    # Clean trailing append (same vars, same grid, strictly after the
+    # stored dates) extends the zarr in place — by year's end the rewrite
+    # path would otherwise copy ~a full year of data per incremental run.
+    if _try_append_fast_path(ds_new, path):
+        return None
+
+    ds_resolved = _resolve_overlap(ds_new, path)
+
+    # ds_new is already snapped (write_append_zarr); snap the retained
+    # pieces of the existing store so concat aligns instead of unioning a
+    # legacy noise-drifted grid against the rounded one.
+    # Head and tail contribute only variables that ds_new carries AND that
+    # have a time dimension. Variables ds_new lacks are re-merged in full
+    # below (concatenating them here would NaN-fill them over ds_new's
+    # window); time-less statics (e.g. bathy) are not concatenated by
+    # xr.concat but merged with an exact-equality check, so a float-level
+    # recompute difference raises MergeError — the freshly compiled copy
+    # in ds_new wins instead.
+    def _shared_time_vars(d: xr.Dataset) -> xr.Dataset:
+        return d[[v for v in d.data_vars if v in ds_new_vars and "time" in d[v].dims]]
+
+    parts = [ds_new]
+    if ds_resolved is not None:
+        parts.insert(0, _shared_time_vars(snap_grid_coords(ds_resolved)))
+        src_to_close.append(ds_resolved)
+
+    # Retain the existing tail beyond ds_new's window: an explicit
+    # middle-window compile (e.g. --start/--end covering March against a
+    # file that extends through June) would otherwise drop April-June.
+    new_end = pd.Timestamp(ds_new.time.values[-1])
+    ds_old_tail = xr.open_zarr(path, consolidated=False)
+    # Strictly after the incoming window's last instant. A `+ 1 day` bound
+    # here would skip every stored step falling later the same day as
+    # new_end — 23 of them on an hourly axis.
+    tail = ds_old_tail.sel(time=slice(new_end + _ONE_TICK, None))
+    if tail.sizes.get("time", 0):
+        parts.append(_shared_time_vars(snap_grid_coords(tail)))
+        src_to_close.append(ds_old_tail)
+    else:
+        ds_old_tail.close()
+
+    if len(parts) > 1:
+        # join is explicit because xarray's concat default changes from
+        # "outer" to "exact"; without it this call starts raising once that
+        # lands. "outer" pins today's behaviour — note it is also the
+        # failure mode the snapping above guards against, so a genuine grid
+        # mismatch here unions into a NaN-holed axis rather than failing.
+        ds_out = xr.concat(parts, dim="time", data_vars="minimal", join="outer")
+        # Rechunk to match the existing zarr layout and avoid dask
+        # chunk-alignment errors.
+        ds_out = ds_out.chunk(
+            {d: c for d, c in old_chunk_sizes.items() if d in ds_out.dims}
+        )
+    else:
+        ds_out = ds_new
+
+    if missing_vars:
+        # Variables absent from ds_new keep their stored values over the
+        # full existing span — including ds_new's window. Without this, a
+        # subset compile (e.g. `run -v ssh` appending only ssh columns)
+        # NaN-wiped every other variable across the appended range.
+        ds_old_keep = xr.open_zarr(path, consolidated=False)[missing_vars]
+        ds_out = xr.merge([ds_out, snap_grid_coords(ds_old_keep)], join="outer")
+        ds_out = ds_out.chunk(
+            {d: c for d, c in old_chunk_sizes.items() if d in ds_out.dims}
+        )
+        src_to_close.append(ds_old_keep)
+
+    return ds_out, src_to_close
+
+
+def _write_tmp_with_retries(ds_out: xr.Dataset, tmp_path: Path) -> None:
+    """Write *ds_out* to *tmp_path*, clearing and retrying up to three times."""
+    logger.debug(f"Saving concatenated dataset to {tmp_path}")
+    for attempt in range(1, 4):
+        shutil.rmtree(tmp_path, ignore_errors=True)
+        try:
+            ds_out.to_zarr(tmp_path)
+            return
+        except Exception as e:
+            if attempt == 3:
+                raise RuntimeError(
+                    f"Failed saving concatenated dataset to {tmp_path}"
+                ) from e
+            logger.warning(
+                f"[Attempt {attempt}/3] Failed saving to {tmp_path}: {e}. Retrying."
+            )
+            time.sleep(2**attempt)
 
 
 def _swap_into_place(tmp_path: Path, path: Path) -> None:

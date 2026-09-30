@@ -96,6 +96,21 @@ class TestNormalizeDates:
     def test_empty_list_returns_empty_list(self):
         assert normalize_dates([]) == []
 
+    def test_datetime_index(self):
+        """Regression: a DatetimeIndex was taken as one date and raised."""
+        days = pd.date_range("2025-01-15 06:00", periods=3, freq="D")
+        assert normalize_dates(days) == [
+            pd.Timestamp("2025-01-15"),
+            pd.Timestamp("2025-01-16"),
+            pd.Timestamp("2025-01-17"),
+        ]
+
+    def test_series_and_array(self):
+        dates = pd.Series(pd.to_datetime(["2020-01-01", "2020-06-30"]))
+        expected = [pd.Timestamp("2020-01-01"), pd.Timestamp("2020-06-30")]
+        assert normalize_dates(dates) == expected
+        assert normalize_dates(dates.to_numpy()) == expected
+
 
 class TestMoreThanOneYear:
     def test_true(self):

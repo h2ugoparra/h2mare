@@ -1,6 +1,6 @@
 # ParquetPlotter
 
-`ParquetPlotter` is the visualization accessor for [`ParquetIndexer`](parquet_indexer.md). Access it via `indexer.plot` — do not instantiate it directly.
+`ParquetPlotter` is the visualization accessor for [`ParquetIndexer`](parquet_indexer.md). Access it via `indexer.plot` — do not instantiate it directly. It needs the `viz` extra (`pip install "h2mare[viz]"`); the rest of `ParquetIndexer` does not.
 
 ```python
 idx.plot.time_series("sst", agg_by="month")
@@ -17,6 +17,7 @@ idx.plot.time_series(
     agg_by,           # "day" | "week" | "month" | "season" | "year"
     dates=None,
     bbox=None,
+    title=None,
 )
 ```
 
@@ -86,7 +87,9 @@ idx.plot.spatial_maps(
     dates=None,
     data_bbox=None,
     map_bbox=None,
+    grid_shape=None,
     vminmax=None,
+    cmap="turbo",
     title=None,
     legend_title=None,
     save_path=None,
@@ -102,7 +105,9 @@ Climatological panel maps — 12 panels for `agg_by="month"`, 4 for `agg_by="sea
 | `dates` | Date range or list for filtering. Defaults to full dataset |
 | `data_bbox` | Spatial filter applied before aggregation |
 | `map_bbox` | Visible region on each panel. Defaults to extent of loaded data |
+| `grid_shape` | Panel layout `(nrows, ncols)`. Defaults to `(6, 2)` monthly, `(2, 2)` seasonal; the figure size follows the map extent |
 | `vminmax` | Fixed `(vmin, vmax)` for the colorbar. Defaults to data range |
+| `cmap` | Matplotlib colormap name. Defaults to `"turbo"` |
 | `title` | Figure title |
 | `legend_title` | Colorbar label. Defaults to the variable short name from config |
 | `save_path` | Path to save the figure. If `None`, shown interactively |

@@ -91,12 +91,6 @@ class TestCompileProcessorsRegistry:
     def test_contains_moon(self):
         assert "moon" in COMPILE_PROCESSORS
 
-    def test_contains_o2(self):
-        assert "o2" in COMPILE_PROCESSORS
-
-    def test_contains_thetao(self):
-        assert "thetao" in COMPILE_PROCESSORS
-
     def test_contains_atm_accum_avg(self):
         assert "atm-accum-avg" in COMPILE_PROCESSORS
 
@@ -114,22 +108,27 @@ class TestCompileProcessorsRegistry:
 
 
 class TestCompileBathy:
-    def test_raises_when_data_file_is_none(self, tmp_path):
+    def test_raises_when_compile_layer_is_not_declared(self, tmp_path):
         compiler = _make_compiler(tmp_path)
-        compiler.app_config.variables["bathy"] = MagicMock(data_file=None)
+        compiler.app_config.variables["bathy"] = MagicMock(
+            layers={"15s": "b15.zarr"}, compile_layer=None, store_root=None
+        )
 
-        with pytest.raises(ValueError, match="data_file"):
+        with pytest.raises(ValueError, match="15s"):
             _compile_bathy(compiler, None, _DR)
 
-    def test_opens_file_at_expected_path(self, tmp_path):
+    def test_opens_compile_layer_at_expected_path(self, tmp_path):
         compiler = _make_compiler(tmp_path)
         bathy_cfg = MagicMock()
-        bathy_cfg.data_file = "bathy.nc"
+        bathy_cfg.layers = {"0.25deg": "bathy.nc", "15s": "bathy_15s.zarr"}
+        bathy_cfg.compile_layer = "0.25deg"
         bathy_cfg.local_folder = "bathy"
-        # A MagicMock invents any attribute asked of it, so this has to be set
-        # explicitly: without it bathy would appear to declare a store_root of
-        # its own and resolve under a mock instead of remote_store_root.
+        # A MagicMock invents any attribute asked of it, so these have to be set
+        # explicitly: without them bathy would appear to declare a store_root of
+        # its own and resolve under a mock instead of remote_store_root, and to
+        # declare regrid overrides whose method is a mock rather than a name.
         bathy_cfg.store_root = None
+        bathy_cfg.regrid = None
         compiler.app_config.variables["bathy"] = bathy_cfg
 
         fake_ds = _daily_ds("elevation", _DATES).isel(time=0).drop_vars("time")
@@ -142,6 +141,28 @@ class TestCompileBathy:
 
         called_path = mock_open.call_args[0][0]
         assert called_path == tmp_path / "bathy" / "bathy.nc"
+
+    def test_compiles_a_zarr_layer(self, tmp_path):
+        """
+        Regression: the layer was opened with xr.open_dataset and no engine,
+        which cannot read the native (15s, 60s) .zarr layers — on Windows it
+        raised PermissionError on the store directory.
+        """
+        compiler = _make_compiler(tmp_path)
+        compiler.app_config.variables["bathy"] = SimpleNamespace(
+            layers={"60s": "bathy_60s.zarr"},
+            compile_layer="60s",
+            local_folder="bathy",
+            store_root=None,
+            regrid=None,
+        )
+        layer = _daily_ds("bathy", _DATES).isel(time=0).drop_vars("time") * -100
+        layer.to_zarr(tmp_path / "bathy" / "bathy_60s.zarr")
+
+        out = _compile_bathy(compiler, None, _DR)
+
+        assert out is not None
+        np.testing.assert_allclose(out["bathy"].values, -100.0)
 
 
 # ---------------------------------------------------------------------------
@@ -202,7 +223,7 @@ class TestCompileO2:
 
     def _make_o2_compiler(self, tmp_path):
         compiler = _make_compiler(tmp_path)
-        compiler.app_config.variables["o2"] = MagicMock(
+        compiler.app_config.variables["o2"] = SimpleNamespace(
             compile_depth_slices=self._depths
         )
         return compiler
@@ -226,7 +247,7 @@ class TestCompileO2:
         unrelated to the config key that actually needed setting.
         """
         compiler = _make_compiler(tmp_path)
-        compiler.app_config.variables["o2"] = MagicMock(compile_depth_slices=None)
+        compiler.app_config.variables["o2"] = SimpleNamespace(compile_depth_slices=None)
 
         with pytest.raises(ValueError) as excinfo:
             _compile_depth_var(compiler, self._make_o2_catalog(self._make_o2_ds()), _DR)
@@ -285,7 +306,7 @@ class TestCompileThetao:
 
     def _make_thetao_compiler(self, tmp_path):
         compiler = _make_compiler(tmp_path)
-        compiler.app_config.variables["thetao"] = MagicMock(
+        compiler.app_config.variables["thetao"] = SimpleNamespace(
             compile_depth_slices=self._depths
         )
         return compiler
@@ -322,6 +343,151 @@ class TestCompileThetao:
         assert result is not None
         for var in result.data_vars:
             assert "depth" not in result[var].dims
+
+
+# ---------------------------------------------------------------------------
+# _compile_depth_var — per-variable depth_levels
+# ---------------------------------------------------------------------------
+
+
+_STORE_DEPTHS = [0.5, 47.4, 109.7]
+
+
+def _mixed_store() -> xr.Dataset:
+    """dyn_rep-like store: 3-D thetao/uo beside 2-D zos, none named like the key."""
+    coords = {
+        "time": _DATES,
+        "depth": _STORE_DEPTHS,
+        "lat": [30.0, 30.25],
+        "lon": [-10.0, -9.75],
+    }
+    by_depth = np.arange(len(_STORE_DEPTHS), dtype="float32")[None, :, None, None]
+    cube = np.broadcast_to(by_depth, (3, len(_STORE_DEPTHS), 2, 2))
+    dims4 = ["time", "depth", "lat", "lon"]
+    return xr.Dataset(
+        {
+            "thetao": xr.DataArray(cube.copy(), dims=dims4, coords=coords),
+            "uo": xr.DataArray(cube.copy() * 10, dims=dims4, coords=coords),
+            "zos": xr.DataArray(
+                np.ones((3, 2, 2), dtype="float32"),
+                dims=["time", "lat", "lon"],
+                coords={k: coords[k] for k in ("time", "lat", "lon")},
+            ),
+        }
+    )
+
+
+class TestCompileDepthLevels:
+    def _run(self, tmp_path, ds, **cfg):
+        compiler = _make_compiler(tmp_path)
+        compiler.app_config.variables["dyn_rep"] = SimpleNamespace(**cfg)
+        catalog = _make_catalog(ds)
+        catalog.var_key = "dyn_rep"
+        return _compile_depth_var(compiler, catalog, _DR)
+
+    def test_mixed_store_slices_each_variable_at_its_own_levels(self, tmp_path):
+        result = self._run(
+            tmp_path, _mixed_store(), depth_levels={"thetao": [0, 50], "uo": [0]}
+        )
+        assert sorted(result.data_vars) == ["thetao_0", "thetao_50", "uo_0", "zos"]
+        assert "depth" not in result.dims and "depth" not in result.coords
+
+    def test_levels_match_nearest_and_keep_the_requested_name(self, tmp_path):
+        result = self._run(
+            tmp_path, _mixed_store(), depth_levels={"thetao": [0, 50, 1000], "uo": [0]}
+        )
+        # Values encode the store's depth index: 0 → 0.5 m, 50 → 47.4 m,
+        # 1000 → the deepest level the store has.
+        assert float(result["thetao_0"].isel(time=0, lat=0, lon=0)) == 0
+        assert float(result["thetao_50"].isel(time=0, lat=0, lon=0)) == 1
+        assert float(result["thetao_1000"].isel(time=0, lat=0, lon=0)) == 2
+        assert float(result["uo_0"].isel(time=0, lat=0, lon=0)) == 0
+
+    def test_three_d_variable_without_levels_is_refused(self, tmp_path):
+        with pytest.raises(ValueError, match="'uo' has a depth axis"):
+            self._run(tmp_path, _mixed_store(), depth_levels={"thetao": [0]})
+
+    def test_levels_for_a_variable_the_store_lacks_are_refused(self, tmp_path):
+        with pytest.raises(ValueError, match=r"\['so'\]"):
+            self._run(
+                tmp_path,
+                _mixed_store(),
+                depth_levels={"thetao": [0], "uo": [0], "so": [0]},
+            )
+
+    def test_levels_for_a_two_d_variable_are_refused(self, tmp_path):
+        with pytest.raises(ValueError, match="'zos', which has no depth axis"):
+            self._run(
+                tmp_path,
+                _mixed_store(),
+                depth_levels={"thetao": [0], "uo": [0], "zos": [0]},
+            )
+
+    def test_extract_only_levels_do_not_reach_compile(self, tmp_path):
+        result = self._run(
+            tmp_path,
+            _mixed_store(),
+            depth_levels={"thetao": [0], "uo": [0]},
+            extract_depth_levels={"thetao": [50]},
+        )
+        assert "thetao_0" in result.data_vars
+        assert "thetao_50" not in result.data_vars
+
+    def test_hourly_store_with_levels_is_refused(self, tmp_path):
+        with pytest.raises(ValueError, match="hourly"):
+            self._run(
+                tmp_path,
+                _mixed_store(),
+                depth_levels={"thetao": [0], "uo": [0]},
+                time_step=TimeStep.HOURLY,
+            )
+
+
+class TestDepthDispatch:
+    """Depth handling is chosen by config, so a new 3-D var_key needs no entry."""
+
+    def _dispatch(self, monkeypatch, var_config) -> str:
+        from h2mare.processing.compiler import Compiler
+
+        monkeypatch.setattr(compiler_registry, "_compile_depth_var", lambda *a: "depth")
+        monkeypatch.setattr(compiler_registry, "compile_default", lambda *a: "default")
+        fake = SimpleNamespace(
+            app_config=SimpleNamespace(variables={"dyn_rep": var_config}),
+            _catalog_cache={},
+            _catalog_for=lambda var_key, auto_refresh: MagicMock(),
+            _has_overlap=lambda *a: True,
+        )
+        return Compiler._process_variable(fake, "dyn_rep", _DR)
+
+    def test_depth_levels_route_to_the_depth_processor(self, monkeypatch):
+        cfg = SimpleNamespace(depth_levels={"thetao": [0]})
+        assert self._dispatch(monkeypatch, cfg) == "depth"
+
+    def test_older_list_form_routes_to_the_depth_processor(self, monkeypatch):
+        cfg = SimpleNamespace(compile_depth_slices=[100])
+        assert self._dispatch(monkeypatch, cfg) == "depth"
+
+    def test_no_levels_route_to_the_default(self, monkeypatch):
+        assert self._dispatch(monkeypatch, SimpleNamespace()) == "default"
+
+    def test_depth_var_keys_are_not_registered_by_name(self):
+        assert "o2" not in COMPILE_PROCESSORS
+        assert "thetao" not in COMPILE_PROCESSORS
+
+
+class TestCompileDefaultRefusesDepth:
+    def test_store_with_a_depth_axis_is_refused(self, tmp_path):
+        """
+        Regression: an unregistered 3-D var_key went through compile_default,
+        which kept the depth axis and carried it into the 2-D h2ds.
+        """
+        compiler = _make_compiler(tmp_path)
+        compiler.app_config.variables["dyn_rep"] = SimpleNamespace()
+        catalog = _make_catalog(_mixed_store())
+        catalog.var_key = "dyn_rep"
+
+        with pytest.raises(ValueError, match="depth axis but declares no depth_levels"):
+            compile_default(compiler, catalog, _DR)
 
 
 # ---------------------------------------------------------------------------
@@ -777,6 +943,70 @@ class TestCompileDefault:
         catalog = _make_catalog(_daily_ds("ssh", _DATES))
         result = compile_default(compiler, catalog, _DR)
         assert isinstance(result, xr.Dataset)
+
+    def test_finer_store_is_aggregated_not_sampled(self, tmp_path):
+        """
+        Regression: a store finer than the base grid was put on it with
+        ``interp_like``, which samples the target cell centre and ignores the
+        rest of the cell — 1 of 25 source cells going 0.05° → 0.25°.
+        """
+        compiler = _make_compiler(tmp_path)
+        # Two base-grid cells' worth of a 4x-finer store. The signal sits in one
+        # corner of the first cell, away from its centre: a linear ramp would
+        # not tell the two methods apart, since bilinear interpolation of a
+        # ramp already equals its mean.
+        step = 0.0625
+        lat = 30.0 - step * 2 + (np.arange(8) + 0.5) * step
+        lon = -10.0 - step * 2 + (np.arange(8) + 0.5) * step
+        values = np.zeros((1, 8, 8), dtype="float32")
+        values[0, 0, 0] = 16.0
+        ds = xr.Dataset(
+            {"ssh": xr.DataArray(values, dims=["time", "lat", "lon"])},
+            coords={"time": _DATES[:1], "lat": lat, "lon": lon},
+        )
+
+        result = compile_default(compiler, _make_catalog(ds), _DR)
+
+        assert result is not None
+        # Mean of the 4x4 block behind the first cell, not the centre sample.
+        expected = values[0, :4, :4].mean()
+        assert float(result["ssh"][0, 0, 0]) == pytest.approx(expected, rel=1e-3)
+
+    def test_config_regrid_override_reaches_the_variable(self, tmp_path):
+        """
+        Regression: eddy columns are properties of the nearest eddy, and both
+        interpolating and averaging them invent a value belonging to no eddy —
+        an averaged track ID names an eddy that does not exist.
+        """
+        compiler = _make_compiler(tmp_path)
+        compiler.app_config.variables["eddies"] = SimpleNamespace(
+            regrid={"ac_track": "nearest"}
+        )
+        step = 0.0625
+        lat = 30.0 - step * 2 + (np.arange(8) + 0.5) * step
+        lon = -10.0 - step * 2 + (np.arange(8) + 0.5) * step
+        rng = np.random.default_rng(0)
+        ids = rng.integers(1, 100_000, size=(1, 8, 8)).astype("float32")
+        ds = xr.Dataset(
+            {
+                "ac_track": xr.DataArray(ids, dims=["time", "lat", "lon"]),
+                "ac_dist_km": xr.DataArray(
+                    rng.random((1, 8, 8)).astype("float32"), dims=["time", "lat", "lon"]
+                ),
+            },
+            coords={"time": _DATES[:1], "lat": lat, "lon": lon},
+        )
+        catalog = _make_catalog(ds)
+        catalog.var_key = "eddies"
+
+        result = compile_default(compiler, catalog, _DR)
+
+        assert result is not None
+        tracks = result["ac_track"].values
+        assert set(np.unique(tracks)).issubset(set(np.unique(ids)))
+        # The continuous column beside it still averages.
+        expected = ds["ac_dist_km"].values[0, :4, :4].mean()
+        assert float(result["ac_dist_km"][0, 0, 0]) == pytest.approx(expected, rel=1e-3)
 
 
 class TestCompileDefaultHourly:

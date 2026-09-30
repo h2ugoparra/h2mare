@@ -218,6 +218,68 @@ class TestCreateDownloadTasks:
         assert pd.Timestamp(tasks[0].date_range.end) == pd.Timestamp("2020-06-30")
 
 
+class TestNothingToDownloadMessage:
+    """A request the provider cannot serve must not be reported as up to date."""
+
+    @pytest.fixture
+    def messages(self):
+        from loguru import logger
+
+        captured: list[str] = []
+        sink = logger.add(captured.append, level="INFO", format="{level}|{message}")
+        yield captured
+        logger.remove(sink)
+
+    def _run(self, dl, start, end, rep, nrt):
+        with (
+            patch.object(dl, "get_rep_availability", return_value=rep),
+            patch.object(dl, "get_nrt_availability", return_value=nrt),
+        ):
+            return dl.run(start, end)
+
+    def test_before_coverage_warns_instead_of_up_to_date(self, dl, messages):
+        rep = DateRange("2022-06-01", "2026-09-25")
+        assert self._run(dl, "1994-01-01", "1994-01-31", rep, None) is False
+
+        text = "".join(messages)
+        assert "up to date" not in text
+        assert "WARNING|'sst': requested 1994-01-01 to 1994-01-31" in text
+        assert "REP 2022-06-01 to 2026-09-25" in text
+
+    def test_gap_between_rep_and_nrt_warns(self, dl, messages):
+        rep = DateRange("2000-01-01", "2020-12-31")
+        nrt = DateRange("2022-01-01", "2025-06-30")
+        assert self._run(dl, "2021-03-01", "2021-03-31", rep, nrt) is False
+
+        text = "".join(messages)
+        assert "up to date" not in text
+        assert "NRT 2022-01-01 to 2025-06-30" in text
+
+    def test_nrt_not_available_is_logged_once(self, dl_no_nrt):
+        from loguru import logger
+
+        rep = DateRange("2022-06-01", "2026-09-25")
+        messages: list[str] = []
+        sink = logger.add(messages.append, level="DEBUG", format="{message}")
+        try:
+            with patch.object(dl_no_nrt, "get_rep_availability", return_value=rep):
+                assert dl_no_nrt.run("1994-01-01", "1994-01-31") is False
+        finally:
+            logger.remove(sink)
+
+        assert sum("NRT dataset not available" in m for m in messages) == 1
+
+    def test_past_published_end_still_reports_up_to_date(self, dl, messages):
+        assert (
+            self._run(dl, "2025-07-01", "2025-07-31", _REP_AVAIL, _NRT_AVAIL) is False
+        )
+
+        text = "".join(messages)
+        assert "INFO|'sst' is already up to date" in text
+        assert "2025-06-30" in text
+        assert "WARNING" not in text
+
+
 # ---------------------------------------------------------------------------
 # CMEMSDownloader._write_manifest
 # ---------------------------------------------------------------------------

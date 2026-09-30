@@ -16,6 +16,7 @@ from .xarray_helpers import (
     convert360_180,
     ds_float64_to_float32,
     rename_dims,
+    rename_source_vars,
     unified_time_chunk,
     xr_float64_to_float32,
 )
@@ -43,6 +44,7 @@ __all__ = [
     "polars_float64_to_float32",
     "chunk_dataset",
     "rename_dims",
+    "rename_source_vars",
     "unified_time_chunk",
     "xr_float64_to_float32",
     "ds_float64_to_float32",  # backward-compatible alias

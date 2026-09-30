@@ -229,13 +229,12 @@ def check_slice_health(
     """
     Per-(variable, time) reduction returning every empty or degenerate slice.
 
-    Replaces the old ``have_vars_unique_values``, which was never wired into any
-    code path and could not have caught an interior hole even if it had been:
-    it inspected ``isel(time=-1)`` only, the one position that cannot reveal
-    one. It also used ``np.unique`` — a sort, plus full materialisation of a
-    dask slice — to answer what ``min == max`` answers in one pass, and it
-    conflated "all missing" with "constant" because NaN collapses to a single
-    unique value.
+    Every slice is inspected, not just the last: an interior hole is invisible
+    from ``isel(time=-1)``, the one position that cannot reveal one. The
+    reduction is ``min``/``max`` rather than ``np.unique``, which would sort and
+    fully materialise a dask slice to answer what one pass answers, and which
+    cannot separate "all missing" from "constant" because NaN collapses to a
+    single unique value.
 
     One lazy pass yields ``(n_finite, min, max)`` per slice, from which both
     signals fall out separately:
@@ -414,8 +413,8 @@ def audit_var_key(
 
     # A bar only earns its place on the value scan. The axis check runs at
     # ~126 ms/file, where progress reporting is pure noise; the value scan is
-    # disk-bound over the whole store and previously showed nothing at all
-    # until it finished, which for chl meant 25 minutes of silence.
+    # disk-bound over the whole store and has nothing to show until it
+    # finishes, which for chl is 25 minutes of silence.
     stream = files
     if progress and files:
         from tqdm import tqdm

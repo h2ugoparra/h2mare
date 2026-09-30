@@ -3,7 +3,7 @@ Registry mapping var_key → compile processor for h2ds compilation.
 
 Add a new entry to COMPILE_PROCESSORS when a variable needs custom handling
 during the Zarr compilation step. Variables not registered here use
-``compile_default``, which opens the catalog and interpolates to the base grid.
+``compile_default``, which opens the catalog and regrids to the base grid.
 """
 
 from __future__ import annotations
@@ -14,12 +14,13 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 
-from h2mare.models import step_freq
+from h2mare.models import depth_levels_for, step_freq
+from h2mare.storage.xarray_helpers import select_depth_levels
 from h2mare.storage.zarr_catalog import ZarrCatalog
 from h2mare.types import DateRange
 from h2mare.utils.datetime_utils import end_of_day
-from h2mare.utils.paths import store_root_for
-from h2mare.utils.spatial import clip_land_data
+from h2mare.utils.paths import static_layer_path, store_root_for
+from h2mare.utils.spatial import clip_land_data, regrid_to
 
 if TYPE_CHECKING:
     from h2mare.processing.compiler import Compiler
@@ -72,6 +73,25 @@ def _open_or_warn(
         return None
 
 
+def _to_base_grid(
+    compiler: Compiler, ds: xr.Dataset, var_key: str, **kwargs
+) -> xr.Dataset:
+    """
+    Put *ds* on the compile base grid, honouring the var_key's regrid overrides.
+
+    Every processor goes through here so ``regrid: {ac_track: nearest}`` in
+    config reaches the variable whatever path compiled it.
+    """
+    var_config = compiler.app_config.variables.get(var_key)
+    return regrid_to(
+        ds,
+        compiler.base_grid,
+        methods=getattr(var_config, "regrid", None),
+        label=var_key,
+        **kwargs,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Registered processors (one per special-cased variable)
 # ---------------------------------------------------------------------------
@@ -83,17 +103,21 @@ def _compile_bathy(
     date_range: DateRange,
 ) -> xr.Dataset | None:
     var_cfg = compiler.app_config.variables["bathy"]
-    if var_cfg.data_file is None:
-        raise ValueError("bathy config entry is missing required 'data_file' field")
-    # bathy is a plain NetCDF file rather than a catalogued store, so it cannot
+    # bathy is a plain static file rather than a catalogued store, so it cannot
     # go through _catalog_for and has to resolve its own root the same way.
-    bathy_root = store_root_for(var_cfg, compiler.remote_store_root)
-    data_path = bathy_root / var_cfg.local_folder / var_cfg.data_file
-    ds = xr.open_dataset(data_path).sel(
+    bathy_dir = (
+        store_root_for(var_cfg, compiler.remote_store_root) / var_cfg.local_folder
+    )
+    data_path = static_layer_path(var_cfg, var_cfg.compile_layer, bathy_dir)
+    # Native layers (15s, 60s) are Zarr stores and the 0.25° layer is netCDF,
+    # as in Extractor._extract_bathy. open_dataset cannot open a .zarr
+    # directory without an engine (PermissionError on Windows).
+    opener = xr.open_zarr if data_path.suffix == ".zarr" else xr.open_dataset
+    ds = opener(data_path).sel(
         lon=slice(compiler.bbox.xmin, compiler.bbox.xmax),
         lat=slice(compiler.bbox.ymin, compiler.bbox.ymax),
     )
-    return ds.interp_like(compiler.base_grid, method="linear", assume_sorted=True)
+    return _to_base_grid(compiler, ds, "bathy")
 
 
 def _compile_moon(
@@ -129,32 +153,36 @@ def _compile_depth_var(
     catalog: ZarrCatalog | None,
     date_range: DateRange,
 ) -> xr.Dataset | None:
-    """Generic processor for 3-D variables: selects depth levels from compile_depth_slices."""
+    """
+    Processor for stores with a depth axis: one column per configured level.
+
+    Dispatched by config (any var_key with depth levels), not by name. Each
+    listed variable becomes ``<variable>_<level>``; 2-D variables in the same
+    store pass through.
+    """
     assert catalog is not None
     var_key = catalog.var_key
-    depths = compiler.app_config.variables[var_key].compile_depth_slices
-    if depths is None:
+    var_config = compiler.app_config.variables[var_key]
+    levels = depth_levels_for(var_key, var_config)
+    if not levels:
         # Not an assert: assertions are stripped under `python -O`, and without
-        # this None would reach ds.sel(depth=None) and surface as a TypeError
-        # somewhere unrelated. A config error should name the config key.
+        # this the depth axis would surface as an error somewhere unrelated. A
+        # config error should name the config key.
         raise ValueError(
             f"'{var_key}' is compiled as a 3-D variable but declares no "
-            f"compile_depth_slices in config.yaml. Add the depth levels it "
-            f"should publish (e.g. [0, 100, 500, 1000])."
+            f"depth_levels (or compile_depth_slices) in config.yaml. Add the "
+            f"depth levels it should publish (e.g. {{thetao: [0, 100, 500]}})."
+        )
+    if step_freq(var_config) == "h":
+        raise ValueError(
+            f"'{var_key}' is hourly and has depth levels; compiling an hourly "
+            f"3-D store is not supported."
         )
 
     ds = _open_or_warn(catalog, var_key, date_range, compiler.bbox, chunks={"depth": 1})
     if ds is None:
         return None
-    ds_interp = ds.sel(depth=depths, method="nearest").interp_like(
-        compiler.base_grid, method="linear", assume_sorted=True
-    )
-    return xr.Dataset(
-        {
-            f"{var_key}_{target}": ds_interp[var_key].isel(depth=i).drop_vars("depth")
-            for i, target in enumerate(depths)
-        }
-    )
+    return _to_base_grid(compiler, select_depth_levels(ds, levels, var_key), var_key)
 
 
 #: Decoded source bytes to aim for per slab of the hourly reduction.
@@ -403,7 +431,7 @@ def _compile_atm_accum_avg(
     # Coords ride along from the climatology alignment (.sel on dayofyear/month)
     # whether the features came off disk or were just computed.
     ds = ds.drop_vars(["dayofyear", "month", "quantile"], errors="ignore")
-    return ds.interp_like(compiler.base_grid, method="linear", assume_sorted=True)
+    return _to_base_grid(compiler, ds, "atm-accum-avg")
 
 
 def _daily_atm_instante_for_slab(ds_hourly: xr.Dataset, slab: DateRange) -> xr.Dataset:
@@ -461,7 +489,7 @@ def _compile_atm_instante(
         )
     if ds is None:
         return None
-    return ds.interp_like(compiler.base_grid, method="linear", assume_sorted=True)
+    return _to_base_grid(compiler, ds, "atm-instante")
 
 
 #: radiation has no entry here on purpose. Both cadences settle their units at
@@ -501,7 +529,7 @@ def _compile_waves(
     # recombine. swh is a magnitude and interpolates directly.
     components = direction_to_uv(ds["mdts"])
     to_interp = ds[["swh"]].assign(u_ts=components["u_ts"], v_ts=components["v_ts"])
-    out = to_interp.interp_like(compiler.base_grid, method="linear", assume_sorted=True)
+    out = _to_base_grid(compiler, to_interp, "waves")
     out["mdts"] = uv_to_direction(out["u_ts"], out["v_ts"])
     out["mdts"].attrs.update(ds["mdts"].attrs)
     return out.drop_vars(["u_ts", "v_ts"])
@@ -518,7 +546,7 @@ def _compile_sst(
     if ds is None:
         return None
     ds = postprocess_sst_fdist(ds)
-    return ds.interp_like(compiler.base_grid, method="linear", assume_sorted=True)
+    return _to_base_grid(compiler, ds, "sst")
 
 
 # ---------------------------------------------------------------------------
@@ -533,7 +561,7 @@ def compile_default(
 ) -> xr.Dataset | None:
     """
     Fallback processor: open from catalog, reduce an hourly store to daily, and
-    interpolate to the base grid.
+    regrid to the base grid.
 
     h2ds is daily whatever cadence its sources are kept at, and the compiler
     merges the per-variable results with an outer join. An hourly store handed
@@ -578,7 +606,14 @@ def compile_default(
 
     if ds is None:
         return None
-    return ds.interp_like(compiler.base_grid, method="linear", assume_sorted=True)
+    if "depth" in ds.dims:
+        # interp_like would carry the axis into h2ds, which is 2-D.
+        raise ValueError(
+            f"'{var_key}' has a depth axis but declares no depth_levels, so it "
+            f"cannot be compiled. Add depth_levels (e.g. {{variable: [0, 100]}}) "
+            f"to its config entry."
+        )
+    return _to_base_grid(compiler, ds, var_key)
 
 
 # ---------------------------------------------------------------------------
@@ -588,8 +623,6 @@ def compile_default(
 COMPILE_PROCESSORS: dict[str, CompileProcessor] = {
     "bathy": _compile_bathy,
     "moon": _compile_moon,
-    "o2": _compile_depth_var,
-    "thetao": _compile_depth_var,
     "atm-accum-avg": _compile_atm_accum_avg,
     "atm-instante": _compile_atm_instante,
     "sst": _compile_sst,

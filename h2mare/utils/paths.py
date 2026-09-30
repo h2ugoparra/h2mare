@@ -136,3 +136,22 @@ def resolve_store_path(
         )
 
     return path
+
+
+def static_layer_path(
+    var_config: KeyVarConfigEntry, layer: Optional[str], store_dir: Path
+) -> Path:
+    """
+    File of the static *layer* (a key of ``layers`` in config.yaml) under *store_dir*.
+
+    *store_dir* is this variable's own directory (``local_folder`` already
+    joined), the shape ``Extractor._store_dir`` and ``resolve_store_path``
+    return. A layer that is not declared raises, naming the ones that are.
+    """
+    layers = getattr(var_config, "layers", None) or {}
+    if layer is None or layer not in layers:
+        raise ValueError(
+            f"Layer {layer!r} is not declared for '{var_config.local_folder}'; "
+            f"`layers` in config.yaml has {sorted(layers)}"
+        )
+    return Path(store_dir) / layers[layer]

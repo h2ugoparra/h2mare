@@ -1,5 +1,6 @@
 """Tests for processing/core/aviso.py — pure functions and EDDIESProcessor helpers."""
 
+from multiprocessing.pool import Pool, ThreadPool
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -8,8 +9,10 @@ import numpy as np
 import pandas as pd
 import pytest
 import xarray as xr
+from loguru import logger
 
 from h2mare.models import AppConfig
+from h2mare.processing.core import aviso as aviso_module
 from h2mare.processing.core.aviso import (
     EDDIESProcessor,
     _group_dates,
@@ -387,7 +390,9 @@ def proc_with_store(tmp_path):
         )
         proc = EDDIESProcessor(
             var_key="eddies",
-            app_config=_make_config(),
+            # Grid lines, like the store on disk: the store grid is reused only
+            # when it is the configured one.
+            app_config=_make_config(entry={**_EDDIES_ENTRY, "values_at": "grid_line"}),
             store_root=store_dir,
             download_root=download_dir,
         )
@@ -487,7 +492,7 @@ class TestGetGriddedDataFallback:
             "h2mare.processing.core.aviso.xr.open_zarr",
             return_value=xr.Dataset(coords={"lat": lat, "lon": lon}),
         ):
-            proc._get_gridded_data(dx=0.5, dy=0.5)
+            proc._get_gridded_data(dx=0.1, dy=0.1)
 
         cat.open_dataset.assert_not_called()
 
@@ -503,6 +508,38 @@ class TestGetGriddedDataFallback:
 
         assert not _is_degenerate_axis(grid.lat)
         assert not _is_degenerate_axis(grid.lon)
+
+
+class TestGetGriddedDataConfiguredGrid:
+    """
+    The store grid used to win over config unconditionally, so regenerating the
+    store after changing ``cells_per_degree`` rebuilt it on its old grid, and
+    the full-period rewrite skipped the write path's grid check.
+    """
+
+    def test_changed_resolution_raises(self, proc_with_store):
+        proc, _ = proc_with_store
+        lat, lon = _canonical_axes()
+        with patch(
+            "h2mare.processing.core.aviso.xr.open_zarr",
+            return_value=xr.Dataset(coords={"lat": lat, "lon": lon}),
+        ):
+            with pytest.raises(ValueError, match="different grid than config"):
+                proc._get_gridded_data(dx=1 / 12, dy=1 / 12)
+
+    def test_matching_store_grid_is_reused_as_is(self, proc_with_store):
+        """Same lattice, drifted in the last bits: the store's axes are kept."""
+        proc, _ = proc_with_store
+        lat, lon = _canonical_axes()
+        lat, lon = np.nextafter(lat, lat + 1), np.nextafter(lon, lon + 1)
+        with patch(
+            "h2mare.processing.core.aviso.xr.open_zarr",
+            return_value=xr.Dataset(coords={"lat": lat, "lon": lon}),
+        ):
+            grid = proc._get_gridded_data(dx=0.1, dy=0.1)
+
+        assert np.array_equal(grid.lat, lat)
+        assert np.array_equal(grid.lon, lon)
 
 
 # ---------------------------------------------------------------------------
@@ -600,3 +637,246 @@ class TestPreferRep:
         assert pd.Timestamp(out[tmp_path / "b_c.nc"].start) == pd.Timestamp(
             "2020-01-01"
         )
+
+
+# ---------------------------------------------------------------------------
+# EDDIESProcessor.run — month-batched conversion
+# ---------------------------------------------------------------------------
+
+
+def _write_atlas(path: Path, start: str, end: str, seed: int) -> None:
+    """A tiny eddy trajectory file: three eddies a day, lon stored 0–360."""
+    rng = np.random.default_rng(seed)
+    days = pd.date_range(start, end, freq="D")
+    n = len(days) * 3
+    obs = {
+        "time": ("obs", np.repeat(days.values, 3) + np.timedelta64(6, "h")),
+        "latitude": ("obs", rng.uniform(21, 29, n)),
+        "longitude": ("obs", rng.uniform(-39, -31, n) + 360),
+        "track": ("obs", rng.integers(1, 100, n).astype(np.float64)),
+        "effective_radius": ("obs", rng.uniform(30e3, 90e3, n)),
+        "speed_radius": ("obs", rng.uniform(20e3, 60e3, n)),
+        "amplitude": ("obs", rng.uniform(0.01, 0.2, n)),
+        "speed_average": ("obs", rng.uniform(0.05, 0.5, n)),
+        "observation_number": ("obs", rng.integers(0, 50, n).astype(np.float64)),
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    xr.Dataset(obs).to_netcdf(path)
+
+
+class TestRunBatchesByMonth:
+    """
+    A period is rasterised a month at a time and written once.
+
+    Collecting a whole year of daily grids before writing held ~9 GB per eddy
+    type in the main process (plus concat/merge copies) and ran out of memory.
+    """
+
+    @pytest.fixture(scope="class")
+    def converted(self, tmp_path_factory):
+        tmp_path = tmp_path_factory.mktemp("eddies_run")
+        downloads = tmp_path / "downloads"
+        store = tmp_path / "store"
+        store.mkdir()
+        # Left by a run killed mid-write, for a period this one never touches.
+        stale = store / ".eddies_19990101.zarr.stage"
+        stale.mkdir()
+        (stale / "zarr.json").write_text("{}")
+        _write_atlas(
+            downloads / "rep" / "Anticyclonic_20210101_20210228.nc",
+            "2021-01-01",
+            "2021-02-28",
+            0,
+        )
+        # Cyclonic stops after January: February must still carry c_* (as NaN).
+        _write_atlas(
+            downloads / "rep" / "Cyclonic_20210101_20210131.nc",
+            "2021-01-01",
+            "2021-01-31",
+            1,
+        )
+
+        entry = _EDDIES_ENTRY | {
+            "source_vars": [
+                "time",
+                "latitude",
+                "longitude",
+                *_EDDIES_ENTRY["source_vars"],
+            ],
+            "bbox": (-40, 20, -30, 30),
+            "cells_per_degree": 1,
+            "n_workers": 1,
+        }
+        out_path = store / "aviso_eddies_2021.zarr"
+        seen_dates: list[int] = []
+        real_submit = EDDIESProcessor._submit_batch
+
+        def spy(self, *args):
+            seen_dates.append(
+                max(len(a) for a in args if isinstance(a, pd.DatetimeIndex))
+            )
+            return real_submit(self, *args)
+
+        with (
+            patch("h2mare.processing.core.aviso.ZarrCatalog") as MockCat,
+            patch(
+                "h2mare.processing.core.aviso.resolve_date_range",
+                side_effect=lambda _k, s, e: DateRange(s, e),
+            ),
+            patch.object(EDDIESProcessor, "_submit_batch", spy),
+            patch("h2mare.processing.core.aviso.mp.Pool", wraps=Pool) as pool_cls,
+        ):
+            MockCat.return_value.exists.return_value = False
+            MockCat.return_value.store_root = store
+            MockCat.return_value.build_file_path.return_value = out_path
+            proc = EDDIESProcessor(
+                var_key="eddies",
+                app_config=_make_config(entry=entry),
+                store_root=store,
+                download_root=downloads,
+            )
+            proc.run("2021-01-01", "2021-02-28")
+
+        return out_path, seen_dates, pool_cls, store
+
+    def test_pool_gets_at_most_a_month(self, converted):
+        _, seen_dates, _, _ = converted
+        assert seen_dates and max(seen_dates) <= 31
+
+    def test_period_written_once_with_period_chunks(self, converted):
+        out_path, _, _, _ = converted
+        with xr.open_zarr(out_path, consolidated=False) as ds:
+            assert ds.sizes["time"] == 59
+            # The file's time chunk follows the period, not the staging month.
+            assert ds["ac_amp"].chunks[0][0] == 59
+            assert {"ac_amp", "ac_normdist", "c_amp", "c_dist_km"} <= set(ds.data_vars)
+            jan, feb = ds["c_amp"].sel(time="2021-01"), ds["c_amp"].sel(time="2021-02")
+            assert np.isfinite(jan.values).any()
+            assert np.isnan(feb.values).all()
+            assert ds["ac_amp"].attrs  # CF attrs applied on the final write
+
+    def test_staging_is_removed(self, converted):
+        _, _, _, store = converted
+        assert [p.name for p in store.iterdir()] == ["aviso_eddies_2021.zarr"]
+
+    def test_stale_staging_from_a_killed_run_is_removed(self, converted):
+        _, _, _, store = converted
+        assert not (store / ".eddies_19990101.zarr.stage").exists()
+
+    def test_n_workers_from_config(self, converted):
+        _, _, pool_cls, _ = converted
+        assert pool_cls.call_args.kwargs["processes"] == 1
+
+
+class TestFailedDays:
+    """
+    A day a worker failed on used to be logged and dropped: the period was
+    still written, one day short, logged as SUCCESS for its full length, and
+    its provenance span covered the hole. Nothing retried it, because coverage
+    had moved past it.
+    """
+
+    def _run(self, tmp_path, fail_on_call: int | None):
+        downloads, store = tmp_path / "downloads", tmp_path / "store"
+        store.mkdir()
+        _write_atlas(
+            downloads / "rep" / "Anticyclonic_20210101_20210131.nc",
+            "2021-01-01",
+            "2021-01-31",
+            0,
+        )
+        entry = _EDDIES_ENTRY | {
+            "source_vars": [
+                "time",
+                "latitude",
+                "longitude",
+                *_EDDIES_ENTRY["source_vars"],
+            ],
+            "bbox": (-40, 20, -30, 30),
+            "cells_per_degree": 1,
+            "n_workers": 1,
+        }
+        out_path = store / "aviso_eddies_2021.zarr"
+        real_search = aviso_module.nearest_on_sphere
+        calls = []
+
+        def search(*args, **kwargs):
+            # One thread, tasks in order: call 15 is 2021-01-15.
+            calls.append(1)
+            if len(calls) == fail_on_call:
+                raise ValueError("boom")
+            return real_search(*args, **kwargs)
+
+        with (
+            patch("h2mare.processing.core.aviso.ZarrCatalog") as MockCat,
+            patch(
+                "h2mare.processing.core.aviso.resolve_date_range",
+                side_effect=lambda _k, s, e: DateRange(s, e),
+            ),
+            # Same process, so the patched search is the one the worker calls.
+            patch("h2mare.processing.core.aviso.mp.Pool", ThreadPool),
+            patch("h2mare.processing.core.aviso.nearest_on_sphere", search),
+        ):
+            MockCat.return_value.exists.return_value = False
+            MockCat.return_value.store_root = store
+            MockCat.return_value.build_file_path.return_value = out_path
+            EDDIESProcessor(
+                var_key="eddies",
+                app_config=_make_config(entry=entry),
+                store_root=store,
+                download_root=downloads,
+            ).run("2021-01-01", "2021-01-31")
+        return out_path, store
+
+    def test_a_failed_day_fails_the_period_and_writes_nothing(self, tmp_path):
+        with pytest.raises(RuntimeError, match=r"\[ac\] rasterising 2021-01-15"):
+            self._run(tmp_path, fail_on_call=15)
+
+        store = tmp_path / "store"
+        assert not (store / "aviso_eddies_2021.zarr").exists()
+        assert list(store.iterdir()) == []  # staging cleared too
+
+    def test_without_failures_every_day_is_written(self, tmp_path):
+        out_path, _ = self._run(tmp_path, fail_on_call=None)
+        with xr.open_zarr(out_path, consolidated=False) as ds:
+            assert ds.sizes["time"] == 31
+
+
+class TestDaysWithoutObservations:
+    def test_worker_returns_none_for_an_empty_day(self):
+        grid = MagicMock(lat=np.array([25.0]), lon=np.array([-35.0]))
+        grid.sea_mask = np.array([[True]])
+        aviso_module._init_worker(grid)
+        empty = xr.Dataset({"latitude": ("obs", np.array([]))})
+
+        assert (
+            aviso_module._process_daily_static(
+                pd.Timestamp("2021-01-01"), empty, eddy_type_str="ac"
+            )
+            is None
+        )
+
+    def test_empty_days_are_named_and_the_rest_kept(self):
+        day = xr.Dataset(
+            {"ac_amp": (["time"], [1.0])}, coords={"time": [pd.Timestamp("2021-01-01")]}
+        )
+        job = MagicMock()
+        job.get.return_value = [day, None]
+        messages: list[str] = []
+        sink = logger.add(messages.append, level="WARNING", format="{message}")
+        try:
+            out = EDDIESProcessor._collect_days(
+                "ac", pd.DatetimeIndex(["2021-01-01", "2021-01-02"]), job
+            )
+        finally:
+            logger.remove(sink)
+
+        assert out is not None and out.sizes["time"] == 1
+        assert any(
+            "1 day(s) with no observations" in m and "2021-01-02" in m for m in messages
+        )
+
+
+def test_n_workers_must_be_positive():
+    with pytest.raises(ValueError, match="n_workers"):
+        _make_config(entry=_EDDIES_ENTRY | {"n_workers": 0})

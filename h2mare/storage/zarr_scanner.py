@@ -192,7 +192,10 @@ class ZarrDirectoryScanner:
         all_vars: set[str] = set()
         for zarr_path in zarr_files:
             try:
-                ds = xr.open_zarr(zarr_path, decode_cf=False)
+                # consolidated=False like every other read in h2mare: the
+                # consolidated block is never relied on (see pyproject's
+                # warning filter), so a variable an append added is not missed.
+                ds = xr.open_zarr(zarr_path, decode_cf=False, consolidated=False)
                 all_vars.update(ds.data_vars.keys())
                 ds.close()
             except Exception as e:

@@ -9,7 +9,7 @@ that is not yet in the store (see [`extract_from_dataset()`](#extract_from_datas
 ```python
 from h2mare.processing.extractor import Extractor
 
-extractor = Extractor("data/points.csv", time_col="ls_date", index_col="idlance")
+extractor = Extractor("data/points.csv", time_col="date", index_col="id_row")
 df = extractor.run("sst")                       # returns a DataFrame
 extractor.run("sst", output_path="out.csv")     # or writes a CSV and returns None
 ```
@@ -35,6 +35,7 @@ Extractor(
     crs=4326,             # EPSG code for geometry extraction (SHP only)
     time_cadence="auto",  # "auto" | "daily" | "hourly"    — see Cadence
     read_from="auto",     # "auto" | "native" | "compiled" — see Cadence
+    bathy_layer=None,     # default: extract_layer of the bathy config entry
     log_file=None,        # default: LOGS_DIR/extractor.log
 )
 ```
@@ -46,11 +47,12 @@ Extractor(
 | `time_col` | `"time"` | Name of the time column in the input. |
 | `lon_col` | `"lon"` | Longitude column name (CSV/point input only). |
 | `lat_col` | `"lat"` | Latitude column name (CSV/point input only). |
-| `app_config` | `settings.app_config` | Override the application configuration (variable registry, depth slices, etc.). |
+| `app_config` | `settings.app_config` | Override the application configuration (variable registry, depth levels, etc.). |
 | `store_root` | `STORE_ROOT` | Root directory of the Zarr stores. Each `var_key` is read from its own `store_root` where `config.yaml` declares one; see [Where a variable's store lives](../configuration.md#where-a-variables-store-lives). |
 | `crs` | `4326` | EPSG code that geometries are reprojected to (SHP/geometry input only). |
 | `time_cadence` | `"auto"` | How `time_col` is read: `"daily"` truncates to midnight, `"hourly"` keeps the precision, `"auto"` infers. See [Cadence](#cadence). |
 | `read_from` | `"auto"` | Which store each `var_key` is read from: its own Zarr (`"native"`), the compiled h2ds (`"compiled"`), or per-`var_key` (`"auto"`). See [Cadence](#cadence). |
+| `bathy_layer` | `extract_layer` in config | Which bathy layer (a key of its `layers`, e.g. `"15s"`, `"60s"`, `"0.25deg"`) `bathy` is read from, for points and geometries alike. An undeclared name raises at construction. See [Standard-deviation columns](#standard-deviation-columns). |
 | `log_file` | `LOGS_DIR/extractor.log` | Extraction log file. The first `Extractor` in the process fixes this; later values are ignored. |
 
 ---
@@ -153,6 +155,13 @@ Extractor(pts, index_col="row_id", read_from="compiled").run("sst")
 - **A daily store missing what it publishes is an error, not a route.** The rule
   is uniform: absent where the design puts it elsewhere is routed; absent where
   the design says it should be present is a hole in the store, and says so.
+- **Against a daily store, a sample takes the day it falls in** — 23:30 reads
+  that day, not the next one's midnight step. Against an hourly store it takes
+  the nearest hour.
+- **No neighbour stands in for a missing value.** A sample outside the grid
+  (beyond the store's extent, or a 0–360 longitude against a −180–180 grid), or
+  on a date the store does not hold, comes back `NaN` with a warning counting
+  such rows — rather than the edge cell's or the adjacent day's value.
 - The store your input never reaches is never opened, and h2ds is opened **once**
   per `Extractor` however many `var_keys` a `run()` walks.
 
@@ -170,13 +179,13 @@ extractor.run(
 
 | Parameter | Description |
 |---|---|
-| `var_dict` | Selects what to extract. A `str` (single `var_key`), a `list[str]` (several `var_keys`), or a `dict[var_key, vars]` to pick specific variables inside a `var_key` (e.g. `{"radiation": ["tisr", "ssrd"]}`). `None` extracts every `var_key` in config (excluding compiled `h2mare`-source outputs). |
+| `var_dict` | Selects what to extract. A `str` (single `var_key`), a `list[str]` (several `var_keys`), or a `dict[var_key, vars]` to pick specific variables inside a `var_key` (e.g. `{"radiation": ["tisr", "ssrd"]}`). `vars` may also be a `{variable: depths}` dict, which picks the variables *and* the depth levels of 3-D ones for this run — see [Depth levels](#depth-levels). `None` extracts every `var_key` in config (excluding compiled `h2mare`-source outputs). |
 | `output_path` | If `None`, `run()` returns the result `DataFrame`. If a path is given, the result is written to **CSV** and `run()` returns `None`. |
 | `n_workers` | Number of `ThreadPoolExecutor` workers. **Only used for geometry (SHP) extraction**; point (CSV) extraction is vectorized and ignores it. |
 
 ```python
 var_dict = {"seapodym": [], "radiation": ["tisr", "ssrd", "slhf"]}
-extractor = Extractor("input.csv", time_col="ls_date", index_col="idlance")
+extractor = Extractor("input.csv", time_col="date", index_col="id_row")
 results = extractor.run(var_dict, output_path="out.csv", n_workers=12)
 ```
 
@@ -202,6 +211,57 @@ that, discards the stale columns and re-extracts, warning as it goes. The write 
 deliberate: reversed, the same interruption would mark the `var_key` done with its columns
 missing and the resume would skip it, dropping the variable silently.
 
+### Depth levels
+
+A store with a `depth` axis is sliced into one column per level, `<variable>_<level>`
+(`thetao_50`), before extraction; left unsliced, the axis would be averaged away. The
+levels come from, in increasing priority:
+
+1. `depth_levels` in the var_key's config — also what compile publishes;
+2. `extract_depth_levels` — an extraction-only override, per variable;
+3. the request itself.
+
+```python
+extractor.run({
+    "dyn_rep": {
+        "thetao": [0, 50, 100],  # these depths, for this run only
+        "uo": None,              # the levels config gives uo
+        "zos": None,             # a 2-D variable, as it is
+    },
+})
+```
+
+A variable the request lists replaces its configured levels; the others keep theirs, and
+config is not changed. A plain list (`{"dyn_rep": ["thetao", "zos"]}`) uses config for
+every variable. What may be named:
+
+| Name | Meaning |
+|---|---|
+| a 3-D variable (`thetao`) | all of its levels |
+| a level column (`thetao_50`) | that level only — it must be one of the levels in use |
+| a 2-D variable (`zos`) | the variable as stored |
+| the var_key itself | everything (the older single-variable stores, where `o2` names both) |
+
+Only the variables requested are sliced, so a 3-D variable nobody asked for needs no levels.
+Refused rather than guessed:
+
+- a requested 3-D variable with no levels from any of the three sources;
+- levels for a variable with no depth axis, or for a store without one;
+- levels naming a variable the store does not hold;
+- levels in a request answered from the compiled store (an hourly var_key with date-only
+  input, or `read_from="compiled"`) — its columns are fixed at compile time, so name them
+  (`thetao_100`) instead;
+- a level list that is empty, negative, fractional or repeated.
+
+Levels are matched to the store's axis by nearest depth and keep the requested name, so
+`thetao_1000` off a store that ends at 902 m holds the 902 m values. That clamp is silent
+up to one level spacing past the end of the axis; a level further out (5000 m against that
+store) is still read from the last level, but logs a warning naming the depth actually used.
+
+The checkpoint is keyed by `var_key`, not by the levels asked for: after a failed run, a
+re-run with *different* levels replays the columns already extracted. Delete
+`INTERIM_DIR/extraction_checkpoint.*` when you change them.
+
 ---
 
 ## `extract_from_dataset()`
@@ -225,10 +285,10 @@ extractor.extract_from_dataset(
 | `ds` | Gridded data with coords named `lon`, `lat`, and optionally `time`. For geometry input the dataset is assumed to be in `crs` — its CRS is overwritten (not reprojected) to match the geometries. |
 | `vars` | Subset of variables to extract. Only valid when `ds` is an `xr.Dataset`; passing it with a `DataArray` raises `TypeError`. |
 | `n_workers` | Parallel workers for geometry (SHP) extraction only. |
-| `clip_to_coverage` | When `True`, input rows whose location (and time, if `ds` has a time coord) fall outside the `ds` extent are dropped and surface as `NaN` in the result. Default `False`, since nearest-neighbour (CSV) and clip-or-NaN (SHP) already handle out-of-extent inputs. |
+| `clip_to_coverage` | When `True`, input rows whose location (and time, if `ds` has a time coord) fall outside the `ds` extent are dropped and surface as `NaN` in the result. Default `False`, since both engines already return `NaN` for a point outside the grid or a time no step answers. The cadence is read off `ds`'s time axis (its smallest spacing): a daily axis gives each sample the day it falls in, anything else the nearest step within half a step. |
 
 Only config-free preparation is applied. Config-driven steps that the store path performs
-— depth-slice expansion, store selection (`read_from`), and store date/bbox coverage resolution — are
+— depth-level slicing, store selection (`read_from`), and store date/bbox coverage resolution — are
 the **caller's** responsibility: prepare `ds` beforehand.
 
 ```python
@@ -261,7 +321,7 @@ Columns are the **input columns carried through**, plus one column per extracted
 | Input | Carried-through columns | Extracted columns |
 |---|---|---|
 | CSV / points | `time`, `lon`, `lat` | one column per variable (e.g. `sst`, `tisr`); depth-sliced variables expand to `var_<depth>` |
-| SHP / geometries | `time`, `geometry` | one column per variable; `bathy` additionally yields a `bathy_std` column (mean / std over each geometry) |
+| SHP / geometries | `time`, `geometry` | one column per variable (polygon mean) |
 
 ### Standard-deviation columns
 
@@ -276,17 +336,22 @@ reduces each clip with `.mean()` and nothing else. Their `_std` columns are ther
 | `sst_std` | convert time, 0.05° native | 3×3 ≈ 0.15° | sub-cell texture |
 | `adt_std`, `sla_std` | convert time, 0.125° native | 3×3 ≈ 0.375° | **wider** than the cell |
 
-Both are then placed on the base grid with `interp_like(..., method="linear")` at compile time,
-so the stored 0.25° value is a point sample of the native std field rather than an aggregate over
-the cell. Because the windows differ in physical size, `sst_std` and `adt_std` magnitudes are not
-comparable with each other.
+Both are then placed on the base grid at compile time by the area-weighted mean every coarsened
+variable gets, so the stored 0.25° value is the **mean of the native std layer over the cell**.
+That is the mean of a local spread, not the spread across the cell: it ignores the variance
+*between* windows, so it reads lower than a std computed over the whole 0.25° footprint would.
+The definition is deliberate and fixed — it is the same quantity at every resolution, and it is
+what the archive has always published. Because the windows differ in physical size, `sst_std` and
+`adt_std` magnitudes are not comparable with each other.
 
-`bathy_std` is the exception: `_extract_geometry_bathy` computes mean *and* std of the clipped
-values inside each geometry, on the 15″ hi-res layer. It is a genuine within-polygon spread, and
-the only column in the table that is.
+`bathy_std` follows the same rule. Each native bathy layer stores a 3×3 rolling std built by
+`scripts/bathymetry.py` (≈ 1.4 km at 15″, ≈ 5.5 km at 60″), so a point takes the nearest cell's
+value and a geometry the polygon mean of that layer — the same estimator for CSV and SHP, chosen
+by `bathy_layer` rather than by input type. The 0.25° layer (what h2ds holds) is different again:
+the std of all 15″ cells inside each 0.25° cell. The 15″ and 60″ values are not on a common scale.
 
-Averaging a stored std layer is the deliberate choice for the others. A within-polygon std is
-polygon-size dependent — a haul touching one 0.25° cell yields `0` or `NaN`, a large one is
+Averaging a stored std layer is the deliberate choice. A within-polygon std is
+polygon-size dependent — a polygon touching one 0.25° cell yields `0` or `NaN`, a large one is
 dominated by the regional gradient — so it is not comparable across rows of differing geometry
 size, whereas the layer mean is defined even for a single-cell polygon and stays on a fixed
 physical scale.

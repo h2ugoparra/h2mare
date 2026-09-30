@@ -93,7 +93,6 @@ def download_subset(
         # (scheduled runs) every refresh persists as its own line.
         disable_progress_bar=not sys.stderr.isatty(),
     )
-    logger.debug(f"Downloaded to {output_dir}")
 
 
 def _generate_date_patterns(
@@ -232,7 +231,6 @@ def download_original(
             overwrite=True,
             disable_progress_bar=not sys.stderr.isatty(),
         )
-    logger.debug(f"Downloaded to {output_dir}")
 
 
 class CMEMSDownloader(BaseDownloader):
@@ -456,7 +454,14 @@ class CMEMSDownloader(BaseDownloader):
         tasks = self._create_download_tasks(requested_range)
 
         if not tasks:
-            logger.info(f"'{self.var_key}' is already up to date — skipping.")
+            # Without an NRT dataset, get_nrt_availability re-logs "not available"
+            # on every call; _create_download_tasks has already said so once.
+            nrt_avail = (
+                self.get_nrt_availability() if self.var_config.dataset_id_nrt else None
+            )
+            self._log_nothing_to_download(
+                requested_range, self.get_rep_availability(), nrt_avail
+            )
             return False
 
         # A task spans a whole dataset/date-range (one per rep/nrt source), not
@@ -528,7 +533,14 @@ class CMEMSDownloader(BaseDownloader):
         if self.var_config.subset:
             chunks = split_time_range(task.date_range, time_split)
 
-            for chunk in chunks:
+            for i, chunk in enumerate(chunks, 1):
+                # The toolbox's own lines name the dataset but not the dates,
+                # so a long window gave no sign of how far it had got.
+                if len(chunks) > 1:
+                    logger.info(
+                        f"Downloading chunk {i}/{len(chunks)}: "
+                        f"{chunk.start.date()} → {chunk.end.date()}"
+                    )
                 self._retry_call(
                     self.download_subset,
                     task.dataset_id,

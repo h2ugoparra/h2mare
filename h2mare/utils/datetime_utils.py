@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import TYPE_CHECKING, Sequence, cast
+from typing import TYPE_CHECKING, cast
 
+import numpy as np
 import pandas as pd
 
 # Re-exported for callers that import it from here; the single definition
@@ -11,7 +12,7 @@ import pandas as pd
 from h2mare.types import to_datetime as to_datetime
 
 if TYPE_CHECKING:
-    from h2mare.types import DateLike
+    from h2mare.types import DateLike, DatesLike
 
 _LAST_INSTANT_OF_DAY = pd.Timedelta(days=1) - pd.Timedelta(nanoseconds=1)
 
@@ -23,8 +24,8 @@ def normalize_date(date: DateLike) -> pd.Timestamp:
     Raises:
         ValueError: If *date* is None, NaT, or anything else pandas reads as
             missing. ``pd.Timestamp`` returns NaT for those, and NaT has no
-            ``.normalize()`` — so this used to surface as ``AttributeError:
-            'NaTType' object has no attribute 'normalize'``, which names
+            ``.normalize()``, so unchecked it surfaces as ``AttributeError:
+            'NaTType' object has no attribute 'normalize'`` — which names
             neither the argument nor the caller's mistake.
     """
     ts = pd.Timestamp(date)
@@ -49,7 +50,7 @@ def end_of_day(date: DateLike) -> pd.Timestamp:
     return normalize_date(date) + _LAST_INSTANT_OF_DAY
 
 
-def normalize_dates(dates: DateLike | Sequence[DateLike]) -> list[pd.Timestamp]:
+def normalize_dates(dates: DatesLike) -> list[pd.Timestamp]:
     """
     Normalize one date or a sequence of dates to a list of midnight Timestamps.
 
@@ -60,7 +61,9 @@ def normalize_dates(dates: DateLike | Sequence[DateLike]) -> list[pd.Timestamp]:
     # Each element goes through normalize_date rather than being normalized
     # inline, so one unusable entry in a list is reported the same way as a
     # lone one instead of raising AttributeError on NaT.
-    if isinstance(dates, (list, tuple)):
+    # A DatetimeIndex (what pd.date_range returns), Series or array is a
+    # sequence of dates too; handed to normalize_date whole, it raised.
+    if isinstance(dates, (list, tuple, pd.Index, pd.Series, np.ndarray)):
         return [normalize_date(d) for d in dates]
     return [normalize_date(cast("DateLike", dates))]
 

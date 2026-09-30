@@ -9,6 +9,7 @@ import pytest
 import xarray as xr
 
 from h2mare.storage.storage import _append_data, write_append_zarr
+from h2mare.storage.xarray_helpers import drop_conflicting_missing_value
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -264,7 +265,12 @@ class TestFastAppend:
         )
         result.close()
 
-    def test_grid_mismatch_falls_back_to_rewrite(self, tmp_path):
+    def test_wider_extent_falls_back_to_rewrite(self, tmp_path):
+        """
+        The fast path appends along time in place, so it can only run when the
+        other axes are identical. A wider bbox on the same lattice is a legal
+        append — the cells at the ends are new — but not one it can do.
+        """
         from h2mare.storage import storage as storage_mod
 
         path = tmp_path / "sst.zarr"
@@ -273,10 +279,10 @@ class TestFastAppend:
         times = pd.date_range("2020-01-06", periods=3, freq="D")
         rng = np.random.default_rng(5)
         ds_new = xr.Dataset(
-            {"sst": (["time", "lat", "lon"], rng.uniform(10, 30, (3, 3, 3)))},
+            {"sst": (["time", "lat", "lon"], rng.uniform(10, 30, (3, 4, 3)))},
             coords={
                 "time": times,
-                "lat": [30.0, 36.0, 40.0],  # differs from stored grid
+                "lat": [30.0, 35.0, 40.0, 45.0],  # same 5° lattice, one cell wider
                 "lon": [-10.0, -5.0, 0.0],
             },
         )
@@ -1246,3 +1252,57 @@ class TestInt16EncodingReadsSourceOnce:
             (hi - lo) * _INT16_HEADROOM / 65000.0
         )
         assert enc["sst"]["add_offset"] == pytest.approx((hi + lo) / 2.0)
+
+
+# ---------------------------------------------------------------------------
+# A store that carries both _FillValue and missing_value
+#
+# chl inherited missing_value: -999.0 from the CMEMS ocean-colour product, and
+# it was never true of what we stored: the array's fill is NaN. Reading a Zarr
+# moves both into .encoding, and xarray refuses to write them back when they
+# disagree — so the store could not be rewritten from itself, which is what a
+# front recompute, a rechunk or any overlapping append does.
+# ---------------------------------------------------------------------------
+
+
+class TestConflictingMissingValue:
+    def _stored(self, tmp_path):
+        """A store whose data variable declares both, as chl's does."""
+        path = tmp_path / "chl.zarr"
+        ds = _make_ds(n_days=4).rename_vars({"sst": "chl"})
+        ds["chl"].attrs["missing_value"] = -999.0
+        ds.to_zarr(path)
+        return path
+
+    def test_an_append_that_keeps_the_stored_head_can_rewrite_it(self, tmp_path):
+        """The retained head carries the store's encoding into the concat."""
+        path = self._stored(tmp_path)
+        later = _make_ds(start="2020-01-03", n_days=4, seed=1).rename_vars(
+            {"sst": "chl"}
+        )
+
+        write_append_zarr("chl", later, path)
+
+        with xr.open_zarr(path, consolidated=False) as out:
+            assert out.sizes["time"] == 6
+            assert "missing_value" not in out["chl"].encoding
+
+    def test_a_new_variable_can_be_added_to_it(self, tmp_path):
+        """The layer a front recompute writes: one variable, the rest re-read
+        from the store and merged back — which is where the conflict surfaced."""
+        path = self._stored(tmp_path)
+        layer = _make_ds(n_days=4, seed=2).rename_vars({"sst": "chl_fdist"})
+
+        write_append_zarr("chl", layer, path)
+
+        with xr.open_zarr(path, consolidated=False) as out:
+            assert {"chl", "chl_fdist"} <= set(map(str, out.data_vars))
+
+    def test_an_agreeing_missing_value_is_left_alone(self, tmp_path):
+        """Nothing is wrong when the two say the same thing, so nothing is dropped."""
+        ds = _make_ds(n_days=3).rename_vars({"sst": "chl"})
+        ds["chl"].encoding.update({"_FillValue": -999.0, "missing_value": -999.0})
+
+        drop_conflicting_missing_value(ds)
+
+        assert ds["chl"].encoding["missing_value"] == -999.0

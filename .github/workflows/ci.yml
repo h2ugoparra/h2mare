@@ -49,9 +49,13 @@ jobs:
     if: github.base_ref == 'dev'
     runs-on: ubuntu-latest
     steps:
+      # Through env, not interpolated into the script: a branch name is chosen
+      # by whoever opens the PR, and `${{ }}` is pasted in before the shell
+      # parses it, so a name carrying a quote could run commands.
       - name: Validate branch name
+        env:
+          branch: ${{ github.head_ref }}
         run: |
-          branch='${{ github.head_ref }}'
           if ! printf '%s' "$branch" | grep -Eq '^(feature|fix|docs|chore|perf|refactor)/.+'; then
             echo "::error::Branch '$branch' must start with feature/, fix/, docs/, chore/, perf/, or refactor/."
             exit 1

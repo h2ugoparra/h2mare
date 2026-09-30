@@ -1,0 +1,530 @@
+{
+ "sst": {
+  "summary": {
+   "new": {
+    "front_px_median": 61537,
+    "components_median": 2620,
+    "median_component_px": 14.0,
+    "small_component_px_share": 0.022,
+    "next_day_within_2px": 0.693
+   },
+   "boa": {
+    "front_px_median": 756723,
+    "components_median": 3360,
+    "median_component_px": 11.0,
+    "small_component_px_share": 0.003,
+    "next_day_within_2px": 0.93
+   },
+   "masked_share_median": 0.048
+  },
+  "front_px_by_month": {
+   "new_px": {
+    "1": 50931,
+    "2": 50159,
+    "3": 57330,
+    "4": 61693,
+    "5": 61546,
+    "6": 63248,
+    "7": 62639,
+    "8": 64182,
+    "9": 69460,
+    "10": 68337,
+    "11": 65937,
+    "12": 54892
+   },
+   "boa_px": {
+    "1": 716435,
+    "2": 718506,
+    "3": 760906,
+    "4": 777954,
+    "5": 784169,
+    "6": 767171,
+    "7": 752831,
+    "8": 719376,
+    "9": 760820,
+    "10": 781316,
+    "11": 789776,
+    "12": 727759
+   }
+  },
+  "spearman": {
+   "field": {
+    "field": 1.0,
+    "lat": -0.91,
+    "grad": -0.42,
+    "grad_nbhd50": -0.54,
+    "grad_nbhd100": -0.59,
+    "grad_nbhd200": -0.64,
+    "front_frac": -0.25,
+    "freq7": -0.38,
+    "freq30": -0.46,
+    "fdist": 0.55,
+    "fdist_persist": 0.58,
+    "fdist_boa": 0.31
+   },
+   "lat": {
+    "field": -0.91,
+    "lat": 1.0,
+    "grad": 0.4,
+    "grad_nbhd50": 0.53,
+    "grad_nbhd100": 0.57,
+    "grad_nbhd200": 0.62,
+    "front_frac": 0.24,
+    "freq7": 0.36,
+    "freq30": 0.44,
+    "fdist": -0.54,
+    "fdist_persist": -0.57,
+    "fdist_boa": -0.3
+   },
+   "grad": {
+    "field": -0.42,
+    "lat": 0.4,
+    "grad": 1.0,
+    "grad_nbhd50": 0.85,
+    "grad_nbhd100": 0.78,
+    "grad_nbhd200": 0.73,
+    "front_frac": 0.61,
+    "freq7": 0.72,
+    "freq30": 0.72,
+    "fdist": -0.75,
+    "fdist_persist": -0.71,
+    "fdist_boa": -0.89
+   },
+   "grad_nbhd50": {
+    "field": -0.54,
+    "lat": 0.53,
+    "grad": 0.85,
+    "grad_nbhd50": 1.0,
+    "grad_nbhd100": 0.97,
+    "grad_nbhd200": 0.92,
+    "front_frac": 0.56,
+    "freq7": 0.75,
+    "freq30": 0.83,
+    "fdist": -0.89,
+    "fdist_persist": -0.87,
+    "fdist_boa": -0.76
+   },
+   "grad_nbhd100": {
+    "field": -0.59,
+    "lat": 0.57,
+    "grad": 0.78,
+    "grad_nbhd50": 0.97,
+    "grad_nbhd100": 1.0,
+    "grad_nbhd200": 0.97,
+    "front_frac": 0.53,
+    "freq7": 0.73,
+    "freq30": 0.82,
+    "fdist": -0.9,
+    "fdist_persist": -0.89,
+    "fdist_boa": -0.7
+   },
+   "grad_nbhd200": {
+    "field": -0.64,
+    "lat": 0.62,
+    "grad": 0.73,
+    "grad_nbhd50": 0.92,
+    "grad_nbhd100": 0.97,
+    "grad_nbhd200": 1.0,
+    "front_frac": 0.5,
+    "freq7": 0.69,
+    "freq30": 0.79,
+    "fdist": -0.87,
+    "fdist_persist": -0.88,
+    "fdist_boa": -0.64
+   },
+   "front_frac": {
+    "field": -0.25,
+    "lat": 0.24,
+    "grad": 0.61,
+    "grad_nbhd50": 0.56,
+    "grad_nbhd100": 0.53,
+    "grad_nbhd200": 0.5,
+    "front_frac": 1.0,
+    "freq7": 0.7,
+    "freq30": 0.58,
+    "fdist": -0.66,
+    "fdist_persist": -0.52,
+    "fdist_boa": -0.47
+   },
+   "freq7": {
+    "field": -0.38,
+    "lat": 0.36,
+    "grad": 0.72,
+    "grad_nbhd50": 0.75,
+    "grad_nbhd100": 0.73,
+    "grad_nbhd200": 0.69,
+    "front_frac": 0.7,
+    "freq7": 1.0,
+    "freq30": 0.83,
+    "fdist": -0.74,
+    "fdist_persist": -0.74,
+    "fdist_boa": -0.6
+   },
+   "freq30": {
+    "field": -0.46,
+    "lat": 0.44,
+    "grad": 0.72,
+    "grad_nbhd50": 0.83,
+    "grad_nbhd100": 0.82,
+    "grad_nbhd200": 0.79,
+    "front_frac": 0.58,
+    "freq7": 0.83,
+    "freq30": 1.0,
+    "fdist": -0.79,
+    "fdist_persist": -0.87,
+    "fdist_boa": -0.62
+   },
+   "fdist": {
+    "field": 0.55,
+    "lat": -0.54,
+    "grad": -0.75,
+    "grad_nbhd50": -0.89,
+    "grad_nbhd100": -0.9,
+    "grad_nbhd200": -0.87,
+    "front_frac": -0.66,
+    "freq7": -0.74,
+    "freq30": -0.79,
+    "fdist": 1.0,
+    "fdist_persist": 0.87,
+    "fdist_boa": 0.66
+   },
+   "fdist_persist": {
+    "field": 0.58,
+    "lat": -0.57,
+    "grad": -0.71,
+    "grad_nbhd50": -0.87,
+    "grad_nbhd100": -0.89,
+    "grad_nbhd200": -0.88,
+    "front_frac": -0.52,
+    "freq7": -0.74,
+    "freq30": -0.87,
+    "fdist": 0.87,
+    "fdist_persist": 1.0,
+    "fdist_boa": 0.62
+   },
+   "fdist_boa": {
+    "field": 0.31,
+    "lat": -0.3,
+    "grad": -0.89,
+    "grad_nbhd50": -0.76,
+    "grad_nbhd100": -0.7,
+    "grad_nbhd200": -0.64,
+    "front_frac": -0.47,
+    "freq7": -0.6,
+    "freq30": -0.62,
+    "fdist": 0.66,
+    "fdist_persist": 0.62,
+    "fdist_boa": 1.0
+   }
+  },
+  "vif_all": {
+   "field": 6.3,
+   "lat": 6.2,
+   "grad": 9.0,
+   "grad_nbhd50": 45.1,
+   "grad_nbhd100": 97.9,
+   "grad_nbhd200": 33.0,
+   "front_frac": 2.7,
+   "freq7": 4.4,
+   "freq30": 6.4,
+   "fdist": 8.1,
+   "fdist_persist": 8.4,
+   "fdist_boa": 5.2
+  },
+  "vif_proposed": {
+   "field": 6.2,
+   "lat": 6.1,
+   "grad": 2.8,
+   "grad_nbhd100": 6.5,
+   "freq30": 4.7,
+   "fdist_persist": 7.2
+  },
+  "fdist_pct_km": {
+   "fdist": {
+    "10": 6.7,
+    "25": 21.1,
+    "50": 80.4,
+    "75": 276.3,
+    "90": 644.5
+   },
+   "fdist_persist": {
+    "10": 0.0,
+    "25": 11.1,
+    "50": 68.9,
+    "75": 279.0,
+    "90": 688.9
+   },
+   "fdist_boa": {
+    "10": 0.0,
+    "25": 0.0,
+    "50": 5.6,
+    "75": 21.3,
+    "90": 49.8
+   }
+  }
+ },
+ "chl": {
+  "summary": {
+   "new": {
+    "front_px_median": 82323,
+    "components_median": 4860,
+    "median_component_px": 10.0,
+    "small_component_px_share": 0.038,
+    "next_day_within_2px": 0.68
+   },
+   "boa": {
+    "front_px_median": 717439,
+    "components_median": 8955,
+    "median_component_px": 2.0,
+    "small_component_px_share": 0.017,
+    "next_day_within_2px": 0.928
+   },
+   "masked_share_median": 0.0
+  },
+  "front_px_by_month": {
+   "new_px": {
+    "1": 41275,
+    "2": 53500,
+    "3": 68739,
+    "4": 99139,
+    "5": 125001,
+    "6": 116616,
+    "7": 108434,
+    "8": 98785,
+    "9": 90124,
+    "10": 75346,
+    "11": 52396,
+    "12": 42393
+   },
+   "boa_px": {
+    "1": 387346,
+    "2": 513747,
+    "3": 579457,
+    "4": 802925,
+    "5": 1012569,
+    "6": 1000752,
+    "7": 964200,
+    "8": 874736,
+    "9": 788103,
+    "10": 635049,
+    "11": 472339,
+    "12": 400817
+   }
+  },
+  "spearman": {
+   "field": {
+    "field": 1.0,
+    "lat": 0.4,
+    "grad": 0.52,
+    "grad_nbhd50": 0.62,
+    "grad_nbhd100": 0.64,
+    "grad_nbhd200": 0.65,
+    "front_frac": 0.46,
+    "freq7": 0.59,
+    "freq30": 0.63,
+    "fdist": -0.62,
+    "fdist_persist": -0.64,
+    "fdist_boa": -0.81
+   },
+   "lat": {
+    "field": 0.4,
+    "lat": 1.0,
+    "grad": 0.34,
+    "grad_nbhd50": 0.42,
+    "grad_nbhd100": 0.43,
+    "grad_nbhd200": 0.45,
+    "front_frac": 0.24,
+    "freq7": 0.35,
+    "freq30": 0.41,
+    "fdist": -0.46,
+    "fdist_persist": -0.5,
+    "fdist_boa": -0.49
+   },
+   "grad": {
+    "field": 0.52,
+    "lat": 0.34,
+    "grad": 1.0,
+    "grad_nbhd50": 0.83,
+    "grad_nbhd100": 0.74,
+    "grad_nbhd200": 0.67,
+    "front_frac": 0.64,
+    "freq7": 0.69,
+    "freq30": 0.66,
+    "fdist": -0.73,
+    "fdist_persist": -0.64,
+    "fdist_boa": -0.69
+   },
+   "grad_nbhd50": {
+    "field": 0.62,
+    "lat": 0.42,
+    "grad": 0.83,
+    "grad_nbhd50": 1.0,
+    "grad_nbhd100": 0.96,
+    "grad_nbhd200": 0.89,
+    "front_frac": 0.58,
+    "freq7": 0.72,
+    "freq30": 0.76,
+    "fdist": -0.86,
+    "fdist_persist": -0.8,
+    "fdist_boa": -0.74
+   },
+   "grad_nbhd100": {
+    "field": 0.64,
+    "lat": 0.43,
+    "grad": 0.74,
+    "grad_nbhd50": 0.96,
+    "grad_nbhd100": 1.0,
+    "grad_nbhd200": 0.96,
+    "front_frac": 0.55,
+    "freq7": 0.7,
+    "freq30": 0.76,
+    "fdist": -0.86,
+    "fdist_persist": -0.84,
+    "fdist_boa": -0.72
+   },
+   "grad_nbhd200": {
+    "field": 0.65,
+    "lat": 0.45,
+    "grad": 0.67,
+    "grad_nbhd50": 0.89,
+    "grad_nbhd100": 0.96,
+    "grad_nbhd200": 1.0,
+    "front_frac": 0.51,
+    "freq7": 0.67,
+    "freq30": 0.74,
+    "fdist": -0.84,
+    "fdist_persist": -0.85,
+    "fdist_boa": -0.7
+   },
+   "front_frac": {
+    "field": 0.46,
+    "lat": 0.24,
+    "grad": 0.64,
+    "grad_nbhd50": 0.58,
+    "grad_nbhd100": 0.55,
+    "grad_nbhd200": 0.51,
+    "front_frac": 1.0,
+    "freq7": 0.71,
+    "freq30": 0.58,
+    "fdist": -0.7,
+    "fdist_persist": -0.52,
+    "fdist_boa": -0.53
+   },
+   "freq7": {
+    "field": 0.59,
+    "lat": 0.35,
+    "grad": 0.69,
+    "grad_nbhd50": 0.72,
+    "grad_nbhd100": 0.7,
+    "grad_nbhd200": 0.67,
+    "front_frac": 0.71,
+    "freq7": 1.0,
+    "freq30": 0.82,
+    "fdist": -0.75,
+    "fdist_persist": -0.73,
+    "fdist_boa": -0.66
+   },
+   "freq30": {
+    "field": 0.63,
+    "lat": 0.41,
+    "grad": 0.66,
+    "grad_nbhd50": 0.76,
+    "grad_nbhd100": 0.76,
+    "grad_nbhd200": 0.74,
+    "front_frac": 0.58,
+    "freq7": 0.82,
+    "freq30": 1.0,
+    "fdist": -0.76,
+    "fdist_persist": -0.86,
+    "fdist_boa": -0.69
+   },
+   "fdist": {
+    "field": -0.62,
+    "lat": -0.46,
+    "grad": -0.73,
+    "grad_nbhd50": -0.86,
+    "grad_nbhd100": -0.86,
+    "grad_nbhd200": -0.84,
+    "front_frac": -0.7,
+    "freq7": -0.75,
+    "freq30": -0.76,
+    "fdist": 1.0,
+    "fdist_persist": 0.82,
+    "fdist_boa": 0.75
+   },
+   "fdist_persist": {
+    "field": -0.64,
+    "lat": -0.5,
+    "grad": -0.64,
+    "grad_nbhd50": -0.8,
+    "grad_nbhd100": -0.84,
+    "grad_nbhd200": -0.85,
+    "front_frac": -0.52,
+    "freq7": -0.73,
+    "freq30": -0.86,
+    "fdist": 0.82,
+    "fdist_persist": 1.0,
+    "fdist_boa": 0.71
+   },
+   "fdist_boa": {
+    "field": -0.81,
+    "lat": -0.49,
+    "grad": -0.69,
+    "grad_nbhd50": -0.74,
+    "grad_nbhd100": -0.72,
+    "grad_nbhd200": -0.7,
+    "front_frac": -0.53,
+    "freq7": -0.66,
+    "freq30": -0.69,
+    "fdist": 0.75,
+    "fdist_persist": 0.71,
+    "fdist_boa": 1.0
+   }
+  },
+  "vif_all": {
+   "field": 3.2,
+   "lat": 1.5,
+   "grad": 4.4,
+   "grad_nbhd50": 30.0,
+   "grad_nbhd100": 62.3,
+   "grad_nbhd200": 23.9,
+   "front_frac": 2.8,
+   "freq7": 4.2,
+   "freq30": 5.8,
+   "fdist": 7.0,
+   "fdist_persist": 7.1,
+   "fdist_boa": 4.7
+  },
+  "vif_proposed": {
+   "field": 1.9,
+   "lat": 1.4,
+   "grad": 2.4,
+   "grad_nbhd100": 4.6,
+   "freq30": 4.4,
+   "fdist_persist": 6.1
+  },
+  "fdist_pct_km": {
+   "fdist": {
+    "10": 5.9,
+    "25": 16.6,
+    "50": 71.6,
+    "75": 228.9,
+    "90": 449.7
+   },
+   "fdist_persist": {
+    "10": 2.8,
+    "25": 8.3,
+    "50": 78.1,
+    "75": 311.4,
+    "90": 628.8
+   },
+   "fdist_boa": {
+    "10": 2.7,
+    "25": 3.0,
+    "50": 13.7,
+    "75": 55.2,
+    "90": 145.4
+   }
+  }
+ }
+}

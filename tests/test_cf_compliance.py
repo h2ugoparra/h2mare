@@ -278,3 +278,49 @@ class TestGlobalAttrs:
         required = ("title", "summary", "keywords", "creator_name", "license", "source")
         missing = [key for key in required if not config["global_attrs"].get(key)]
         assert not missing, f"global_attrs missing: {missing}"
+
+
+class TestFrontLayers:
+    """
+    The detection threshold lives in ``boa_fronts`` and is quoted in the
+    layer's ``comment``. Nothing makes the prose follow the number, so a
+    threshold changed in one place and not the other would leave every file
+    written afterwards describing itself wrongly.
+    """
+
+    def _declared(self, config) -> list[tuple[str, str, float]]:
+        return [
+            (var_key, name, spec["threshold"])
+            for var_key, entry in config["variables"].items()
+            for name, spec in (entry.get("boa_fronts") or {}).items()
+        ]
+
+    def test_the_layers_are_in_the_table(self, config):
+        missing = [
+            f"{var_key}:{name}"
+            for var_key, name, _ in self._declared(config)
+            if name not in config["variable_attrs"]
+        ]
+        assert self._declared(config), "no boa_fronts entries left to check"
+        assert not missing, f"front layers with no variable_attrs entry: {missing}"
+
+    def test_each_comment_states_the_configured_threshold(self, config):
+        attrs = config["variable_attrs"]
+        drifted = {}
+        for var_key, name, threshold in self._declared(config):
+            comment = attrs.get(name, {}).get("comment", "")
+            if str(threshold) not in comment:
+                drifted[f"{var_key}:{name}"] = (
+                    f"threshold {threshold} not in {comment!r}"
+                )
+        assert not drifted, f"comments that no longer state their threshold: {drifted}"
+
+    def test_each_comment_names_the_detection_algorithm(self, config):
+        """The threshold means nothing without it: it is a BOA gradient cut."""
+        attrs = config["variable_attrs"]
+        unnamed = [
+            f"{var_key}:{name}"
+            for var_key, name, _ in self._declared(config)
+            if "belkin" not in attrs.get(name, {}).get("comment", "").lower()
+        ]
+        assert not unnamed, f"front layers whose comment omits the algorithm: {unnamed}"

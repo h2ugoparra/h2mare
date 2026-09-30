@@ -11,6 +11,7 @@ from loguru import logger
 from tenacity import Retrying, stop_after_attempt, wait_exponential
 
 from h2mare.config import AppConfig, get_settings
+from h2mare.types import DateRange
 from h2mare.utils.files_io import prune_empty_dirs
 from h2mare.utils.paths import resolve_store_path
 from h2mare.validators import validate_var_key
@@ -72,7 +73,18 @@ class BaseDownloader(ABC):
         from h2mare.storage.zarr_catalog import ZarrCatalog
 
         try:
-            df = ZarrCatalog(self.var_key, auto_refresh=False).df
+            # The downloader's own config and store, not the ambient ones: this
+            # is a check about the archive this instance writes to. Resolving it
+            # through get_settings() instead read whichever store the machine
+            # had deployed, and a var_key the deployed config did not define
+            # raised out of the constructor into the debug branch below — the
+            # check disabling itself, silently, on a machine pointed elsewhere.
+            df = ZarrCatalog(
+                self.var_key,
+                app_config=self.app_config,
+                store_root=self.store_root,
+                auto_refresh=False,
+            ).df
         except FileNotFoundError:
             return
         except Exception as e:
@@ -97,6 +109,36 @@ class BaseDownloader(ABC):
                 f"to {api_rep_end.date()} (API) — "
                 "new reprocessed data is available."
             )
+
+    def _log_nothing_to_download(
+        self,
+        requested: DateRange,
+        rep_avail: DateRange,
+        nrt_avail: Optional[DateRange],
+    ) -> None:
+        """
+        Explain why a resolved range produced no download tasks.
+
+        Past the provider's last published day this is the ordinary "nothing new
+        yet" case, which is what an inferred range on a current store hits.
+        Anywhere else (before the product begins, or in a gap between REP and
+        NRT) the request cannot be served at all, and "up to date" hid that.
+        """
+        published_end = (
+            max(rep_avail.end, nrt_avail.end) if nrt_avail else rep_avail.end
+        )
+        if requested.start > published_end:
+            logger.info(
+                f"'{self.var_key}' is already up to date — skipping "
+                f"(nothing published after {published_end.date()})."
+            )
+            return
+
+        coverage = f"REP {rep_avail}" + (f", NRT {nrt_avail}" if nrt_avail else "")
+        logger.warning(
+            f"'{self.var_key}': requested {requested} is outside the published "
+            f"coverage ({coverage}) — nothing to download."
+        )
 
     def _retry_call(
         self,

@@ -333,9 +333,8 @@ def hourly_radiation(
         {
             "units": units_out,
             "GRIB_units": units_out,
-            # The source says 'accum'; these values no longer are one. Left
-            # unchanged it invites exactly the reading that made this function
-            # difference an already-differenced field for years.
+            # The source says 'accum'; these values are a rate. Left unchanged
+            # it invites a reader to difference an already-differenced field.
             "GRIB_stepType": "avg",
             "long_name": f"Mean rate from accumulated {da.name or ''}".strip(),
         }
@@ -477,7 +476,7 @@ def compute_curl_and_ekman(
     # Mask near the equator to avoid blow-ups. The mask goes on the *denominator*
     # rather than the result: dividing first and discarding after still evaluates
     # curl/0 at lat=0, and dask raises that as a RuntimeWarning at compute time —
-    # far from this line, which is what a blanket warnings filter used to hide.
+    # far from this line, where a blanket warnings filter would swallow it.
     # Dividing by NaN yields NaN silently, so the values are identical.
     equator_mask = np.abs(f_grid["lat"]) < 2.0
     ekman = curl_tau / (rho_w * f_grid.where(~equator_mask))
@@ -546,6 +545,43 @@ def calendar_doy(time: xr.DataArray) -> xr.DataArray:
     return xr.where((month == 2) & (day == 29), 59, adjusted)
 
 
+#: How far a climatology's lat/lon label may sit from the data's and still name
+#: the same cell. Both come off the same ERA5 axes, identical on disk today, so
+#: this only absorbs float noise; a different grid misses it by a whole cell.
+_CLIM_AXIS_TOL = 1e-6
+
+
+def _climatology_on(
+    clim: xr.Dataset | xr.DataArray, da: xr.DataArray, name: str
+) -> xr.Dataset | xr.DataArray:
+    """
+    *clim* on *da*'s own lat/lon labels, or an error naming what it lacks.
+
+    Arithmetic between the two aligns on coordinate values with xarray's
+    default inner join. A climatology covering less than the data — built for
+    another bbox, or on another grid — therefore shrank every anomaly and event
+    count to the overlap without a word, and compile padded the rest back as
+    NaN. So does a label a float away from the data's, cell by cell.
+    """
+    for axis in ("lat", "lon"):
+        wanted = np.asarray(da[axis].values, dtype="float64")
+        idx = clim.indexes[axis].get_indexer(
+            wanted, method="nearest", tolerance=_CLIM_AXIS_TOL
+        )
+        missing = idx < 0
+        if missing.any():
+            have = clim[axis].values
+            raise ValueError(
+                f"{name} does not cover the data's grid: {int(missing.sum())} of "
+                f"{wanted.size} {axis} values are not on it (climatology {axis} "
+                f"{have.min():g}..{have.max():g}, data {wanted.min():g}.."
+                f"{wanted.max():g}). Rebuild it for this grid with "
+                f"scripts/ekman_climatology.py."
+            )
+        clim = clim.isel({axis: idx}).assign_coords({axis: da[axis].values})
+    return clim
+
+
 def add_engineered_ekman(
     da: xr.DataArray, var_key: str, *, seed_from_store: bool = True
 ):
@@ -566,6 +602,7 @@ def add_engineered_ekman(
         )
 
     p90 = xr.open_dataset(clim_dir / _EKMAN_P90_FILE)["ekman_pumping_anom"]
+    p90 = _climatology_on(p90, da, _EKMAN_P90_FILE)
     p90 = p90.chunk({"month": -1, "lat": 200, "lon": 200})
 
     clim_doy = xr.open_dataset(clim_dir / _EKMAN_DOY_FILE)
@@ -581,6 +618,7 @@ def add_engineered_ekman(
             f"alignment fix and is offset by a day from March onward in leap "
             f"years. Rebuild it with scripts/ekman_climatology.py."
         )
+    clim_doy = _climatology_on(clim_doy, da, _EKMAN_DOY_FILE)
     clim_doy = clim_doy.chunk({"dayofyear": -1, "lat": 200, "lon": 200})
 
     # Get previous days for rowling mean

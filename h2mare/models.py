@@ -8,6 +8,8 @@ from typing import Optional
 
 import msgspec
 
+from h2mare.types import GridValuesAt, RegridMethod
+
 
 class TimeStep(str, Enum):
     """
@@ -39,6 +41,106 @@ class StoreDtype(str, Enum):
     INT16 = "int16"
 
 
+class DerivedOp(str, Enum):
+    """Operations a ``derived_vars`` entry can apply; see ``processing/derived.py``."""
+
+    # Standard deviation over a square lon/lat window centred on each cell.
+    ROLLING_STD = "rolling_std"
+    # 0.5 * (u**2 + v**2) — kinetic energy per unit mass of a velocity pair.
+    KINETIC_ENERGY = "kinetic_energy"
+
+
+# How many source variables each operation reads.
+_DERIVED_OP_ARITY = {DerivedOp.ROLLING_STD: 1, DerivedOp.KINETIC_ENERGY: 2}
+
+
+class DerivedVarSpec(msgspec.Struct, forbid_unknown_fields=True):
+    """
+    One variable computed at convert time from others in the same dataset.
+
+    Unknown fields are refused so a misspelt ``window`` fails at load instead
+    of silently falling back to the default.
+    """
+
+    op: DerivedOp
+    # Variable name(s) read, as they stand after the var_key's processor ran
+    # (``sst``, not ``analysed_sst``). One name for rolling_std, [u, v] for
+    # kinetic_energy.
+    source: str | list[str]
+    # rolling_std only: side of the square window, in cells. Odd, so the
+    # window centres on its cell.
+    window: Optional[int] = None
+    # Depths (metres) to compute at, instead of the sources' whole depth axis.
+    # Each level is matched to the nearest source depth and written as a 2-D
+    # variable <name>_<level> — the name depth_levels would give it — so only
+    # these levels are read, computed and stored. None keeps the depth axis.
+    depth: Optional[list[int]] = None
+
+    @property
+    def sources(self) -> list[str]:
+        return [self.source] if isinstance(self.source, str) else list(self.source)
+
+    def output_names(self, name: str) -> list[str]:
+        """Variables this entry writes: ``name``, or one per ``depth`` level."""
+        if self.depth is None:
+            return [name]
+        return depth_column_names({name: self.depth})
+
+    def __post_init__(self):
+        if self.depth is not None:
+            check_depth_levels("depth", self.depth)
+        arity = _DERIVED_OP_ARITY[self.op]
+        if len(self.sources) != arity:
+            raise ValueError(
+                f"{self.op.value} reads {arity} source variable(s); got {self.source!r}"
+            )
+        if self.op is DerivedOp.ROLLING_STD:
+            if self.window is None:
+                self.window = 3
+            if self.window < 1 or self.window % 2 == 0:
+                raise ValueError(
+                    f"rolling_std window must be an odd number of cells >= 1; "
+                    f"got {self.window}"
+                )
+        elif self.window is not None:
+            raise ValueError(f"{self.op.value} takes no window; got {self.window}")
+
+
+class BOAFrontSpec(msgspec.Struct, forbid_unknown_fields=True):
+    """
+    One front-distance layer detected with the Belkin–O'Reilly algorithm (BOA).
+
+    Named for the algorithm because its one parameter belongs to it: BOA
+    smooths the field, takes a Sobel gradient magnitude and calls every cell
+    above ``threshold`` a front pixel. Another detector would take different
+    parameters entirely, so it gets its own config key and its own spec rather
+    than a mode flag here.
+
+    See ``processing/core/fronts.py`` and Belkin & O'Reilly (2009),
+    *An algorithm for oceanic front detection in chlorophyll and SST
+    satellite imagery*, J. Marine Systems 78.
+    """
+
+    # Variable the fronts are detected in, named as the var_key's processor
+    # leaves it (``sst``, not ``analysed_sst``). Must be a 2-D field over
+    # time/lat/lon: BOA reads one lat×lon slab per day.
+    source: str
+    # Gradient-magnitude cut, in ``source``'s own units — 0.4 °C for sst,
+    # 0.06 mg.m-3 for chl (Belkin & O'Reilly 2009). Not transferable between
+    # variables, and meaningless to a different detection algorithm.
+    threshold: float
+    # Worker processes, one day per task. None uses fronts.DEFAULT_N_WORKERS.
+    n_workers: Optional[int] = None
+
+    def __post_init__(self):
+        if self.threshold <= 0:
+            raise ValueError(
+                f"threshold must be a positive gradient magnitude; got {self.threshold}"
+            )
+        if self.n_workers is not None and self.n_workers < 1:
+            raise ValueError(f"n_workers must be at least 1; got {self.n_workers}")
+
+
 def step_freq(var_config) -> str:
     """
     Pandas frequency alias matching a variable's cadence — ``"h"`` or ``"D"``.
@@ -53,6 +155,83 @@ def step_freq(var_config) -> str:
     return "h" if getattr(var_config, "time_step", None) is TimeStep.HOURLY else "D"
 
 
+def check_depth_levels(key: str, levels: list[int]) -> None:
+    """Refuse an empty, negative, non-integer or duplicated level list."""
+    # bool is an int subclass; msgspec already rejects it from config, but a
+    # list built in Python reaches here unchecked.
+    if not all(
+        isinstance(level, int) and not isinstance(level, bool) for level in levels
+    ):
+        raise ValueError(f"{key} levels must be whole metres; got {levels}")
+    if not levels:
+        raise ValueError(f"{key} has an empty level list; omit the entry instead")
+    if any(level < 0 for level in levels):
+        raise ValueError(f"{key} levels must be depths in metres >= 0; got {levels}")
+    if len(set(levels)) != len(levels):
+        raise ValueError(f"{key} has duplicate levels: {levels}")
+
+
+def _validate_depth_keys(
+    new_key: str,
+    new: Optional[dict[str, list[int]]],
+    old_key: str,
+    old: Optional[list[int]],
+) -> None:
+    """Shape checks for one depth key and its older single-variable form."""
+    if new is not None and old is not None:
+        raise ValueError(
+            f"{new_key} and {old_key} are both set; keep {new_key} only "
+            f"({old_key}: [...] is the same as {new_key}: {{<var_key>: [...]}})"
+        )
+    if new is not None:
+        if not new:
+            raise ValueError(f"{new_key} is empty; omit the key instead")
+        for var, levels in new.items():
+            check_depth_levels(f"{new_key}.{var}", levels)
+    if old is not None:
+        check_depth_levels(old_key, old)
+
+
+def depth_levels_for(
+    var_key: str, var_config, purpose: str = "compile"
+) -> dict[str, list[int]]:
+    """
+    Depth levels per store variable, for ``"compile"`` or ``"extract"``.
+
+    The single reader of the four depth keys, so that compile and extraction
+    cannot disagree on what the older list forms mean. Returns ``{}`` for a
+    variable without depth levels.
+
+    Extraction starts from the compile levels and replaces, per variable,
+    whatever ``extract_depth_levels`` lists — narrowing one field must not drop
+    the others.
+
+    Takes any object with the attributes (``getattr``), like :func:`step_freq`,
+    so stand-in configs predating these fields resolve to their old meaning.
+    """
+    if purpose not in ("compile", "extract"):
+        raise ValueError(f"purpose must be 'compile' or 'extract'; got {purpose!r}")
+
+    def _resolve(new_attr: str, old_attr: str) -> dict[str, list[int]]:
+        new = getattr(var_config, new_attr, None)
+        if new is not None:
+            return {var: list(levels) for var, levels in new.items()}
+        old = getattr(var_config, old_attr, None)
+        return {var_key: list(old)} if old is not None else {}
+
+    levels = _resolve("depth_levels", "compile_depth_slices")
+    if purpose == "extract":
+        levels.update(_resolve("extract_depth_levels", "extract_depth_slices"))
+    return levels
+
+
+def depth_column_names(levels: dict[str, list[int]]) -> list[str]:
+    """Output columns for resolved depth levels: ``<variable>_<level>``."""
+    return [
+        f"{var}_{level}" for var, var_levels in levels.items() for level in var_levels
+    ]
+
+
 class KeyVarConfigEntry(msgspec.Struct):
     """Configuration for a single Key variable/dataset."""
 
@@ -64,12 +243,13 @@ class KeyVarConfigEntry(msgspec.Struct):
     dataset_id_rep: str
     # Provider: "cmems", "aviso", or "cds".
     source: str
-    # Whether this variable's raw NetCDF/GRIB files are archived into the store
-    # (and kept) after conversion, or deleted per-period. Required and explicit:
-    # True keeps raw files, False deletes them.
-    archive_raw: bool
     # Near-real-time dataset identifier. Omit for reanalysis-only products.
     dataset_id_nrt: Optional[str] = None
+    # Whether this variable's raw NetCDF/GRIB files are archived into the store
+    # (and kept) after conversion (True), or deleted per-period (False, the
+    # default). Set True where raw files are costly to fetch again (fsle, eddies):
+    # re-converting a store, e.g. to change store_dtype, re-reads them.
+    archive_raw: bool = False
     # CMEMS only. Chooses the copernicusmarine download API: True (default)
     # downloads via subset() (spatial/variable subset honoring bbox/source_vars);
     # False downloads full original files via get(). Ignored for non-CMEMS
@@ -106,12 +286,17 @@ class KeyVarConfigEntry(msgspec.Struct):
     bbox: Optional[tuple[float, float, float, float]] = None
     # Depth range [min_depth, max_depth] for 3-D variables (e.g. o2, thetao).
     depth_range: Optional[tuple[float, float]] = None
-    # Filename of the static source file at the configured output resolution.
-    # Used by compile-only variables such as bathy.
-    data_file: Optional[str] = None
-    # High-resolution static source file. Used by bathy when extracting at
-    # full native resolution (e.g. from SHP geometries).
-    data_file_hires: Optional[str] = None
+    # Static (time-less) layers a system variable such as bathy is read from,
+    # by name -> file under <store_root>/<local_folder>/ (e.g. {15s: ...zarr,
+    # 0.25deg: ...nc}). The file names live here only: scripts/bathymetry.py
+    # writes them and compile/extract read them. Resolve through
+    # utils/paths.py::static_layer_path.
+    layers: Optional[dict[str, str]] = None
+    # Layer compile reads onto the base grid (a key of `layers`).
+    compile_layer: Optional[str] = None
+    # Default layer for extraction (a key of `layers`), whatever the input
+    # type; Extractor(bathy_layer=...) overrides it for one run.
+    extract_layer: Optional[str] = None
     # Set True for trajectory-format datasets (e.g. eddies) that require
     # spatial binning before they can be stored as a gridded Zarr.
     # The standard open_mfdataset pipeline is bypassed entirely.
@@ -119,23 +304,38 @@ class KeyVarConfigEntry(msgspec.Struct):
     # Set True for variables whose Zarr store uses lon/lat coordinate names that
     # must be renamed to x/y before rioxarray clip (e.g. AVISO fsle, eddies).
     rename_lonlat: bool = False
-    # Depth levels (metres) to slice at during Extractor runs, when they should
-    # differ from compile_depth_slices. Each level becomes a separate output
-    # column (e.g. [0, 100, 500] → o2_0, o2_100, o2_500). None (the default, and
-    # what every shipped variable uses) falls back to compile_depth_slices, so
-    # extraction returns what the variable publishes; set it only to narrow a
-    # variable to fewer levels than it compiles.
+    # Discrete depths (metres) each 3-D variable is published at, keyed by the
+    # variable's name *in the store* (e.g. {thetao: [0, 50, 100], uo: [0]}).
+    # Each level becomes a column named <variable>_<level>; store variables
+    # not listed pass through, which is what lets one store mix 2-D and 3-D
+    # fields. Levels are matched to the store's axis by nearest depth.
+    # Distinct from depth_range, the continuous band that is downloaded.
+    # Used by compile, and the default for extraction. Resolve it through
+    # depth_levels_for rather than reading it directly.
+    depth_levels: Optional[dict[str, list[int]]] = None
+    # Extraction-only override, same shape as depth_levels. Merged per
+    # variable: a variable listed here replaces its depth_levels entry, the
+    # others keep theirs.
+    extract_depth_levels: Optional[dict[str, list[int]]] = None
+    # Older single-variable forms of the two keys above, still accepted. A list
+    # here means {var_key: [...]}, i.e. the store's variable shares the
+    # var_key's name (o2, thetao). Not combinable with their newer key.
     extract_depth_slices: Optional[list[int]] = None
-    # Depth levels (metres) to select when compiling a 3-D variable into h2ds.
-    # Each level becomes a separate output variable (e.g. [0, 100, 500, 1000]
-    # → o2_0, o2_100, o2_500, o2_1000). None = no depth slicing in compiler.
-    # Also the default for extract_depth_slices, so this is the single place a
-    # 3-D variable's levels are declared unless extraction is narrowed.
     compile_depth_slices: Optional[list[int]] = None
     # Exact variable names as they appear in the compiled h2ds Zarr for this
     # var_key. Used to select only these columns when adding a variable to an
     # existing Parquet store (--add-var). None means not yet declared.
     compiled_vars: Optional[list[str]] = None
+    # Source variable names renamed to the names this var_key publishes them
+    # under — e.g. {analysed_sst: sst}. This is the map between source_vars and
+    # compiled_vars, and the only place it lives.
+    #
+    # Applied at convert time before the var_key's registered processor, so a
+    # processor body, boa_fronts, derived_vars and the CF attrs all name
+    # variables the way config does; a var_key that needs nothing but a rename
+    # (mld) therefore needs no processor at all. Only the names change — reach
+    # for derived_vars for a variable computed from another.
+    source_renames: Optional[dict[str, str]] = None
     # Cadence of this variable's stored Zarr. DAILY (the default, and what every
     # existing store is) means one step per calendar day. HOURLY keeps the
     # source's sub-daily axis instead of aggregating it away at convert time —
@@ -176,8 +376,64 @@ class KeyVarConfigEntry(msgspec.Struct):
     # Outranked by ``--store-path``, which relocates a whole run on purpose.
     # See ``h2mare.utils.paths.store_root_for`` for the full precedence.
     store_root: Optional[str] = None
+    # Variables computed at convert time and written to the native store beside
+    # the ones downloaded, keyed by output name — e.g.
+    # {gke: {op: kinetic_energy, source: [ugos, vgos]}}. Applied after the
+    # var_key's registered processor, in declaration order, so an entry may
+    # read an earlier one. A variable derived from a 3-D source keeps its depth
+    # axis and needs its own depth_levels entry like any other.
+    derived_vars: Optional[dict[str, DerivedVarSpec]] = None
+    # Front-distance layers detected at convert time with the Belkin–O'Reilly
+    # algorithm, keyed by the name each is written under — e.g.
+    # {sst_fdist: {source: sst, threshold: 0.4}}. Every cell gets the
+    # great-circle distance (km) to the nearest front pixel found that day.
+    #
+    # Keyed by output name, like derived_vars, so a store carrying several
+    # fields can publish a layer for each of them; `source` names the variable
+    # as source_renames and the var_key's processor leave it. Applied just
+    # before derived_vars, so a derived layer may read an fdist but not the
+    # other way round.
+    #
+    # Daily stores only: detection schedules one field per day, and an hourly
+    # axis has 24 of them. The threshold is BOA's own — see BOAFrontSpec.
+    boa_fronts: Optional[dict[str, BOAFrontSpec]] = None
+    # How each variable is put on the compile base grid, keyed by its name at
+    # that point (a compiled column name) — e.g. {ac_track: nearest}. Anything
+    # not listed uses "auto", which compares the native and target resolutions
+    # and interpolates or area-averages accordingly.
+    #
+    # Only needed for a field whose meaning a mean destroys: an identifier or a
+    # class, or a quantity that describes something other than the cell itself.
+    # The eddy columns are the latter — each holds a property of whichever eddy
+    # is nearest, so it is constant over that eddy's neighbourhood and averaging
+    # across a boundary describes no eddy at all.
+    regrid: Optional[dict[str, RegridMethod]] = None
+    # The grid this var_key's own store is written on, as a whole number of
+    # cells per degree: 4 is 0.25°, 8 is 0.125°, 12 is 1/12°, 20 is 0.05°. A
+    # count rather than a step so the value is exact — 0.083 is not 1/12, and
+    # lays 1084 cells across a 90° span where 1080 belong.
+    #
+    # Read by the steps that *create* a grid: the compile (h2ds) and the eddy
+    # rasterisation. A variable converted from gridded source files keeps the
+    # source's own grid and ignores this.
+    cells_per_degree: Optional[int] = None
+    # Where that grid's values sit — "cell_center" (the default, and what
+    # every existing store uses) or "grid_line". Independent of
+    # the step, and worth choosing deliberately: a variable whose native grid
+    # matches the step but not the phase is interpolated onto the half-way
+    # point, which averages its four neighbours and costs ~5% of the field's
+    # own spatial variability. See "Regridding" in docs/configuration.md.
+    values_at: GridValuesAt = "cell_center"
+    # Worker processes for a trajectory variable's rasterisation (eddies), one
+    # day per task. None uses the processor's default. Each worker holds the
+    # period's raw observations plus one day's grids, so lowering it trims
+    # memory only modestly — it mostly trades speed for CPU.
+    n_workers: Optional[int] = None
 
     def __post_init__(self):
+        if self.n_workers is not None and self.n_workers < 1:
+            raise ValueError(f"n_workers must be at least 1; got {self.n_workers}")
+
         if self.bbox is not None:
             lon_min, lat_min, lon_max, lat_max = self.bbox
             if not (-180 <= lon_min <= 180 and -180 <= lon_max <= 180):
@@ -192,6 +448,51 @@ class KeyVarConfigEntry(msgspec.Struct):
         if self.depth_range is not None:
             if self.depth_range[0] >= self.depth_range[1]:
                 raise ValueError("depth_min must be less than depth_max")
+
+        if self.cells_per_degree is not None:
+            if self.cells_per_degree < 1:
+                raise ValueError(
+                    f"cells_per_degree must be a positive whole number of cells "
+                    f"per degree (4 = 0.25°, 12 = 1/12°); got "
+                    f"{self.cells_per_degree}"
+                )
+            # The grid has to tile the bbox exactly, or its last cell is a
+            # fraction of the others and every area weight computed from the
+            # step is wrong at that edge.
+            if self.bbox is not None:
+                lon_min, lat_min, lon_max, lat_max = self.bbox
+                for lo, hi, axis in (
+                    (lon_min, lon_max, "lon"),
+                    (lat_min, lat_max, "lat"),
+                ):
+                    cells = (hi - lo) * self.cells_per_degree
+                    if abs(cells - round(cells)) > 1e-9:
+                        raise ValueError(
+                            f"cells_per_degree={self.cells_per_degree} does not "
+                            f"divide the bbox's {axis} span ({hi - lo:g}°) into whole "
+                            f"cells ({cells:g}). Adjust the bbox or the count."
+                        )
+
+        for field in ("compile_layer", "extract_layer"):
+            layer = getattr(self, field)
+            if layer is not None and layer not in (self.layers or {}):
+                raise ValueError(
+                    f"{field} {layer!r} is not one of the declared layers "
+                    f"{sorted(self.layers or {})}"
+                )
+
+        _validate_depth_keys(
+            "depth_levels",
+            self.depth_levels,
+            "compile_depth_slices",
+            self.compile_depth_slices,
+        )
+        _validate_depth_keys(
+            "extract_depth_levels",
+            self.extract_depth_levels,
+            "extract_depth_slices",
+            self.extract_depth_slices,
+        )
 
         # Range-mode parsing unpacks exactly two capture groups (start, end);
         # fail fast at config load rather than deep in the convert step with a
@@ -249,8 +550,228 @@ VariablesConfig = dict[str, KeyVarConfigEntry]
 SYSTEM_VAR_KEYS: frozenset[str] = frozenset({"h2ds", "bathy", "moon"})
 
 
+def _check_derived_names(var_key: str, var_config: KeyVarConfigEntry) -> None:
+    """
+    Refuse derived_vars that would clash with each other or with depth_levels.
+
+    Both write ``<variable>_<level>`` names, so ``ke: {depth: [0]}`` beside
+    ``depth_levels: {ke: [0]}`` would describe one column twice — and the
+    latter would fail only at compile, because the 2-D ``ke_0`` leaves no
+    ``ke`` in the store to slice.
+    """
+    if not var_config.derived_vars:
+        return
+
+    written: dict[str, str] = {}
+    for name, spec in var_config.derived_vars.items():
+        for out in spec.output_names(name):
+            if out in written:
+                raise ValueError(
+                    f"'{var_key}': derived_vars.{name} and "
+                    f"derived_vars.{written[out]} both write '{out}'"
+                )
+            written[out] = name
+
+    for purpose in ("compile", "extract"):
+        levels = depth_levels_for(var_key, var_config, purpose)
+        for var in levels:
+            spec = var_config.derived_vars.get(var)
+            if spec is not None and spec.depth is not None:
+                raise ValueError(
+                    f"'{var_key}': derived_vars.{var} is computed at depth "
+                    f"{spec.depth} and stored without a depth axis, so depth "
+                    f"levels cannot slice it. Drop '{var}' from the depth "
+                    f"levels, or drop its `depth` to store every level."
+                )
+        clash = sorted(set(written) & set(depth_column_names(levels)))
+        if clash:
+            raise ValueError(
+                f"'{var_key}': {clash} are written both by derived_vars and "
+                f"by depth levels; keep one."
+            )
+
+
+def _check_front_entries(var_key: str, var_config: KeyVarConfigEntry) -> None:
+    """
+    Refuse boa_fronts entries that overwrite another column, or an hourly store.
+
+    A front layer is assigned into the dataset by name, so a name another
+    mechanism already writes would silently win or lose depending on the order
+    they run in. The cadence check is here rather than in the convert step
+    because it is knowable at load: detection reads one lat×lon field per day,
+    and an hourly axis offers 24, so the layer would describe whichever hour
+    the selection happened to land on.
+    """
+    if not var_config.boa_fronts:
+        return
+
+    if var_config.time_step is not TimeStep.DAILY:
+        raise ValueError(
+            f"'{var_key}': boa_fronts needs a daily store; this one is "
+            f"{var_config.time_step.value}. Front detection reads one field "
+            f"per day."
+        )
+
+    taken: dict[str, str] = {}
+    for name, spec in (var_config.derived_vars or {}).items():
+        for out in spec.output_names(name):
+            taken[out] = "derived_vars"
+    for purpose in ("compile", "extract"):
+        levels = depth_levels_for(var_key, var_config, purpose)
+        for out in depth_column_names(levels):
+            taken[out] = "depth levels"
+
+    for name, spec in var_config.boa_fronts.items():
+        if name == spec.source:
+            raise ValueError(
+                f"'{var_key}': boa_fronts.{name} writes over its own source; "
+                f"give the layer a name of its own (e.g. '{spec.source}_fdist')."
+            )
+        if name in taken:
+            raise ValueError(
+                f"'{var_key}': '{name}' is written both by boa_fronts and by "
+                f"{taken[name]}; keep one."
+            )
+
+
+def _check_regrid_names(var_key: str, var_config: KeyVarConfigEntry) -> None:
+    """
+    Refuse regrid overrides naming a column the var_key does not publish.
+
+    An override is matched by name against the dataset being put on the base
+    grid; one that matches nothing is silently ignored there, so ``ac_trak``
+    would leave the real column averaged and look configured. Only checked
+    where ``compiled_vars`` is declared, which is what says the names exist.
+    """
+    if not var_config.regrid or not var_config.compiled_vars:
+        return
+
+    unknown = sorted(set(var_config.regrid) - set(var_config.compiled_vars))
+    if unknown:
+        raise ValueError(
+            f"'{var_key}': regrid names {unknown}, which it does not publish. "
+            f"Its compiled_vars are {sorted(var_config.compiled_vars)}."
+        )
+
+
+def _check_source_renames(var_key: str, var_config: KeyVarConfigEntry) -> None:
+    """
+    Refuse a ``source_renames`` map that cannot mean what it says.
+
+    The map is the link between ``source_vars`` and ``compiled_vars``, and it is
+    applied before everything else at convert time — so a slip here renames a
+    variable out of the reach of every step that follows, and the store ends up
+    publishing a name nothing else in config knows about.
+
+    The rename *keys* are not checked against ``source_vars``: that field holds
+    what is requested from the provider, which for CDS is the API's long name
+    (``2m_temperature``) rather than the name the GRIB carries (``t2m``). A key
+    naming a variable the file does not hold is caught at convert time instead,
+    by ``rename_source_vars``.
+    """
+    renames = var_config.source_renames or {}
+    if not renames:
+        return
+
+    for src, out in renames.items():
+        if src == out:
+            raise ValueError(
+                f"'{var_key}': source_renames maps '{src}' onto itself; drop the entry."
+            )
+
+    targets = list(renames.values())
+    collided = sorted({t for t in targets if targets.count(t) > 1})
+    if collided:
+        raise ValueError(
+            f"'{var_key}': source_renames maps more than one source onto "
+            f"{collided}; only one of them would survive the rename."
+        )
+
+    written = {
+        out
+        for name, spec in (var_config.derived_vars or {}).items()
+        for out in spec.output_names(name)
+    } | set(var_config.boa_fronts or {})
+    clash = sorted(set(targets) & written)
+    if clash:
+        raise ValueError(
+            f"'{var_key}': source_renames writes {clash}, which derived_vars or "
+            f"boa_fronts also write; keep one."
+        )
+
+    # Only where compiled_vars is declared, which is what says the names exist.
+    declared = var_config.compiled_vars
+    if not declared:
+        return
+
+    # A renamed 3-D variable is published as its depth columns, not under the
+    # name it is stored as, so its levels count as declaring it.
+    sliced = set(depth_levels_for(var_key, var_config))
+    unpublished = sorted(set(targets) - set(declared) - sliced)
+    if unpublished:
+        raise ValueError(
+            f"'{var_key}': source_renames renames to {unpublished}, which it does "
+            f"not publish. Its compiled_vars are {sorted(declared)}."
+        )
+
+    stale = sorted(set(renames) & set(declared))
+    if stale:
+        raise ValueError(
+            f"'{var_key}': compiled_vars names {stale}, which source_renames "
+            f"renames away, so no store ever holds it. Use the new name."
+        )
+
+
 class AppConfig(msgspec.Struct):
     """Complete application configuration."""
 
     variables: VariablesConfig
     secrets: SecretsConfig
+
+    def __post_init__(self):
+        for var_key, var_config in self.variables.items():
+            _check_derived_names(var_key, var_config)
+            _check_front_entries(var_key, var_config)
+            _check_regrid_names(var_key, var_config)
+            _check_source_renames(var_key, var_config)
+
+        # compiled_vars is written by hand and read by Parquet, routing and the
+        # CF checks, so a depth column compile produces but compiled_vars omits
+        # would be silently left out of all of them. The reverse slip matters as
+        # much: a sliced variable listed bare (thetao) names a column h2ds never
+        # holds. Only checked where compiled_vars is declared at all.
+        for var_key, var_config in self.variables.items():
+            declared = var_config.compiled_vars
+            levels = depth_levels_for(var_key, var_config)
+            if declared is None or not levels:
+                continue
+
+            missing = [c for c in depth_column_names(levels) if c not in declared]
+            unsliced = [v for v in levels if v in declared]
+            if not (missing or unsliced):
+                continue
+
+            # The list to write: each bare name replaced in place by its level
+            # columns, then anything still missing, so the order the author
+            # chose survives.
+            suggested: list[str] = []
+            for name in declared:
+                if name in unsliced:
+                    suggested.extend(depth_column_names({name: levels[name]}))
+                else:
+                    suggested.append(name)
+            suggested = list(dict.fromkeys([*suggested, *missing]))
+
+            problems = []
+            if unsliced:
+                problems.append(
+                    f"{unsliced} are sliced by depth, so h2ds never holds a "
+                    f"column by that name"
+                )
+            if missing:
+                problems.append(f"the depth columns {missing} are not listed")
+            raise ValueError(
+                f"'{var_key}': compiled_vars must name the columns compile "
+                f"writes, but {'; and '.join(problems)}. Replace it with: "
+                f"compiled_vars: [{', '.join(suggested)}]"
+            )
