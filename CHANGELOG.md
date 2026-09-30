@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **SDM front layers** (`front_layers`, the successor of `boa_fronts`; design
+  and evidence in `plans/front-layers.md`). A Canny-style detector at the scale
+  the L4 products resolve: Gaussian smoothing in km, the gradient per km with
+  the cos(lat) metric, thinning and hysteresis, chl on log10, and sst masked
+  where `analysis_error` > 0.84 K. Writes `{name}_grad` (gradient magnitude) and
+  `{name}_ffreq30` (share of the last 30 assessed days with a front within
+  12.5 km) to the native store and h2ds, plus the daily mask `{name}_front` to
+  the native store only. The frequency is seeded from stored masks across
+  periods and recomputed after a rewrite of past days. The shipped config
+  declares them for `sst` and `chl`; the stores gain them with the backfill.
+  Compile drops a var_key's native-only variables.
+
 ## [0.9.0] - 2026-09-30
 
 ### Breaking
