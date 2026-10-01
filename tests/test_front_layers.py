@@ -513,7 +513,7 @@ class TestRepoConfig:
 
     def test_sst_is_masked_by_its_analysis_error(self, cfg):
         conf = cfg.variables["sst"].front_layers["sst"].confidence
-        assert (conf.var, conf.max) == ("analysis_error", 0.84)
+        assert (conf.var, conf.max) == ("analysis_error", 1.52)
         assert cfg.variables["chl"].front_layers["chl"].confidence is None
 
     @pytest.mark.parametrize("var_key", ["sst", "chl"])

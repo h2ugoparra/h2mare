@@ -28,7 +28,7 @@ variables:
         sigma_km: 5.0                 # OSTIA has no noise floor (§4.1)
         low_per_km: 0.0155            # degC/km, p75 of the smoothed gradient
         high_per_km: 0.0299           # degC/km, p90
-        confidence: {var: analysis_error, max: 0.84}   # K, 2024 p95 (§4.3)
+        confidence: {var: analysis_error, max: 1.52}   # K, 2024 p99; 0.84 masked the Gulf Stream (§4.3)
         frequency_days: [30]
         frequency_radius_km: 12.5
         # km to the nearest pixel with a front nearby on >= half the assessed
@@ -402,25 +402,25 @@ variable_attrs:
     short_name: SST Front
     long_name: SST front mask (1 front, 0 no front, missing where not assessed)
     units: '1'
-    comment: "Canny-style detection (plans/front-layers.md): sigma 5 km, hysteresis 0.0155/0.0299 degC/km, analysis_error <= 0.84 K. Native store only."
+    comment: "Canny-style detection (plans/front-layers.md): sigma 5 km, hysteresis 0.0155/0.0299 degC/km, analysis_error <= 1.52 K. Native store only."
 
   sst_grad:
     short_name: SST Gradient
     long_name: SST gradient magnitude
     units: K km-1
-    comment: "Gradient magnitude after Gaussian smoothing, per km with the cos(lat) metric. Canny-style detection (plans/front-layers.md): sigma 5 km, hysteresis 0.0155/0.0299 degC/km, analysis_error <= 0.84 K."
+    comment: "Gradient magnitude after Gaussian smoothing, per km with the cos(lat) metric. Canny-style detection (plans/front-layers.md): sigma 5 km, hysteresis 0.0155/0.0299 degC/km, analysis_error <= 1.52 K."
 
   sst_ffreq30:
     short_name: SST FrontFreq30
     long_name: SST front frequency over the last 30 days
     units: '1'
-    comment: "Share of the last 30 assessed days with a front within 12.5 km; days not assessed are left out. Canny-style detection (plans/front-layers.md): sigma 5 km, hysteresis 0.0155/0.0299 degC/km, analysis_error <= 0.84 K."
+    comment: "Share of the last 30 assessed days with a front within 12.5 km; days not assessed are left out. Canny-style detection (plans/front-layers.md): sigma 5 km, hysteresis 0.0155/0.0299 degC/km, analysis_error <= 1.52 K."
 
   sst_pdist30:
     short_name: SST PersistFrontDist
     long_name: Distance to the nearest persistent SST front
     units: km
-    comment: "Great-circle distance to the nearest pixel with a front within 12.5 km on at least half of the last 30 assessed days (ffreq30 >= 0.5); 0 inside that zone. Canny-style detection (plans/front-layers.md): sigma 5 km, hysteresis 0.0155/0.0299 degC/km, analysis_error <= 0.84 K."
+    comment: "Great-circle distance to the nearest pixel with a front within 12.5 km on at least half of the last 30 assessed days (ffreq30 >= 0.5); 0 inside that zone. Canny-style detection (plans/front-layers.md): sigma 5 km, hysteresis 0.0155/0.0299 degC/km, analysis_error <= 1.52 K."
 
   analysis_error:
     short_name: SST Error Std 

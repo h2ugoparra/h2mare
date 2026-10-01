@@ -19,7 +19,7 @@ that purpose, from a detector suited to the L4 products they come from.
 | chl | linear concentration | log10 concentration |
 | Units | per grid cell, index space | per km, corrected for latitude |
 | Confidence | none | sst `analysis_error` mask; masked days count as *unobserved* |
-| SDM layers | daily distance to front | **gradient magnitude** + **30-day front frequency**, per variable |
+| SDM layers | daily distance to front | **gradient magnitude** + **30-day front frequency** + **distance to persistent fronts**, per variable |
 | Where | convert time, native store | convert time, native store (unchanged) |
 
 | Decision | Value | Evidence |
@@ -30,8 +30,12 @@ that purpose, from a detector suited to the L4 products they come from.
 | sst | low 0.0155, high 0.0299 °C/km | 3-year mean percentiles |
 | log10 chl | low 0.0035, high 0.0070 per km | 3-year mean percentiles |
 | Low/high ratio | 2:1 | §4.2: 3:1 leaves the published layers at ρ ≥ 0.97 |
-| sst confidence cut | `analysis_error` > 0.84 K, fixed | §4.3: p90–p99 all give frequency ρ = 1.00 |
+| sst confidence cut | `analysis_error` > **1.52 K** (2024 p99), fixed | §4.3: revised 2026-10-01 from 0.84 K, which left NaN holes in the Gulf Stream frequency |
 | Frequency window | 30 days | §4.4 |
+| Frequency tolerance | a front within **12.5 km** | §9.1: an exact pixel hit is mostly position noise |
+| Persistent-front cut | `ffreq30` ≥ **0.5** | §4.4: above chance recurrence; lower turns the distance into a mask |
+
+Every threshold, with its reason and what was considered, is in the register in §9.2.
 
 The two sensitive parameters (high threshold, chl σ) were adopted at their
 recommended defaults without an SDM test; §9 records the decision and how to
@@ -306,12 +310,60 @@ invented. The chl product has no uncertainty field, so chl has no mask.
 
 **Decisions:**
 
-1. **Cut at 0.84 K** (2024 p95): the worst-supported ~5% of pixels, mostly cloudy
-   high latitudes and ice margins. The daily median masked share in 2024 is 4.8%.
-   §4.5: p90 or p99 leave the frequency unchanged (ρ = 1.00) and the other
-   layers at ρ ≥ 0.98. The value is not critical.
+1. **Cut at 1.52 K** (2024 p99), **revised 2026-10-01 from 0.84 K** (2024 p95).
+
+   *The original choice.* 0.84 K was meant to drop the worst-supported ~5% of
+   pixels, assumed to be mostly cloudy high latitudes and ice margins. §4.5
+   found p90 or p99 leave the frequency at ρ = 1.00, so the value was called
+   not critical.
+
+   *What that missed.* The ρ was computed only on pixels that had a frequency
+   under both cuts, so it measured agreement, not coverage. The prototype's
+   frequency maps showed white squares in the Gulf Stream: pixels whose
+   frequency is NaN because the error exceeded the cut on more than half the
+   window's days. Two properties of the field explain it.
+   - **It tracks variability, not only missing observations.** OSTIA's error
+     includes the background error, which is largest where the ocean is most
+     variable. The Gulf Stream / NAC is both that and often cloudy, so the cut
+     fell hardest on the most frontal water in the domain.
+   - **It is coarse.** 82–87% of east-west neighbours carry the identical
+     value, so whole error blocks cross the cut together: square holes.
+
+   *Measured* (`prototype/11_error_cut_coverage.py`, `error_cut_coverage.json`;
+   30-day windows ending 15 July and 14 February; Gulf Stream box 35–55°N,
+   60–30°W):
+
+   | Cut | Frequency NaN, Gulf Stream box | Frequency NaN, domain | Masked pixel-days north of 55°N |
+   |---|---|---|---|
+   | 0.84 K | 4.1–10.0% | 3.8–9.8% | 41–68% |
+   | 1.0 K | 1.3–4.9% | 2.3–7.3% | 48–75% |
+   | 1.2 K | 0.2–1.8% | 1.3–5.4% | 61–82% |
+   | **1.52 K** | **0.0–1.1%** | **0.6–3.6%** | **76–89%** |
+
+   (Ranges over 2004 / 2014 / 2024, summer and winter.)
+
+   *Why 1.52 K.*
+   - It removes the Gulf Stream holes in every year and season (at most 1.1%,
+     against up to 10% at 0.84 K).
+   - What it still masks is what a confidence mask is for: 76–89% of the
+     masked pixel-days lie north of 55°N, at ice margins and under persistent
+     high-latitude cloud. At 0.84 K, in winter, more than half the masking
+     fell south of 55°N.
+   - It changes no value where both cuts assess a pixel (§4.5: frequency
+     ρ = 1.00, other layers ≥ 0.98), so it trades nothing for the coverage.
+   - The thresholds are unaffected: the calibration (§4.2) took percentiles
+     over every sea pixel, without this mask, so detection now runs on a
+     population closer to the one it was calibrated on.
+   - It is still a percentile of the product's own error (2024 p99), fixed for
+     every year, as decision 2 requires.
+
+   *Why not drop the mask.* Where OSTIA has had no observations for days, the
+   analysis relaxes toward its background and its gradients are weakened or
+   invented. Those pixels (the top 1% of the error in 2024, more in earlier
+   years) should not count as "no front".
 2. **Fixed, not per-year.** Error is higher in early years (fewer
-   observations), so a fixed cut masks roughly twice as much of 2004 as of 2024.
+   observations), so a fixed cut masks more of 2004 than of 2024: at 1.52 K,
+   a median 4.0% of sea pixels a day in summer 2004 against 2.1% in 2024.
    That is the honest outcome: those pixels are less supported. A per-year
    percentile would keep coverage constant by lowering the standard as the
    analysis gets worse.
@@ -370,6 +422,11 @@ invented. The chl product has no uncertainty field, so chl has no mask.
      in summer to 7% in winter is the bloom, not the method.
 
   No default in config: an entry must state it.
+
+  Measured with the original 0.84 K error cut (§4.3). At 1.52 K the Gulf
+  Stream pixels it had masked are assessed. They are among the most frontal
+  in the domain, so the zone can only gain pixels there; the recommendation
+  does not depend on it.
 
 ### 4.5 Sensitivity analysis
 
@@ -603,7 +660,7 @@ sst:
       sigma_km: 5.0
       low_per_km: 0.0155          # °C/km for sst
       high_per_km: 0.0299
-      confidence: {var: analysis_error, max: 0.84}
+      confidence: {var: analysis_error, max: 1.52}
       frequency_days: [30]
       n_workers: 10               # capped by resolve_n_workers
 
@@ -737,8 +794,8 @@ recompute of the front layers (a few hours per variable), not a redesign.
 |---|---|---|---|---|
 | High threshold | p85 / p90 / p95 | **p90** (sst 0.0299 °C/km, chl 0.0070 per km) | §4.2: the middle of the range; the sensitive parameter (p95: ρ 0.88–0.91) | Fit SDMs on 2024 layers for each; pick by cross-validated performance (AUC/TSS). It decides *which* fronts count, which is ecological |
 | chl σ | 5 / 7 / 10 km | **7 km** | §4.1: removes the noise floor below ~30 km, keeps ≥ half the power at 60 km | Same SDM test; σ matters for chl (§4.5) |
-| Frequency vs distance to persistent fronts | ffreq30 / fdist_persist | **ffreq30** | §5.3–5.4: same cluster (ρ −0.86 to −0.87); frequency is bounded, robust and needs no persistence threshold | If a distance is wanted, the persistence threshold (§4.4) needs its own justification |
-| Error cut | fixed 0.84 K / per-year percentile | **fixed 0.84 K** | §4.3: fixed is honest about weaker early years; p90–p99 leave the frequency at ρ = 1.00 | — |
+| Frequency vs distance to persistent fronts | ffreq30 / fdist_persist | **both** (revised 2026-10-01) | §5.3–5.4: same cluster (ρ −0.86 to −0.87), so one model should use one of them. The distance was added because it separates the large front-free areas the frequency reads as 0 (§4.4), and its threshold was then measured | Drop either from a model by choice; both are published |
+| Error cut | 0.84 / 1.0 / 1.2 / 1.52 K fixed; per-year percentile | **fixed 1.52 K** (revised 2026-10-01 from 0.84 K) | §4.3: 0.84 K left NaN holes in the Gulf Stream frequency (4–10% of the box); 1.52 K leaves ≤ 1.1% and masks mostly north of 55°N | Rerun `11_error_cut_coverage.py` if the product or bbox changes |
 | Frequency window | 30 / 7 / other | **30** | §4.4: 7-day correlates 0.82–0.83 with 30 | Add a window via `frequency_days`; the stored mask makes it cheap |
 
 ### 9.1 Decided while implementing
@@ -785,10 +842,34 @@ config declares them already.
 
 | | Fronts, % of assessed pixels | Not assessed | grad p50 | Time |
 |---|---|---|---|---|
-| sst | 3.70% | 5.2% | 0.0080 K km⁻¹ | 93 s |
+| sst | 3.70% | 5.2% (at the original 0.84 K cut) | 0.0080 K km⁻¹ | 93 s |
 | chl | 3.83% | — | 0.0023 km⁻¹ | 120 s |
 
 These are consistent with the prototype.
+
+### 9.2 Threshold register
+
+Every threshold the layers depend on: the value shipped, what it decides, why
+that value, and what would justify changing it. All are physical values, fixed
+for every year; none is recomputed from the data at run time.
+
+| Threshold | Value | What it decides | Why this value | Sensitivity | Revisit when |
+|---|---|---|---|---|---|
+| sst smoothing σ | 5 km | Scale the gradient is taken at | ~1 cell. sst has no noise floor below its 50–80 km effective resolution (§2), so σ only stabilises the gradient direction thinning uses; one cell is the smallest that does (§4.1) | ±50%: published layers ρ ≥ 0.98 (§4.5) | Product changes resolution |
+| chl smoothing σ | 7 km | Scale the gradient is taken at | Removes 88–99% of the noise-floor power below ~30 km while keeping ≥ half the power at 60 km; the spectrum supports 6–9 km (§4.1) | Sensitive: ×0.5 doubles front pixels, ×1.5 removes structure (ρ 0.91–0.93) | SDM results point elsewhere (§9) |
+| chl transform | log10 | Whether gradients compare across concentrations | chl is log-normal; linear gradients scale with concentration and vanish in oligotrophic water (§1.3) | — | — |
+| High threshold | sst 0.0299 °C/km, chl 0.0070 per km of log10 | Which gradients can *start* a front | p90 of the smoothed gradient over every sea pixel, 24 days a year, mean of 2004/2014/2024 (±3% across years). A percentile because published thresholds were set on L2/L3 imagery and do not transfer to a smoothed L4 analysis (§4.2) | The sensitive one: p95 moves the layers (ρ 0.88–0.91) | An SDM test; a new bbox or product (recalibrate with `08_calibrate_multi_year.py`) |
+| Low threshold | sst 0.0155 °C/km, chl 0.0035 per km | How far a front is *traced* | p75, same calibration; 2:1 with the high, the low end of Canny's usual 2:1–3:1 (§4.2) | 3:1 leaves the layers at ρ ≥ 0.97 | With the high threshold |
+| sst confidence cut | `analysis_error` > 1.52 K | Which pixels are not assessed | 2024 p99. Revised from 0.84 K (p95), which masked the Gulf Stream because the error tracks variability; 1.52 K leaves ≤ 1.1% of the Gulf Stream frequency NaN and masks mostly north of 55°N (§4.3) | Values where both cuts assess: frequency ρ = 1.00, others ≥ 0.98; coverage is what it changes | Product or bbox changes (`11_error_cut_coverage.py`) |
+| Assessed share for a frequency | ≥ half the window | When a frequency is NaN rather than a value | Masked means unobserved, not "no front": counting masked days as 0 punched holes into v1 (§4.3). Half is the least that makes the frequency a statement about the window | — | — |
+| Frequency window | 30 days | Time scale of "front activity" | A conventional monthly window; the 7-day frequency correlates 0.82–0.83 with it, so a second window adds little (§4.4) | — | An SDM wants another scale: add to `frequency_days` |
+| Frequency tolerance | 12.5 km | When a pixel counts a front nearby | About a quarter of the ~50 km effective resolution, the scale front positions are uncertain at, and half a 0.25° cell. Exact pixel hits leave 69–70% of the ocean at 0; 12.5 km halves that and keeps ρ 0.94–0.98 with the validated block frequency (§9.1) | 25 km: little gain in zeros, more loss in ρ | — |
+| Persistent-front cut | `ffreq30` ≥ 0.5 | Which pixels are persistent fronts, for `pdist30` | A front nearby more often than not. Above the 1% chance-recurrence cut at the domain's own front rate (sst 0.40–0.43, chl 0.33–0.57); at ≤ 0.2 the chl summer zone covers a third of the sea and the median distance is 0 (§4.4) | The distances scale with it several-fold; the ranking much less (ρ with ffreq30 −0.84 to −0.92 at every cut) | An SDM test of the distance |
+
+**Common to all:** the gradient thresholds are percentiles of *this* domain's
+gradients, so they are specific to the bbox (80°W–10°E, 0–70°N) and the
+products. A different bbox or product needs `08_calibrate_multi_year.py` rerun,
+and the coverage of the error cut rechecked with `11_error_cut_coverage.py`.
 
 ## 10. Reproducibility
 

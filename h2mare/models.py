@@ -143,7 +143,7 @@ class BOAFrontSpec(msgspec.Struct, forbid_unknown_fields=True):
 
 class FrontConfidence(msgspec.Struct, forbid_unknown_fields=True):
     """A field's own uncertainty variable, and the value above which it is too
-    uncertain to assess a front (e.g. OSTIA's ``analysis_error`` above 0.84 K)."""
+    uncertain to assess a front (e.g. OSTIA's ``analysis_error`` above 1.52 K)."""
 
     var: str
     max: float

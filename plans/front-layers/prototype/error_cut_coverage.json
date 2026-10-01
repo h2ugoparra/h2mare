@@ -1,0 +1,182 @@
+{
+ "2004 summer": {
+  "days": 30,
+  "cuts": {
+   "0.84": {
+    "freq_nan_domain": 0.098,
+    "freq_nan_gulf_stream": 0.0682,
+    "daily_masked_median": 0.1128,
+    "masked_north_of_55N": 0.68
+   },
+   "1.0": {
+    "freq_nan_domain": 0.0734,
+    "freq_nan_gulf_stream": 0.0293,
+    "daily_masked_median": 0.0859,
+    "masked_north_of_55N": 0.743
+   },
+   "1.2": {
+    "freq_nan_domain": 0.0544,
+    "freq_nan_gulf_stream": 0.0175,
+    "daily_masked_median": 0.0629,
+    "masked_north_of_55N": 0.79
+   },
+   "1.52": {
+    "freq_nan_domain": 0.0365,
+    "freq_nan_gulf_stream": 0.0115,
+    "daily_masked_median": 0.0398,
+    "masked_north_of_55N": 0.8
+   }
+  },
+  "identical_lon_neighbours": 0.816
+ },
+ "2004 winter": {
+  "days": 30,
+  "cuts": {
+   "0.84": {
+    "freq_nan_domain": 0.0576,
+    "freq_nan_gulf_stream": 0.0999,
+    "daily_masked_median": 0.0653,
+    "masked_north_of_55N": 0.409
+   },
+   "1.0": {
+    "freq_nan_domain": 0.0335,
+    "freq_nan_gulf_stream": 0.0485,
+    "daily_masked_median": 0.0391,
+    "masked_north_of_55N": 0.483
+   },
+   "1.2": {
+    "freq_nan_domain": 0.019,
+    "freq_nan_gulf_stream": 0.0105,
+    "daily_masked_median": 0.0224,
+    "masked_north_of_55N": 0.607
+   },
+   "1.52": {
+    "freq_nan_domain": 0.0083,
+    "freq_nan_gulf_stream": 0.0006,
+    "daily_masked_median": 0.0105,
+    "masked_north_of_55N": 0.763
+   }
+  },
+  "identical_lon_neighbours": 0.818
+ },
+ "2014 summer": {
+  "days": 30,
+  "cuts": {
+   "0.84": {
+    "freq_nan_domain": 0.0638,
+    "freq_nan_gulf_stream": 0.0467,
+    "daily_masked_median": 0.0685,
+    "masked_north_of_55N": 0.63
+   },
+   "1.0": {
+    "freq_nan_domain": 0.0464,
+    "freq_nan_gulf_stream": 0.0205,
+    "daily_masked_median": 0.0504,
+    "masked_north_of_55N": 0.71
+   },
+   "1.2": {
+    "freq_nan_domain": 0.0338,
+    "freq_nan_gulf_stream": 0.0122,
+    "daily_masked_median": 0.0365,
+    "masked_north_of_55N": 0.772
+   },
+   "1.52": {
+    "freq_nan_domain": 0.0216,
+    "freq_nan_gulf_stream": 0.0091,
+    "daily_masked_median": 0.0235,
+    "masked_north_of_55N": 0.784
+   }
+  },
+  "identical_lon_neighbours": 0.859
+ },
+ "2014 winter": {
+  "days": 30,
+  "cuts": {
+   "0.84": {
+    "freq_nan_domain": 0.0476,
+    "freq_nan_gulf_stream": 0.0917,
+    "daily_masked_median": 0.0494,
+    "masked_north_of_55N": 0.458
+   },
+   "1.0": {
+    "freq_nan_domain": 0.0293,
+    "freq_nan_gulf_stream": 0.0451,
+    "daily_masked_median": 0.03,
+    "masked_north_of_55N": 0.521
+   },
+   "1.2": {
+    "freq_nan_domain": 0.0157,
+    "freq_nan_gulf_stream": 0.0063,
+    "daily_masked_median": 0.0162,
+    "masked_north_of_55N": 0.678
+   },
+   "1.52": {
+    "freq_nan_domain": 0.0064,
+    "freq_nan_gulf_stream": 0.0005,
+    "daily_masked_median": 0.0065,
+    "masked_north_of_55N": 0.822
+   }
+  },
+  "identical_lon_neighbours": 0.869
+ },
+ "2024 summer": {
+  "days": 30,
+  "cuts": {
+   "0.84": {
+    "freq_nan_domain": 0.064,
+    "freq_nan_gulf_stream": 0.0407,
+    "daily_masked_median": 0.0754,
+    "masked_north_of_55N": 0.657
+   },
+   "1.0": {
+    "freq_nan_domain": 0.0438,
+    "freq_nan_gulf_stream": 0.0127,
+    "daily_masked_median": 0.0533,
+    "masked_north_of_55N": 0.746
+   },
+   "1.2": {
+    "freq_nan_domain": 0.0276,
+    "freq_nan_gulf_stream": 0.0025,
+    "daily_masked_median": 0.0367,
+    "masked_north_of_55N": 0.822
+   },
+   "1.52": {
+    "freq_nan_domain": 0.0162,
+    "freq_nan_gulf_stream": 0.001,
+    "daily_masked_median": 0.0206,
+    "masked_north_of_55N": 0.852
+   }
+  },
+  "identical_lon_neighbours": 0.829
+ },
+ "2024 winter": {
+  "days": 30,
+  "cuts": {
+   "0.84": {
+    "freq_nan_domain": 0.0377,
+    "freq_nan_gulf_stream": 0.0798,
+    "daily_masked_median": 0.0464,
+    "masked_north_of_55N": 0.47
+   },
+   "1.0": {
+    "freq_nan_domain": 0.0229,
+    "freq_nan_gulf_stream": 0.0379,
+    "daily_masked_median": 0.0279,
+    "masked_north_of_55N": 0.547
+   },
+   "1.2": {
+    "freq_nan_domain": 0.013,
+    "freq_nan_gulf_stream": 0.0073,
+    "daily_masked_median": 0.0157,
+    "masked_north_of_55N": 0.704
+   },
+   "1.52": {
+    "freq_nan_domain": 0.0059,
+    "freq_nan_gulf_stream": 0.0,
+    "daily_masked_median": 0.0068,
+    "masked_north_of_55N": 0.894
+   }
+  },
+  "identical_lon_neighbours": 0.86
+ }
+}
