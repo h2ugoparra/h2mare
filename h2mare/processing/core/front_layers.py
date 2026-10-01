@@ -28,7 +28,7 @@ from __future__ import annotations
 import shutil
 import time
 from collections import deque
-from typing import Callable, Optional
+from typing import Any, Callable, Optional, TypeVar
 
 import numpy as np
 import pandas as pd
@@ -40,6 +40,12 @@ from scipy.ndimage import (
     gaussian_filter1d,
     label,
     maximum_filter1d,
+)
+from tenacity import (
+    Retrying,
+    retry_if_exception,
+    stop_after_attempt,
+    wait_exponential,
 )
 
 from h2mare.models import FrontLayerSpec
@@ -300,6 +306,73 @@ DEFAULT_N_WORKERS = 10
 MaskReader = Callable[[str, pd.Timestamp, pd.Timestamp], Optional[xr.DataArray]]
 
 
+#: Attempts at one store read before giving up.
+#:
+#: The store's drive has answered a burst of concurrent chunk reads with a
+#: transient ``OSError: [Errno 22] Invalid argument`` that read back fine
+#: moments later (plans/front-layers.md §6.6). Only OSError is retried, and not
+#: FileNotFoundError: a missing file will not appear by waiting.
+READ_ATTEMPTS = 4
+READ_WAIT = wait_exponential(multiplier=1, min=2, max=30)
+
+_T = TypeVar("_T")
+
+
+def _transient(e: BaseException) -> bool:
+    return isinstance(e, OSError) and not isinstance(e, FileNotFoundError)
+
+
+def read_retrying(fn: Callable[[], _T], what: str) -> _T:
+    """``fn()``, retried on a transient OSError; the last failure is re-raised."""
+
+    def _log(state) -> None:
+        exc = state.outcome.exception()
+        logger.warning(
+            f"reading {what}: attempt {state.attempt_number} failed "
+            f"({type(exc).__name__}: {exc}); retrying in {state.next_action.sleep:.0f}s"
+        )
+
+    for attempt in Retrying(
+        stop=stop_after_attempt(READ_ATTEMPTS),
+        wait=READ_WAIT,
+        retry=retry_if_exception(_transient),
+        before_sleep=_log,
+        reraise=True,
+    ):
+        with attempt:
+            return fn()
+    raise AssertionError("unreachable: Retrying either returns or raises")
+
+
+def store_mask_reader(catalog: Any, owner: str) -> MaskReader:
+    """
+    A :data:`MaskReader` over a var_key's own store (a ``ZarrCatalog``).
+
+    None when the window holds no stored mask: no file, or files written
+    before the layer was declared. A window only partly covered reads as
+    not assessed where it is missing, which is what those days are.
+    """
+
+    def read(
+        var: str, start: pd.Timestamp, end: pd.Timestamp
+    ) -> Optional[xr.DataArray]:
+        try:
+            ds = catalog.open_dataset(start_date=start, end_date=end, variables=[var])
+        except (FileNotFoundError, KeyError, ValueError) as e:
+            logger.debug(
+                f"[{owner}] no stored {var} for {start.date()}..{end.date()}: {e}"
+            )
+            return None
+        try:
+            if var not in ds.data_vars or ds.sizes.get("time", 0) == 0:
+                return None
+            return read_retrying(ds[var].load, f"{owner} {var}")
+        finally:
+            ds.close()
+
+    return read
+
+
 def _detect_task(args) -> tuple[NDArray[np.float32], NDArray[np.float32]]:
     values, confidence, lat, lon, params = args
     return detect_fronts(values, lat, lon, confidence=confidence, **params)
@@ -390,9 +463,12 @@ def _layer(
     # these layers too.
     with _boa._pool(n_workers) as pool:
         for batch in _boa._month_batches(times):
-            values = src.sel(time=batch).values
+            what = f"{owner} {spec.source} {batch[0]:%Y-%m}"
+            values = read_retrying(lambda: src.sel(time=batch).values, what)
             confs = (
-                conf.sel(time=batch).values if conf is not None else [None] * len(batch)
+                read_retrying(lambda: conf.sel(time=batch).values, what)
+                if conf is not None
+                else [None] * len(batch)
             )
             tasks = [(v, c, lat, lon, params) for v, c in zip(values, confs)]
             results = pool.map(_detect_task, tasks)
@@ -513,10 +589,15 @@ def recompute_following_frequency(
         kept = []
         for day, mask in zip(days, stored.values):
             rolling.push(day, mask)
-            if day > after:
+            # A day with no finite cell has no stored mask: the reader pads a
+            # file written before the layer was declared, and such a file has
+            # no frequency to bring up to date.
+            if day > after and np.isfinite(mask).any():
                 kept.append(day)
                 for n, var in zip(spec.frequency_days, spec.freq_names(name)):
                     freqs[var].append(rolling.frequency(n))
+        if not kept:
+            continue
         for var, arrays in freqs.items():
             out[var] = xr.DataArray(
                 np.stack(arrays),

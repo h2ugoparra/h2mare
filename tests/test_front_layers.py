@@ -515,3 +515,42 @@ class TestRepoConfig:
         conf = cfg.variables["sst"].front_layers["sst"].confidence
         assert (conf.var, conf.max) == ("analysis_error", 0.84)
         assert cfg.variables["chl"].front_layers["chl"].confidence is None
+
+
+class TestReadRetry:
+    """The store's drive returns a transient EINVAL under load (§6.6)."""
+
+    @pytest.fixture(autouse=True)
+    def _no_wait(self, monkeypatch):
+        from tenacity import wait_none
+
+        monkeypatch.setattr(
+            "h2mare.processing.core.front_layers.READ_WAIT", wait_none()
+        )
+
+    def test_a_transient_oserror_is_retried(self):
+        from h2mare.processing.core.front_layers import read_retrying
+
+        calls = []
+
+        def flaky():
+            calls.append(1)
+            if len(calls) == 1:
+                raise OSError(22, "Invalid argument")
+            return "ok"
+
+        assert read_retrying(flaky, "x") == "ok"
+        assert len(calls) == 2
+
+    def test_a_missing_file_is_not_waited_for(self):
+        from h2mare.processing.core.front_layers import read_retrying
+
+        calls = []
+
+        def missing():
+            calls.append(1)
+            raise FileNotFoundError("gone")
+
+        with pytest.raises(FileNotFoundError):
+            read_retrying(missing, "x")
+        assert len(calls) == 1

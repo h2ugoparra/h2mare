@@ -21,6 +21,7 @@ from h2mare.models import StoreDtype, step_freq
 from h2mare.processing.core.front_layers import (
     apply_front_layers,
     recompute_following_frequency,
+    store_mask_reader,
 )
 from h2mare.processing.core.fronts import apply_boa_fronts, clear_staging
 from h2mare.processing.derived import apply_derived_vars
@@ -763,18 +764,7 @@ class Netcdf2Zarr(BaseConverter):
         self, var: str, start: pd.Timestamp, end: pd.Timestamp
     ) -> Optional[xr.DataArray]:
         """The store's own daily front masks over [start, end], or None."""
-        try:
-            ds = self.catalog.open_dataset(
-                start_date=start, end_date=end, variables=[var]
-            )
-        except (FileNotFoundError, KeyError, ValueError) as e:
-            logger.debug(
-                f"[{self.var_key}] no stored {var} for {start.date()}..{end.date()}: {e}"
-            )
-            return None
-        if var not in ds.data_vars or ds.sizes.get("time", 0) == 0:
-            return None
-        return ds[var].load()
+        return store_mask_reader(self.catalog, self.var_key)(var, start, end)
 
     def _refresh_following_frequency(self, after: pd.Timestamp) -> None:
         """

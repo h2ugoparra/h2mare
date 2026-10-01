@@ -20,6 +20,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   periods and recomputed after a rewrite of past days. The shipped config
   declares them for `sst` and `chl`; the stores gain them with the backfill.
   Compile drops a var_key's native-only variables.
+- `scripts/backfill_front_layers.py`: adds the front layers to an existing
+  store from its own field, file by file in date order so each year's
+  frequency is seeded with the previous year's masks (dry run by default).
+  Store reads behind the detection retry a transient `OSError` (the `D:`
+  drive's intermittent EINVAL).
 
 ## [0.9.0] - 2026-09-30
 
