@@ -217,6 +217,48 @@ problem these products do not have.
 No new dependency: `scipy.ndimage` and about 30 lines of numpy for the thinning.
 Cost in the prototype: about 3.5 s/day for sst and 2.8 s/day for chl, per worker.
 
+### 3.3 Describing the method
+
+**Canny, adapted.** Steps 3–6 are Canny's (1986) algorithm as he defined it:
+Gaussian smoothing, gradient magnitude and direction, non-maximum suppression,
+and hysteresis with two thresholds. What is adapted is for gridded ocean fields,
+not a change to the algorithm:
+
+- σ and the gradient are in km, with the cos(lat) metric, rather than in
+  pixels on a flat image;
+- missing cells are filled before smoothing and masked after (step 2), so
+  coastlines are not detected;
+- chl is detected on log10 (step 1);
+- sst pixels with a high analysis error are not assessed (step 7);
+- the thresholds are fixed physical values, calibrated once as domain
+  percentiles (§4.2), where implementations usually set them per image;
+- one scale only: Canny's multi-scale feature synthesis is not used, and σ is
+  set by the product's effective resolution (§4.1).
+
+So "based on the Canny (1986) edge detector, adapted to gridded L4 fields" is
+accurate. Plain "the Canny method" undersells the adaptations. The published
+layers (gradient, frequency, distance to persistent fronts) are products of
+the detector's output, not part of Canny.
+
+**Methods text,** for a paper using the layers:
+
+> Fronts were detected daily with an implementation of the Canny (1986) edge
+> detector adapted to gridded L4 fields: Gaussian smoothing with σ = 5 km (SST)
+> or 7 km (log10 chl), gradients computed per km with a cos(latitude) metric,
+> non-maximum suppression, and hysteresis thresholding with fixed thresholds
+> (0.0155 / 0.0299 °C km⁻¹ for SST; 0.0035 / 0.0070 km⁻¹ for log10 chl) set at
+> the 75th and 90th percentiles of the smoothed gradient in the study domain.
+> SST pixels with an analysis error above 1.52 K were treated as unobserved.
+
+Keep the numbers in step with §9.2 if any threshold changes.
+
+**References:**
+
+- Canny, J. (1986). A computational approach to edge detection. *IEEE
+  Transactions on Pattern Analysis and Machine Intelligence*, 8(6), 679–698.
+- Castelao et al. (2006), *Journal of Geophysical Research: Oceans*: an early
+  application of Canny to SST fronts. Cited from memory; verify before use.
+
 ## 4. Parameters and how each was chosen
 
 ### 4.1 Smoothing width σ
