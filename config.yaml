@@ -7,7 +7,7 @@ variables:
     source_vars: [analysed_sst, analysis_error]
     source_renames:
       analysed_sst: sst
-    compiled_vars: [sst, analysis_error, sst_std, sst_grad, sst_ffreq30]
+    compiled_vars: [sst, analysis_error, sst_std, sst_grad, sst_ffreq30, sst_pdist30]
     dataset_id_rep: METOFFICE-GLO-SST-L4-REP-OBS-SST
     dataset_id_nrt: METOFFICE-GLO-SST-L4-NRT-OBS-SST-V2
     source: cmems
@@ -31,6 +31,10 @@ variables:
         confidence: {var: analysis_error, max: 0.84}   # K, 2024 p95 (§4.3)
         frequency_days: [30]
         frequency_radius_km: 12.5
+        # km to the nearest pixel with a front nearby on >= half the assessed
+        # days: above chance recurrence, and not so low the zone covers the
+        # sea and the distance turns into a mask (§4.4)
+        persistent_distance: {window: 30, min_frequency: 0.5}
 
   ssh:
     local_folder: CMEMS_PHY_008_047
@@ -79,7 +83,7 @@ variables:
     source_vars: [CHL]
     source_renames:
       CHL: chl
-    compiled_vars: [chl, chl_grad, chl_ffreq30]
+    compiled_vars: [chl, chl_grad, chl_ffreq30, chl_pdist30]
     dataset_id_rep: cmems_obs-oc_glo_bgc-plankton_my_l4-gapfree-multi-4km_P1D
     source: cmems
     pattern: (\d{4}-\d{2}-\d{2})(?:-(\d{4}-\d{2}-\d{2}))?
@@ -100,6 +104,10 @@ variables:
         high_per_km: 0.0070           # log10(mg m-3)/km, p90
         frequency_days: [30]
         frequency_radius_km: 12.5
+        # km to the nearest pixel with a front nearby on >= half the assessed
+        # days: above chance recurrence, and not so low the zone covers the
+        # sea and the distance turns into a mask (§4.4)
+        persistent_distance: {window: 30, min_frequency: 0.5}
     # Confirmed empty at source, not lost in transit: re-downloading each
     # of these from CMEMS returns a normal 14.6 MB file in which all
     # 3,628,800 pixels are fill. Neighbouring days come back ~60% finite
@@ -408,6 +416,12 @@ variable_attrs:
     units: '1'
     comment: "Share of the last 30 assessed days with a front within 12.5 km; days not assessed are left out. Canny-style detection (plans/front-layers.md): sigma 5 km, hysteresis 0.0155/0.0299 degC/km, analysis_error <= 0.84 K."
 
+  sst_pdist30:
+    short_name: SST PersistFrontDist
+    long_name: Distance to the nearest persistent SST front
+    units: km
+    comment: "Great-circle distance to the nearest pixel with a front within 12.5 km on at least half of the last 30 assessed days (ffreq30 >= 0.5); 0 inside that zone. Canny-style detection (plans/front-layers.md): sigma 5 km, hysteresis 0.0155/0.0299 degC/km, analysis_error <= 0.84 K."
+
   analysis_error:
     short_name: SST Error Std 
     long_name: Estimated error standard deviation of analysed_sst (sst)
@@ -531,6 +545,12 @@ variable_attrs:
     long_name: CHL front frequency over the last 30 days
     units: '1'
     comment: "Share of the last 30 assessed days with a front within 12.5 km; days not assessed are left out. Canny-style detection on log10 chl (plans/front-layers.md): sigma 7 km, hysteresis 0.0035/0.0070 log10(mg m-3)/km."
+
+  chl_pdist30:
+    short_name: CHL PersistFrontDist
+    long_name: Distance to the nearest persistent CHL front
+    units: km
+    comment: "Great-circle distance to the nearest pixel with a front within 12.5 km on at least half of the last 30 assessed days (ffreq30 >= 0.5); 0 inside that zone. Canny-style detection on log10 chl (plans/front-layers.md): sigma 7 km, hysteresis 0.0035/0.0070 log10(mg m-3)/km."
 
 # SEAPODYM
   mnkc_epi:

@@ -516,6 +516,14 @@ class TestRepoConfig:
         assert (conf.var, conf.max) == ("analysis_error", 0.84)
         assert cfg.variables["chl"].front_layers["chl"].confidence is None
 
+    @pytest.mark.parametrize("var_key", ["sst", "chl"])
+    def test_the_persistent_distance_is_published_at_half_the_days(self, cfg, var_key):
+        """§4.4: 0.5 clears chance recurrence and keeps it a distance."""
+        entry = cfg.variables[var_key]
+        pd_ = entry.front_layers[var_key].persistent_distance
+        assert (pd_.window, pd_.min_frequency) == (30, 0.5)
+        assert f"{var_key}_pdist30" in entry.compiled_vars
+
 
 class TestReadRetry:
     """The store's drive returns a transient EINVAL under load (§6.6)."""

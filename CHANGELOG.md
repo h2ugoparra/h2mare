@@ -29,7 +29,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   to also write `{name}_pdist{window}`, the great-circle distance (km) to the
   nearest pixel whose front frequency is at least `min_frequency`. Optional and
   off by default; no default threshold. 0.5 is the measured recommendation
-  (`plans/front-layers.md` §4.4).
+  (`plans/front-layers.md` §4.4), and the shipped config publishes
+  `sst_pdist30` and `chl_pdist30` at it.
 
 ### Removed
 
