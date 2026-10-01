@@ -38,6 +38,7 @@ nav:
   - Architecture: architecture.md
   - CLI Reference: cli.md
   - Variables: variables.md
+  - Front Layers: front-layers.md
   - API:
     - Overview: api/index.md
     - Downloaders: api/downloader.md

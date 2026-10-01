@@ -1368,7 +1368,7 @@ class TestFrontStaging:
         assert list(interim_dir.glob(".testvar_*")) == []
 
     def test_front_layers_reach_the_store(self, tmp_path, interim_dir):
-        """The SDM layers (plans/front-layers.md) take the same path as BOA's."""
+        """The front layers (plans/front-layers.md) take the same path as BOA's."""
         conv = _period_converter(tmp_path, front_layers=_TESTVAR_LAYERS)
 
         conv._process_period(2020, _write_raw_days(conv, _JAN))

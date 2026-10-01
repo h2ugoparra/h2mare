@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **SDM front layers** (`front_layers`, the successor of `boa_fronts`; design
+- **Front layers** (`front_layers`, the successor of `boa_fronts`; design
   and evidence in `plans/front-layers.md`). A Canny-style detector at the scale
   the L4 products resolve: Gaussian smoothing in km, the gradient per km with
   the cos(lat) metric, thinning and hysteresis, chl on log10, and sst masked

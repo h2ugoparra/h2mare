@@ -1,6 +1,6 @@
 """
-Front layers for species distribution models, declared per var_key in
-``front_layers`` (:class:`h2mare.models.FrontLayerSpec`).
+Front layers (strength, frequency, distance to persistent fronts), declared per
+var_key in ``front_layers`` (:class:`h2mare.models.FrontLayerSpec`).
 
 Replaces the BOA front distances (``processing/core/fronts.py``) with layers
 built for L4 analyses; the design, and the evidence behind every parameter, is
