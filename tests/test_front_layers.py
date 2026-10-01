@@ -513,8 +513,16 @@ class TestRepoConfig:
 
     def test_sst_is_masked_by_its_analysis_error(self, cfg):
         conf = cfg.variables["sst"].front_layers["sst"].confidence
-        assert (conf.var, conf.max) == ("analysis_error", 0.84)
+        assert (conf.var, conf.max) == ("analysis_error", 1.52)
         assert cfg.variables["chl"].front_layers["chl"].confidence is None
+
+    @pytest.mark.parametrize("var_key", ["sst", "chl"])
+    def test_the_persistent_distance_is_published_at_half_the_days(self, cfg, var_key):
+        """§4.4: 0.5 clears chance recurrence and keeps it a distance."""
+        entry = cfg.variables[var_key]
+        pd_ = entry.front_layers[var_key].persistent_distance
+        assert (pd_.window, pd_.min_frequency) == (30, 0.5)
+        assert f"{var_key}_pdist30" in entry.compiled_vars
 
 
 class TestReadRetry:
@@ -554,3 +562,140 @@ class TestReadRetry:
         with pytest.raises(FileNotFoundError):
             read_retrying(missing, "x")
         assert len(calls) == 1
+
+
+# ---------------------------------------------------------------------------
+# Distance to persistent fronts (§4.4, optional)
+# ---------------------------------------------------------------------------
+
+
+def _brute_distance(freq, threshold):
+    """Every pixel to every zone pixel: what the edge-only tree must equal."""
+    from h2mare.utils.spatial import haversine_min_distance_kdtree
+
+    la, lo = np.meshgrid(LAT, LON, indexing="ij")
+    zone = np.isfinite(freq) & (np.nan_to_num(freq) >= threshold)
+    d = haversine_min_distance_kdtree(
+        np.column_stack([la.ravel(), lo.ravel()]),
+        np.column_stack([la[zone], lo[zone]]),
+    ).reshape(freq.shape)
+    return np.where(np.isfinite(freq), d, np.nan)
+
+
+class TestPersistentDistance:
+    def _freq(self):
+        rng = np.random.default_rng(0)
+        f = rng.uniform(0, 0.25, (LAT.size, LON.size))
+        f[10:14, 5:30] = 0.6  # a band of persistent fronts
+        f[30:33, 30:33] = 0.5  # and a patch
+        f[:, :3] = np.nan  # not assessed
+        return f
+
+    def test_equals_the_distance_to_every_zone_pixel(self):
+        from h2mare.processing.core.front_layers import persistent_distance
+
+        f = self._freq()
+        got = persistent_distance(f, LAT, LON, 0.3)
+        np.testing.assert_allclose(got, _brute_distance(f, 0.3), rtol=1e-5, atol=1e-3)
+
+    def test_zero_inside_nan_where_not_assessed(self):
+        from h2mare.processing.core.front_layers import persistent_distance
+
+        f = self._freq()
+        got = persistent_distance(f, LAT, LON, 0.3)
+        assert (got[10:14, 5:30] == 0).all()
+        assert np.isnan(got[:, :3]).all()
+        assert np.isfinite(got[:, 3:]).all()
+
+    def test_no_zone_is_no_distance(self):
+        from h2mare.processing.core.front_layers import persistent_distance
+
+        got = persistent_distance(np.full((LAT.size, LON.size), 0.1), LAT, LON, 0.3)
+        assert np.isnan(got).all()
+
+
+def _pdist_spec(min_frequency=0.5):
+    return msgspec.convert(
+        {
+            **msgspec.to_builtins(SPEC),
+            "persistent_distance": {"window": 4, "min_frequency": min_frequency},
+        },
+        FrontLayerSpec,
+    )
+
+
+@pytest.mark.usefixtures("interim_dir", "serial_pool")
+class TestPersistentDistanceLayer:
+    days = pd.date_range("2020-01-01", "2020-01-20", freq="D")
+
+    def test_the_layer_is_the_distance_of_that_days_frequency(self):
+        from h2mare.processing.core.front_layers import persistent_distance
+
+        out = apply_front_layers(_sst(self.days), {"sst": _pdist_spec()}, "sst").load()
+        assert "sst_pdist4" in out.data_vars
+        for day in self.days[[1, 9, 19]]:
+            np.testing.assert_array_equal(
+                out["sst_pdist4"].sel(time=day).values,
+                persistent_distance(
+                    out["sst_ffreq4"].sel(time=day).values, LAT, LON, 0.5
+                ),
+            )
+
+    def test_a_refresh_recomputes_it_with_the_frequency(self):
+        spec = {"sst": _pdist_spec()}
+        store = _Store()
+        store.write(apply_front_layers(_sst(self.days), spec, "sst"))
+        rewritten = self.days[5:10]
+        store.write(
+            apply_front_layers(
+                _sst(rewritten, seed=3), spec, "sst", read_masks=store.read
+            )
+        )
+        refreshed = recompute_following_frequency(spec, store.read, rewritten[-1])
+        assert refreshed is not None and "sst_pdist4" in refreshed
+        store.write(refreshed)
+
+        truth_fields = _sst(self.days).copy()
+        truth_fields["sst"].loc[dict(time=rewritten)] = _sst(rewritten, seed=3)[
+            "sst"
+        ].values
+        truth = apply_front_layers(truth_fields, spec, "sst").load()
+        after = self.days[10:13]
+        np.testing.assert_array_equal(
+            store.ds["sst_pdist4"].sel(time=after).values,
+            truth["sst_pdist4"].sel(time=after).values,
+        )
+
+
+class TestPersistentDistanceConfig:
+    def test_names(self):
+        spec = _pdist_spec()
+        assert spec.pdist_names("sst") == ["sst_pdist4"]
+        assert "sst_pdist4" in spec.output_names("sst")
+        assert "sst_pdist4" in spec.published_names("sst")
+        assert SPEC.pdist_names("sst") == []
+
+    @pytest.mark.parametrize(
+        "pd_, match",
+        [
+            ({"window": 7, "min_frequency": 0.3}, "not one of frequency_days"),
+            ({"window": 30, "min_frequency": 0}, "min_frequency"),
+            ({"window": 30, "min_frequency": 1.5}, "min_frequency"),
+            ({"window": 30}, "min_frequency"),
+        ],
+    )
+    def test_malformed_entries_are_refused(self, pd_, match):
+        with pytest.raises(msgspec.ValidationError, match=match):
+            _load(front_layers={"sst": {**_LAYER, "persistent_distance": pd_}})
+
+    def test_it_must_be_compiled_when_declared(self):
+        layer = {**_LAYER, "persistent_distance": {"window": 30, "min_frequency": 0.3}}
+        with pytest.raises(msgspec.ValidationError, match="add them to compiled_vars"):
+            _load(
+                compiled_vars=["sst", "sst_grad", "sst_ffreq30"],
+                front_layers={"sst": layer},
+            )
+        _load(
+            compiled_vars=["sst", "sst_grad", "sst_ffreq30", "sst_pdist30"],
+            front_layers={"sst": layer},
+        )

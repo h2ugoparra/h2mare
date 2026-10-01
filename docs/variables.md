@@ -8,10 +8,10 @@ All variables configured in `config.yaml`. Each key maps to one data stream with
 
 | Key | Source | Provider | NRT | Output variables |
 |---|---|---|---|---|
-| `sst` | CMEMS | Satellite L4 | yes | `sst`, `analysis_error`, `sst_std`, `sst_grad`, `sst_ffreq30` |
+| `sst` | CMEMS | Satellite L4 | yes | `sst`, `analysis_error`, `sst_std`, `sst_grad`, `sst_ffreq30`, `sst_pdist30` |
 | `ssh` | CMEMS | Satellite L4 | yes | `adt`, `sla`, `ugos`, `vgos`, `gke` |
 | `mld` | CMEMS | Model (NEMO) | no | `mld` |
-| `chl` | CMEMS | Satellite L4 | no | `chl`, `chl_grad`, `chl_ffreq30` |
+| `chl` | CMEMS | Satellite L4 | no | `chl`, `chl_grad`, `chl_ffreq30`, `chl_pdist30` |
 | `seapodym` | CMEMS | Model (SEAPODYM) | no | `mnkc_epi`, `mnkc_umeso`, `mnkc_mumeso`, `npp`, `zooc`, `zeu` |
 | `o2` | CMEMS | Model (PISCES) | no | `o2_0`, `o2_100`, `o2_500`, `o2_1000` |
 | `fsle` | AVISO | FTP | yes | `fsle_max` |
@@ -29,7 +29,7 @@ All variables configured in `config.yaml`. Each key maps to one data stream with
 - **Dataset (rep):** `METOFFICE-GLO-SST-L4-REP-OBS-SST`
 - **Dataset (nrt):** `METOFFICE-GLO-SST-L4-NRT-OBS-SST-V2`
 - **Resolution:** 0.05°, area-averaged onto the 0.25° grid
-- **Variables:** analysed SST (°C), analysis error (K), SST gradient (K km⁻¹) and 30-day front frequency, declared in `front_layers`
+- **Variables:** analysed SST (°C), analysis error (K), SST gradient (K km⁻¹), 30-day front frequency and distance to persistent fronts (km), declared in `front_layers`
 
 ### `ssh` — Sea Surface Height
 - **Dataset (rep):** `cmems_obs-sl_glo_phy-ssh_my_allsat-l4-duacs-0.125deg_P1D`
@@ -45,7 +45,7 @@ All variables configured in `config.yaml`. Each key maps to one data stream with
 ### `chl` — Chlorophyll-a
 - **Dataset (rep):** `cmems_obs-oc_glo_bgc-plankton_my_l4-gapfree-multi-4km_P1D`
 - **Resolution:** 4 km, area-averaged onto the 0.25° grid
-- **Variables:** CHL concentration (mg m⁻³), log10 CHL gradient (km⁻¹) and 30-day front frequency, declared in `front_layers`
+- **Variables:** CHL concentration (mg m⁻³), log10 CHL gradient (km⁻¹), 30-day front frequency and distance to persistent fronts (km), declared in `front_layers`
 
 ### `seapodym` — Micronekton (SEAPODYM)
 - **Dataset (rep):** `cmems_mod_glo_bgc_my_0.083deg-lmtl_P1D-i`
