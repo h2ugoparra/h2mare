@@ -6,7 +6,7 @@ and the eddies store was regenerated (§5 steps 1–2). Step 3 was superseded:
 recomputed (`plans/front-layers.md` §6.7). h2ds and Parquet pick up the repaired
 eddies at the next full recompile (steps 4–5).
 Written 2026-09-18. Found while checking whether the 0.1° eddies store needed
-regenerating for the regrid work (`plans/regrid.md`) — it does not, but it needs
+regenerating for the regrid work (since shipped; `docs/api/compiler.md#regridding`) — it does not, but it needs
 regenerating for this.
 
 ## 1. The defect
@@ -155,7 +155,7 @@ Ordered, because each step invalidates the next one's input.
    and one KD-tree query per day over ~21k days — so run it per year
    (`--years`) rather than in one go, and dry-run first.
 4. **Recompile h2ds**, which the regrid work needs anyway
-   (`plans/regrid.md` phase A). Doing 2–3 first means one recompile covers both.
+   (shipped; `docs/api/compiler.md#regridding`). Doing 2–3 first means one recompile covers both.
 5. **Rebuild Parquet** from the recompiled h2ds.
 
 ## 6. Relationship to the regrid work
