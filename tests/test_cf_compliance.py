@@ -297,7 +297,9 @@ class TestFrontLayers:
 
     def _outputs(self, name: str, spec: dict) -> list[str]:
         freqs = [f"{name}_ffreq{n}" for n in spec.get("frequency_days", [30])]
-        return [f"{name}_front", f"{name}_grad", *freqs]
+        pdist = spec.get("persistent_distance")
+        extra = [f"{name}_pdist{pdist['window']}"] if pdist else []
+        return [f"{name}_front", f"{name}_grad", *freqs, *extra]
 
     def test_the_layers_are_in_the_table(self, config):
         missing = [

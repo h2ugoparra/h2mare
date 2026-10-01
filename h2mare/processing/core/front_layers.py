@@ -36,6 +36,7 @@ import xarray as xr
 from loguru import logger
 from numpy.typing import NDArray
 from scipy.ndimage import (
+    binary_erosion,
     distance_transform_edt,
     gaussian_filter1d,
     label,
@@ -51,6 +52,7 @@ from tenacity import (
 from h2mare.models import FrontLayerSpec
 from h2mare.processing.core import fronts as _boa
 from h2mare.utils.parallel import resolve_n_workers
+from h2mare.utils.spatial import haversine_min_distance_kdtree
 
 #: km per degree of latitude.
 KM_PER_DEG = 111.2
@@ -260,6 +262,37 @@ def proximity_mask(
     return np.where(np.isfinite(mask), near, np.nan).astype("float32")
 
 
+def persistent_distance(
+    freq: NDArray, lat: NDArray, lon: NDArray, min_frequency: float
+) -> NDArray[np.float32]:
+    """
+    Great-circle km from each pixel to the nearest persistent frontal zone.
+
+    The zone is every pixel whose front frequency is at least *min_frequency*:
+    a front recurred within ``frequency_radius_km`` on that share of the
+    assessed days. Inside it the distance is 0. NaN where the frequency itself
+    is (too few days assessed), and everywhere when no pixel reaches the cut —
+    with nothing to measure to there is no distance.
+    """
+    assessed = np.isfinite(freq)
+    zone = assessed & (np.nan_to_num(freq) >= min_frequency)
+    out = np.full(freq.shape, np.nan, dtype="float32")
+    if not zone.any():
+        return out
+    out[zone] = 0.0
+    outside = assessed & ~zone
+    if outside.any():
+        # The nearest zone pixel to anything outside lies on the zone's edge,
+        # so the tree only needs the edge: a fraction of the zone's size.
+        edge = zone & ~np.asarray(binary_erosion(zone), dtype=bool)
+        la, lo = np.meshgrid(lat, lon, indexing="ij")
+        out[outside] = haversine_min_distance_kdtree(
+            np.column_stack([la[outside], lo[outside]]),
+            np.column_stack([la[edge], lo[edge]]),
+        )
+    return out
+
+
 class RollingFrequency:
     """
     Front frequency over trailing windows of calendar days, fed one day at a
@@ -378,6 +411,31 @@ def _detect_task(args) -> tuple[NDArray[np.float32], NDArray[np.float32]]:
     return detect_fronts(values, lat, lon, confidence=confidence, **params)
 
 
+class _SerialMap:
+    """``pool.map`` in-process: the refresh covers a few weeks of days."""
+
+    @staticmethod
+    def map(fn, tasks):
+        return [fn(t) for t in tasks]
+
+
+def _pdist_task(args) -> NDArray[np.float32]:
+    freq, lat, lon, min_frequency = args
+    return persistent_distance(freq, lat, lon, min_frequency)
+
+
+def _with_pdist(
+    out: dict[str, list], spec: FrontLayerSpec, name: str, lat, lon, pool
+) -> None:
+    """Append the persistent distance of each day whose frequency *out* holds."""
+    pd_ = spec.persistent_distance
+    if pd_ is None:
+        return
+    freqs = out[f"{name}_ffreq{pd_.window}"]
+    tasks = [(f, lat, lon, pd_.min_frequency) for f in freqs]
+    out[spec.pdist_names(name)[0]] = list(pool.map(_pdist_task, tasks))
+
+
 def _params(spec: FrontLayerSpec) -> dict:
     return dict(
         transform=spec.transform,
@@ -473,13 +531,18 @@ def _layer(
             tasks = [(v, c, lat, lon, params) for v, c in zip(values, confs)]
             results = pool.map(_detect_task, tasks)
 
-            out: dict[str, list] = {v: [] for v in spec.output_names(name)}
+            out: dict[str, list] = {
+                v: []
+                for v in spec.output_names(name)
+                if v not in spec.pdist_names(name)
+            }
             for day, (mask, grad) in zip(batch, results):
                 rolling.push(day, mask)
                 out[spec.mask_name(name)].append(mask)
                 out[spec.grad_name(name)].append(grad)
                 for n, var in zip(spec.frequency_days, spec.freq_names(name)):
                     out[var].append(rolling.frequency(n))
+            _with_pdist(out, spec, name, lat, lon, pool)
 
             block = xr.Dataset(
                 {v: (("time", "lat", "lon"), np.stack(a)) for v, a in out.items()},
@@ -563,8 +626,11 @@ def recompute_following_frequency(
     masks that no longer exist. This recomputes them from the store's masks,
     now including the rewritten ones.
 
-    Returns a dataset holding only the frequency variables for those days, to
-    be written back over them, or None when no stored day follows *after*.
+    The persistent distance, when declared, is computed from the frequency,
+    so it is recomputed with it.
+
+    Returns a dataset holding only those variables for those days, to be
+    written back over them, or None when no stored day follows *after*.
     """
     out = {}
     for name, spec in specs.items():
@@ -598,6 +664,7 @@ def recompute_following_frequency(
                     freqs[var].append(rolling.frequency(n))
         if not kept:
             continue
+        _with_pdist(freqs, spec, name, lat, lon, _SerialMap)
         for var, arrays in freqs.items():
             out[var] = xr.DataArray(
                 np.stack(arrays),

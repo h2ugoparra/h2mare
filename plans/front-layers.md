@@ -335,6 +335,41 @@ invented. The chl product has no uncertainty field, so chl has no mask.
   median distance changes several-fold (sst 44 km vs 114 km). So the *value* of
   "km from a persistent front" depends on it, and it would need justifying if
   that layer is chosen.
+- **Distance to persistent fronts, as implemented (optional, 2026-10-01).**
+  Persistence is judged on the published frequency itself, with its 12.5 km
+  tolerance in place of ±1 pixel: the zone is every pixel with
+  `ffreq30 >= min_frequency`, and the layer is the great-circle distance to the
+  nearest zone pixel (0 inside, NaN where the frequency is NaN). Measured on
+  native 2024 data, two days each in a June–July and a January–February window
+  (`prototype/10_persistent_distance.py`):
+
+  | min_frequency | sst zone / p50 km | chl summer zone / p50 km | chl winter zone / p50 km |
+  |---|---|---|---|
+  | 0.1 | 28–29% / 14–27 | 43–44% / 0 | 18–21% / 34–47 |
+  | 0.2 | 22–24% / 35–61 | 37% / 0 | 13–15% / 97–133 |
+  | 0.3 | 18–20% / 54–95 | 31–32% / 7–9 | 10–11% / 167–191 |
+  | 0.4 | 14–17% / 70–128 | 26–27% / 19–23 | 8–9% / 229–265 |
+  | 0.5 | 11–14% / 89–157 | 21–22% / 32–38 | 7–8% / 288–350 |
+
+  Spearman with `ffreq30`: sst −0.84 to −0.89 at every cut; chl −0.85 to −0.92
+  in summer, but −0.67 to −0.84 in winter, where the distance separates the
+  large front-free areas the frequency reads as 0.
+
+  **Recommended: 0.5**, a front nearby on at least half the assessed days.
+  1. *Not chance.* A pixel reaches a frequency by chance if fronts land on it
+     independently at the domain's daily rate p0 (the mean frequency: sst
+     0.19–0.23, chl 0.14–0.31). The 1% binomial cut over 30 days is sst
+     0.40–0.43, chl 0.33 in winter and 0.53–0.57 in summer. Fronts persist from
+     day to day, which widens the chance distribution, so these are lower
+     bounds; 0.5 clears them except in the chl bloom, where it sits at them.
+  2. *Not a mask.* At 0.2 or below, chl's summer zone covers over a third of the
+     sea and the median distance is 0. At 0.5 the distance varies across the
+     domain for both variables.
+  3. *Interpretable and fixed:* "more often than not", the same in every year
+     and season, like the gradient thresholds. The chl zone shrinking from 22%
+     in summer to 7% in winter is the bloom, not the method.
+
+  No default in config: an entry must state it.
 
 ### 4.5 Sensitivity analysis
 

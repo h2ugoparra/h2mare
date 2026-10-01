@@ -25,6 +25,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   frequency is seeded with the previous year's masks (dry run by default).
   Store reads behind the detection retry a transient `OSError` (the `D:`
   drive's intermittent EINVAL).
+- `front_layers` entries can declare `persistent_distance: {window, min_frequency}`
+  to also write `{name}_pdist{window}`, the great-circle distance (km) to the
+  nearest pixel whose front frequency is at least `min_frequency`. Optional and
+  off by default; no default threshold. 0.5 is the measured recommendation
+  (`plans/front-layers.md` §4.4).
 
 ### Removed
 

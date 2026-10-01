@@ -25,6 +25,7 @@ gap-free L4, 1/24°), bbox 80°W–10°E, 0–70°N.
 | `07_analyze.py` | Summaries, Spearman correlations, VIF, maps | §5 |
 | `08_calibrate_multi_year.py` | v2 thresholds: percentiles per year × σ; `calibration_multi.json` | §4.2, §4.3 |
 | `09_sensitivity.py` | One-at-a-time sensitivity; `sensitivity_{sst,chl}.csv` | §4.5 |
+| `10_persistent_distance.py` | Persistence cut for the distance to persistent fronts; `persistent_distance_{sst,chl}.json` | §4.4 |
 
 `report.json` is the output of `07_analyze.py`.
 

@@ -153,6 +153,28 @@ class FrontConfidence(msgspec.Struct, forbid_unknown_fields=True):
             raise ValueError(f"confidence max must be positive; got {self.max}")
 
 
+class PersistentDistance(msgspec.Struct, forbid_unknown_fields=True):
+    """
+    Distance to persistent fronts: km from each pixel to the nearest pixel
+    whose ``ffreq{window}`` is at least ``min_frequency``.
+
+    No default for ``min_frequency``: the value *is* the definition of
+    "persistent", and it moves the distances several-fold
+    (plans/front-layers.md §4.4), so an entry states it.
+    """
+
+    # The frequency window persistence is judged over; one of frequency_days.
+    window: int
+    # Share of assessed days with a front nearby, in (0, 1].
+    min_frequency: float
+
+    def __post_init__(self):
+        if not 0 < self.min_frequency <= 1:
+            raise ValueError(
+                f"min_frequency must be in (0, 1]; got {self.min_frequency}"
+            )
+
+
 class FrontLayerSpec(msgspec.Struct, forbid_unknown_fields=True):
     """
     Front layers for SDMs, detected at convert time (``front_layers``).
@@ -192,6 +214,10 @@ class FrontLayerSpec(msgspec.Struct, forbid_unknown_fields=True):
     # About a quarter of the ~50 km effective resolution, the scale at which
     # front positions are uncertain; exact pixel hits measure position noise.
     frequency_radius_km: float = 12.5
+    # Optional: also write {name}_pdist{window}, the distance to persistent
+    # fronts. The alternative to the frequency for an SDM that wants a
+    # distance; the two measure the same signal (§5.3).
+    persistent_distance: Optional[PersistentDistance] = None
     # Worker processes, one day per task; capped by resolve_n_workers.
     n_workers: Optional[int] = None
 
@@ -222,6 +248,12 @@ class FrontLayerSpec(msgspec.Struct, forbid_unknown_fields=True):
             )
         if self.n_workers is not None and self.n_workers < 1:
             raise ValueError(f"n_workers must be at least 1; got {self.n_workers}")
+        pd_ = self.persistent_distance
+        if pd_ is not None and pd_.window not in self.frequency_days:
+            raise ValueError(
+                f"persistent_distance.window {pd_.window} is not one of "
+                f"frequency_days {self.frequency_days}"
+            )
 
     def mask_name(self, name: str) -> str:
         return f"{name}_front"
@@ -232,12 +264,22 @@ class FrontLayerSpec(msgspec.Struct, forbid_unknown_fields=True):
     def freq_names(self, name: str) -> list[str]:
         return [f"{name}_ffreq{n}" for n in self.frequency_days]
 
+    def pdist_names(self, name: str) -> list[str]:
+        """``[{name}_pdist{window}]`` when declared, else []."""
+        pd_ = self.persistent_distance
+        return [f"{name}_pdist{pd_.window}"] if pd_ is not None else []
+
     def output_names(self, name: str) -> list[str]:
-        return [self.mask_name(name), self.grad_name(name), *self.freq_names(name)]
+        return [
+            self.mask_name(name),
+            self.grad_name(name),
+            *self.freq_names(name),
+            *self.pdist_names(name),
+        ]
 
     def published_names(self, name: str) -> list[str]:
         """What compile carries into h2ds: everything but the daily mask."""
-        return [self.grad_name(name), *self.freq_names(name)]
+        return [self.grad_name(name), *self.freq_names(name), *self.pdist_names(name)]
 
 
 def native_only_vars(var_config) -> set[str]:
