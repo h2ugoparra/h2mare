@@ -1,8 +1,10 @@
 # Distance metric defect: `*_dist_km`, `*_normdist`, `sst_fdist`, `chl_fdist`
 
-Status: code fixed on `fix/eddy-distance-metric`; **stored data not yet repaired**.
-Step 3's tool exists as of 2026-09-24 — `scripts/recompute_fronts.py`, dry run by
-default — and its survey confirms the defect in the stored layers (§4a).
+Status: **done for the native stores** (2026-10-01). The metric fix is merged
+and the eddies store was regenerated (§5 steps 1–2). Step 3 was superseded:
+`sst_fdist` and `chl_fdist` were retired and deleted from the stores rather than
+recomputed (`plans/front-layers.md` §6.7). h2ds and Parquet pick up the repaired
+eddies at the next full recompile (steps 4–5).
 Written 2026-09-18. Found while checking whether the 0.1° eddies store needed
 regenerating for the regrid work (`plans/regrid.md`) — it does not, but it needs
 regenerating for this.
