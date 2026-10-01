@@ -436,7 +436,7 @@ class TestResolveBackfillGroups:
         assert window.end.date() == date(2021, 6, 30)  # capped at parquet end
         # All of sst's compiled_vars are read, not just the representative
         assert "sst" in cols
-        assert "sst_fdist" in cols
+        assert "sst_std" in cols
 
     def test_up_to_date_var_key_excluded(self, tmp_path):
         """parquet column already at source end → no backfill."""

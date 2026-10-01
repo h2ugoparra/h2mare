@@ -7,7 +7,7 @@ variables:
     source_vars: [analysed_sst, analysis_error]
     source_renames:
       analysed_sst: sst
-    compiled_vars: [sst, analysis_error, sst_std, sst_fdist, sst_grad, sst_ffreq30]
+    compiled_vars: [sst, analysis_error, sst_std, sst_grad, sst_ffreq30]
     dataset_id_rep: METOFFICE-GLO-SST-L4-REP-OBS-SST
     dataset_id_nrt: METOFFICE-GLO-SST-L4-NRT-OBS-SST-V2
     source: cmems
@@ -17,9 +17,6 @@ variables:
     bbox: [-80, 0, 10, 70]
     derived_vars:
       sst_std: {op: rolling_std, source: sst, window: 3}
-    # Belkin & O'Reilly (2009): threshold in the source's units, here °C.
-    boa_fronts:
-      sst_fdist: {source: sst, threshold: 0.4}
     # SDM front layers (plans/front-layers.md): Canny-style detection at the
     # product's resolution, thresholds per km and fixed for every year (3-year
     # calibration, 2004/2014/2024). In a deployed config, enable together with
@@ -82,16 +79,13 @@ variables:
     source_vars: [CHL]
     source_renames:
       CHL: chl
-    compiled_vars: [chl, chl_fdist, chl_grad, chl_ffreq30]
+    compiled_vars: [chl, chl_grad, chl_ffreq30]
     dataset_id_rep: cmems_obs-oc_glo_bgc-plankton_my_l4-gapfree-multi-4km_P1D
     source: cmems
     pattern: (\d{4}-\d{2}-\d{2})(?:-(\d{4}-\d{2}-\d{2}))?
     subset: true
     filename_date_range: true
     bbox: [-80, 0, 10, 70]
-    # Belkin & O'Reilly (2009): threshold in the source's units, here mg.m-3.
-    boa_fronts:
-      chl_fdist: {source: chl, threshold: 0.06}
     # SDM front layers (plans/front-layers.md): Canny-style detection at the
     # product's resolution, thresholds per km and fixed for every year (3-year
     # calibration, 2004/2014/2024). In a deployed config, enable together with
@@ -396,16 +390,6 @@ variable_attrs:
     dataset_id_rep: METOFFICE-GLO-SST-L4-REP-OBS-SST
     dataset_id_nrt: METOFFICE-GLO-SST-L4-NRT-OBS-SST-V2
   
-  sst_fdist:
-    short_name: SST FrontDist
-    long_name: Distance to nearest SST front
-    units: km
-    comment: Front detection using the Belkin and O'Reilly (2009) method and a threshold value of 0.4.
-    product_id_rep: SST_GLO_SST_L4_REP_Observations_010_011
-    product_id_nrt: SST_GLO_SST_L4_NRT_Observations_010_001
-    dataset_id_rep: METOFFICE-GLO-SST-L4-REP-OBS-SST
-    dataset_id_nrt: METOFFICE-GLO-SST-L4-NRT-OBS-SST-V2
-
   sst_front:
     short_name: SST Front
     long_name: SST front mask (1 front, 0 no front, missing where not assessed)
@@ -530,14 +514,6 @@ variable_attrs:
     product_id: OCEANCOLOUR_GLO_BGC_L4_MY_009_104
     dataset_id: cmems_obs-oc_glo_bgc-plankton_my_l4-gapfree-multi-4km_P1D
   
-  chl_fdist:
-    short_name: CHL FrontDist
-    long_name: Distance to nearest Chlorophyll-a front
-    units: km
-    comment: Front detection defined by Belkin and O'Reilly (2009) method and a threshold value of 0.06.
-    product_id: OCEANCOLOUR_GLO_BGC_L4_MY_009_104
-    dataset_id: cmems_obs-oc_glo_bgc-plankton_my_l4-gapfree-multi-4km_P1D
-
   chl_front:
     short_name: CHL Front
     long_name: CHL front mask (1 front, 0 no front, missing where not assessed)

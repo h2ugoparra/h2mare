@@ -636,6 +636,15 @@ does, and caps concurrency.
 The pre-#239 values on disk are never recomputed with BOA. The backfill in §6.6
 writes the new layers only, and the old columns go at retirement.
 
+**Superseded 2026-09-30:** the transition release was skipped. Every stored
+distance predated the metric fix, so rather than publish wrong values beside
+the new layers, `boa_fronts` left the shipped config at once and
+`scripts/drop_variables.py` deleted `sst_fdist`/`chl_fdist` from the native
+stores. h2ds and the Parquet store still carry them until they are rebuilt;
+a recompile does not remove a variable, so they need dropping there too. The
+BOA code itself (`processing/core/fronts.py`, `scripts/recompute_fronts.py`)
+goes in a follow-up; its staging helpers move to the front-layers module.
+
 ## 7. Tests
 
 **Detector** (synthetic fields):
