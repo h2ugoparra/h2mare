@@ -1,7 +1,8 @@
 # Front Layers
 
-Layers that describe ocean fronts for species distribution models (SDMs),
-detected daily from `sst` and `chl` when they are converted. They replace the
+Layers that describe ocean fronts (how strong they are, how often they occur
+and how far away the persistent ones are), detected daily from `sst` and `chl`
+when they are converted. They replace the
 Belkin–O'Reilly front distances (`sst_fdist`, `chl_fdist`), which were retired.
 
 This page is for using the layers. The design record behind them, with every
@@ -31,8 +32,8 @@ temperature. A temperature difference is the same in both: 0.03 K km⁻¹ is
 - **`grad`** is local front strength. It is continuous, needs no threshold, and
   is the least collinear of the candidates measured (variance inflation 2.4–2.9).
 - **`ffreq30`** and **`pdist30`** measure the same thing, regional and persistent
-  front activity (Spearman −0.84 to −0.92). Use one of them in a model, not
-  both.
+  front activity (Spearman −0.84 to −0.92). In a statistical model, use one of
+  them, not both: together they are collinear.
   - `ffreq30` is bounded and robust, but it is 0 anywhere no front came within
     12.5 km: about 41–50% of native pixels, mostly open ocean.
   - `pdist30` separates those front-free areas, telling a pixel 50 km from a

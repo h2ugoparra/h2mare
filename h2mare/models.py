@@ -177,7 +177,8 @@ class PersistentDistance(msgspec.Struct, forbid_unknown_fields=True):
 
 class FrontLayerSpec(msgspec.Struct, forbid_unknown_fields=True):
     """
-    Front layers for SDMs, detected at convert time (``front_layers``).
+    Front layers, detected at convert time (``front_layers``): front strength,
+    frequency and distance to persistent fronts.
 
     Scale-aware, Canny-style detection on L4 fields: Gaussian smoothing in km,
     a per-km gradient with the cos(lat) metric, thinning and hysteresis. Every
@@ -215,8 +216,8 @@ class FrontLayerSpec(msgspec.Struct, forbid_unknown_fields=True):
     # front positions are uncertain; exact pixel hits measure position noise.
     frequency_radius_km: float = 12.5
     # Optional: also write {name}_pdist{window}, the distance to persistent
-    # fronts. The alternative to the frequency for an SDM that wants a
-    # distance; the two measure the same signal (§5.3).
+    # fronts. The alternative to the frequency where a distance is wanted;
+    # the two measure the same signal (§5.3).
     persistent_distance: Optional[PersistentDistance] = None
     # Worker processes, one day per task; capped by resolve_n_workers.
     n_workers: Optional[int] = None
@@ -286,9 +287,9 @@ def native_only_vars(var_config) -> set[str]:
     """
     Variables a var_key keeps in its own store and never compiles.
 
-    The front mask is the history the frequency is computed from, not an SDM
-    layer; averaged into h2ds it would publish an unasked-for daily front
-    fraction.
+    The front mask is the history the frequency is computed from, not a
+    published layer; averaged into h2ds it would publish an unasked-for daily
+    front fraction.
     """
     specs = getattr(var_config, "front_layers", None) or {}
     return {spec.mask_name(name) for name, spec in specs.items()}
@@ -550,7 +551,7 @@ class KeyVarConfigEntry(msgspec.Struct):
     # Daily stores only: detection schedules one field per day, and an hourly
     # axis has 24 of them. The threshold is BOA's own — see BOAFrontSpec.
     boa_fronts: Optional[dict[str, BOAFrontSpec]] = None
-    # SDM front layers (plans/front-layers.md), keyed by output prefix — e.g.
+    # Front layers (plans/front-layers.md), keyed by output prefix — e.g.
     # {sst: {source: sst, sigma_km: 5, low_per_km: 0.0155, ...}} writes
     # sst_front, sst_grad and sst_ffreq30. The successor of boa_fronts; the two
     # can run side by side while consumers move over. Applied after boa_fronts

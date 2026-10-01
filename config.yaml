@@ -17,7 +17,7 @@ variables:
     bbox: [-80, 0, 10, 70]
     derived_vars:
       sst_std: {op: rolling_std, source: sst, window: 3}
-    # SDM front layers (plans/front-layers.md): Canny-style detection at the
+    # Front layers (plans/front-layers.md): Canny-style detection at the
     # product's resolution, thresholds per km and fixed for every year (3-year
     # calibration, 2004/2014/2024). In a deployed config, enable together with
     # the backfill: native extraction refuses a daily store missing what
@@ -90,7 +90,7 @@ variables:
     subset: true
     filename_date_range: true
     bbox: [-80, 0, 10, 70]
-    # SDM front layers (plans/front-layers.md): Canny-style detection at the
+    # Front layers (plans/front-layers.md): Canny-style detection at the
     # product's resolution, thresholds per km and fixed for every year (3-year
     # calibration, 2004/2014/2024). In a deployed config, enable together with
     # the backfill: native extraction refuses a daily store missing what
