@@ -307,7 +307,12 @@ the file named here — config is the only place a layer's file name lives. The
 native layers keep the ETOPO source's global attributes and `z` attributes, with
 the CF attributes from `variable_attrs` and `native_attr_overrides.bathy` over
 them. `compile_layer` and `extract_layer` must name a declared layer, which
-config load checks. Extraction reads one layer for points and geometries alike:
+config load checks. Compile also refuses a `compile_layer` coarser than the
+h2ds grid (`cells_per_degree`): interpolated onto finer cells it would pass for
+bathymetry at a resolution it does not have. A layer as fine or finer goes
+through the area mean. `scripts/bathymetry.py` builds the coarse layer at 0.25°
+only, so a finer grid needs a native layer or a new build
+([#264](https://github.com/h2ugoparra/h2mare/issues/264)). Extraction reads one layer for points and geometries alike:
 a point takes the nearest cell, a geometry the polygon mean of `bathy` and
 `bathy_std` — see [Standard-deviation columns](api/extractor.md#standard-deviation-columns).
 

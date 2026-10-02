@@ -164,6 +164,39 @@ class TestCompileBathy:
         assert out is not None
         np.testing.assert_allclose(out["bathy"].values, -100.0)
 
+    @staticmethod
+    def _layer_compiler(tmp_path, lat, lon):
+        compiler = _make_compiler(tmp_path)
+        compiler.app_config.variables["bathy"] = SimpleNamespace(
+            layers={"x": "bathy_x.zarr"},
+            compile_layer="x",
+            local_folder="bathy",
+            store_root=None,
+            regrid=None,
+        )
+        xr.Dataset(
+            {"bathy": (("lat", "lon"), np.full((len(lat), len(lon)), -100.0))},
+            coords={"lat": lat, "lon": lon},
+        ).to_zarr(tmp_path / "bathy" / "bathy_x.zarr")
+        return compiler
+
+    def test_a_layer_coarser_than_the_grid_is_refused(self, tmp_path):
+        """Interpolated onto the 0.25° test grid, a 0.5° layer would pass for
+        0.25° bathymetry (issue #264)."""
+        compiler = self._layer_compiler(
+            tmp_path, [30.0, 30.5, 31.0], [-10.0, -9.5, -9.0]
+        )
+        with pytest.raises(ValueError, match=r"coarser than the 0\.25° compile grid"):
+            _compile_bathy(compiler, None, _DR)
+
+    def test_a_layer_finer_than_the_grid_compiles(self, tmp_path):
+        compiler = self._layer_compiler(
+            tmp_path, [30.0, 30.125, 30.25], [-10.0, -9.875, -9.75]
+        )
+        out = _compile_bathy(compiler, None, _DR)
+        assert out is not None
+        np.testing.assert_allclose(out["bathy"].values, -100.0)
+
 
 # ---------------------------------------------------------------------------
 # _compile_moon

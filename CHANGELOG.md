@@ -33,6 +33,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`plans/front-layers.md` §4.4), and the shipped config publishes
   `sst_pdist30` and `chl_pdist30` at it.
 
+### Fixed
+
+- **Compile refuses a bathymetry layer coarser than the h2ds grid.** It used
+  to interpolate it, so a finer `cells_per_degree` with the 0.25° layer would
+  have published 0.25° bathymetry, and its within-cell `bathy_std`, as if at
+  the finer resolution, silently. The coarse layer's build is still 0.25°-only
+  (#264).
+
 ### Removed
 
 - **BOA front distances** (`sst_fdist`, `chl_fdist`): `boa_fronts` is gone
