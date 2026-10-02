@@ -7,7 +7,7 @@ Covers:
   incremental, up-to-date)
 - run(): always splits by month regardless of range length
 - run(): depth filtering logic for depth-aware variables
-- sync_data(): skips when STORE_ROOT is None; copies when remote_root is given
+- sync_data(): mirrors to PARQUET_BACKUP_DIR by default or to remote_root
 """
 
 import re
@@ -343,14 +343,23 @@ class TestRunDepthFiltering:
 
 
 class TestSyncData:
-    def test_skips_when_store_root_is_none(self, tmp_path):
-        """sync_data() returns without error when STORE_ROOT is not configured."""
+    def test_defaults_to_parquet_backup_dir(self, tmp_path):
+        """
+        Without a root the mirror goes to the local PARQUET_BACKUP_DIR — not
+        STORE_ROOT/parquet, which is where the store itself lives.
+        """
         z = _make_converter(tmp_path)
+        z.parquet_root.mkdir(parents=True)
+        (z.parquet_root / "part-0.parquet").write_bytes(b"data")
+        backup = tmp_path / "local_backup"
+
         with patch(
             "h2mare.format_converters.zarr2parquet.get_settings"
         ) as mock_get_settings:
-            mock_get_settings.return_value.STORE_ROOT = None
-            z.sync_data()  # must not raise
+            mock_get_settings.return_value.PARQUET_BACKUP_DIR = backup
+            z.sync_data()
+
+        assert (backup / z.parquet_root.name / "part-0.parquet").exists()
 
     def test_copies_to_explicit_remote_root(self, tmp_path):
         """When remote_root is given explicitly, parquet_root is copied there."""
@@ -377,6 +386,74 @@ class TestSyncData:
         z.sync_data(remote_root=remote_root)
 
         assert (remote_root / "h2ds" / "data.parquet").exists()
+
+    def test_skips_when_destination_is_the_store_itself(self, tmp_path):
+        """
+        The default backup root, STORE_ROOT/parquet, is now where the store
+        lives. Copying it onto itself failed file by file and logged an error.
+        """
+        z = _make_converter(tmp_path)
+        z.parquet_root.mkdir(parents=True)
+        (z.parquet_root / "data.parquet").write_bytes(b"\x00")
+
+        with patch("h2mare.utils.files_io.shutil.copytree") as mock_copytree:
+            z.sync_data(remote_root=z.parquet_root.parent)
+
+        mock_copytree.assert_not_called()
+
+    def test_mirror_removes_what_the_source_no_longer_has(self, tmp_path):
+        """
+        A partition rewritten into fewer part files, or dropped entirely, must not
+        survive in the backup — stale part files read back as duplicate rows.
+        """
+        z = _make_converter(tmp_path)
+        month = z.parquet_root / "year=2020" / "month=1"
+        month.mkdir(parents=True)
+        (month / "part-0.parquet").write_bytes(b"rewritten")
+
+        backup = tmp_path / "backup"
+        old_month = backup / z.parquet_root.name / "year=2020" / "month=1"
+        old_month.mkdir(parents=True)
+        (old_month / "part-0.parquet").write_bytes(b"old")
+        (old_month / "part-1.parquet").write_bytes(b"old")
+        dropped = backup / z.parquet_root.name / "year=2019"
+        (dropped / "month=12").mkdir(parents=True)
+        (dropped / "month=12" / "part-0.parquet").write_bytes(b"old")
+        neighbour = backup / "other_store" / "keep.parquet"
+        neighbour.parent.mkdir(parents=True)
+        neighbour.write_bytes(b"keep")
+
+        z.sync_data(remote_root=backup)
+
+        assert (old_month / "part-0.parquet").read_bytes() == b"rewritten"
+        assert not (old_month / "part-1.parquet").exists()
+        assert not dropped.exists()
+        assert neighbour.exists()  # only the store's own folder is mirrored
+
+    def test_empty_source_does_not_wipe_the_backup(self, tmp_path):
+        z = _make_converter(tmp_path)
+        z.parquet_root.mkdir(parents=True)
+
+        backup = tmp_path / "backup"
+        kept = backup / z.parquet_root.name / "year=2020" / "part-0.parquet"
+        kept.parent.mkdir(parents=True)
+        kept.write_bytes(b"old")
+
+        z.sync_data(remote_root=backup)
+
+        assert kept.exists()
+
+    def test_skips_a_destination_containing_the_source(self, tmp_path):
+        """Pruning a destination that holds the store would delete the store."""
+        z = _make_converter(tmp_path)
+        # The destination store folder is tmp_path/"h2ds", which holds the source.
+        z.parquet_root = tmp_path / "h2ds" / "inner" / "h2ds"
+        z.parquet_root.mkdir(parents=True)
+        (z.parquet_root / "part-0.parquet").write_bytes(b"live")
+
+        z.sync_data(remote_root=tmp_path)
+
+        assert (z.parquet_root / "part-0.parquet").exists()
 
 
 # ---------------------------------------------------------------------------
@@ -436,7 +513,7 @@ class TestResolveBackfillGroups:
         assert window.end.date() == date(2021, 6, 30)  # capped at parquet end
         # All of sst's compiled_vars are read, not just the representative
         assert "sst" in cols
-        assert "sst_fdist" in cols
+        assert "sst_std" in cols
 
     def test_up_to_date_var_key_excluded(self, tmp_path):
         """parquet column already at source end → no backfill."""

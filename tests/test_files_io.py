@@ -1,9 +1,14 @@
 """Tests for utils/files_io.py — file I/O utilities."""
 
+import os
 from pathlib import Path
+from unittest.mock import patch
+
+import pytest
 
 from h2mare.utils.files_io import (
     filter_raw_files,
+    mirror_tree,
     prune_empty_dirs,
     safe_move_files,
     safe_rmtree,
@@ -182,3 +187,75 @@ class TestFilterRawFiles:
 
     def test_pattern_matching_nothing_returns_empty(self):
         assert filter_raw_files(self._paths(), _Cfg("_nosuchvariant_")) == []
+
+
+# ---------------------------------------------------------------------------
+# mirror_tree
+# ---------------------------------------------------------------------------
+
+
+class TestMirrorTree:
+    def test_unchanged_files_are_not_recopied(self, tmp_path):
+        src, dest = tmp_path / "src", tmp_path / "dest"
+        (src / "a").mkdir(parents=True)
+        (src / "a" / "same.bin").write_text("same")
+        mirror_tree(src, dest)
+        (src / "a" / "new.bin").write_text("new")
+
+        with patch(
+            "h2mare.utils.files_io.shutil.copy2", wraps=__import__("shutil").copy2
+        ) as copy2:
+            mirror_tree(src, dest)
+
+        copied = {Path(c.args[0]).name for c in copy2.call_args_list}
+        assert copied == {"new.bin"}
+
+    def test_changed_file_is_recopied(self, tmp_path):
+        src, dest = tmp_path / "src", tmp_path / "dest"
+        src.mkdir()
+        f = src / "x.bin"
+        f.write_text("old")
+        mirror_tree(src, dest)
+        f.write_text("newer")  # different size
+        mirror_tree(src, dest)
+        assert (dest / "x.bin").read_text() == "newer"
+
+    def test_same_size_rewrite_is_recopied(self, tmp_path):
+        src, dest = tmp_path / "src", tmp_path / "dest"
+        src.mkdir()
+        f = src / "x.bin"
+        f.write_text("aaa")
+        mirror_tree(src, dest)
+        f.write_text("bbb")
+        st = f.stat()
+        os.utime(f, (st.st_atime, st.st_mtime + 10))
+        mirror_tree(src, dest)
+        assert (dest / "x.bin").read_text() == "bbb"
+
+    def test_returns_count_of_stale_paths_removed(self, tmp_path):
+        src, dest = tmp_path / "src", tmp_path / "dest"
+        src.mkdir()
+        (src / "keep").write_text("k")
+        (dest / "gone_dir").mkdir(parents=True)
+        (dest / "gone_dir" / "f").write_text("x")
+        (dest / "gone_file").write_text("x")
+        assert mirror_tree(src, dest) == 3
+        assert sorted(p.name for p in dest.iterdir()) == ["keep"]
+
+    @pytest.mark.parametrize("dest_rel", [".", "inner", ".."])
+    def test_refuses_overlapping_paths(self, tmp_path, dest_rel):
+        src = tmp_path / "store"
+        src.mkdir()
+        (src / "f").write_text("x")
+        with pytest.raises(ValueError, match="overlaps"):
+            mirror_tree(src, src / dest_rel)
+        assert (src / "f").exists()
+
+    def test_refuses_an_empty_source(self, tmp_path):
+        src, dest = tmp_path / "src", tmp_path / "dest"
+        (src / "empty_dir").mkdir(parents=True)
+        dest.mkdir()
+        (dest / "kept").write_text("x")
+        with pytest.raises(ValueError, match="no files"):
+            mirror_tree(src, dest)
+        assert (dest / "kept").exists()

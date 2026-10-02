@@ -1329,6 +1329,15 @@ class TestCleanupDownloadsScope:
 
 
 _TESTVAR_FRONTS = {"testvar_fdist": {"source": "testvar", "threshold": 0.4}}
+_TESTVAR_LAYERS = {
+    "testvar": {
+        "source": "testvar",
+        "sigma_km": 5.0,
+        "low_per_km": 0.0155,
+        "high_per_km": 0.0299,
+        "frequency_days": [4],
+    }
+}
 
 
 @pytest.mark.usefixtures("serial_pool")
@@ -1356,6 +1365,25 @@ class TestFrontStaging:
 
         conv._process_period(2020, _write_raw_days(conv, _JAN))
 
+        assert list(interim_dir.glob(".testvar_*")) == []
+
+    def test_front_layers_reach_the_store(self, tmp_path, interim_dir):
+        """The front layers (plans/front-layers.md) take the same path as BOA's."""
+        conv = _period_converter(tmp_path, front_layers=_TESTVAR_LAYERS)
+
+        conv._process_period(2020, _write_raw_days(conv, _JAN))
+
+        ds = xr.open_zarr(conv.catalog.build_file_path.return_value)
+        try:
+            names = {"testvar_front", "testvar_grad", "testvar_ffreq4"}
+            assert names <= set(ds.data_vars)
+            assert len(ds.time) == len(_JAN)
+            assert (
+                ds["testvar_grad"].encoding["chunks"]
+                == ds["testvar"].encoding["chunks"]
+            )
+        finally:
+            ds.close()
         assert list(interim_dir.glob(".testvar_*")) == []
 
     def test_staging_is_cleared_when_the_period_fails(self, tmp_path, interim_dir):

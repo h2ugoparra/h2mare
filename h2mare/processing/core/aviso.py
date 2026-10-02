@@ -219,7 +219,7 @@ class EDDIESProcessor:
         Args:
             var_key: Variable key that must exist in app_config.variables. Defaults to 'eddies'.
             app_config (Optional[AppConfig], optional): Application configuration. If None, loads from get_settings().
-            store_root (Optional[Path]): Root directory for zarr files. If None, uses get_settings().STORE_ROOT or get_settings().ZARR_DIR.
+            store_root (Optional[Path]): Root directory for zarr files. If None, uses get_settings().STORE_ROOT or get_settings().FALLBACK_STORE_ROOT.
             download_root (Optional[Path]): Root directory with downloaded data. If None, uses get_settings().DOWNLOADS_DIR.
             grid cell size for lon and lat, (dx and dy respectively).
         """

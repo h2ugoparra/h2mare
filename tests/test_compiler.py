@@ -1,5 +1,6 @@
 """Tests for processing/compiler.py — Compiler class and helpers."""
 
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import msgspec
@@ -417,56 +418,77 @@ class TestHasOverlap:
 # ---------------------------------------------------------------------------
 
 
+def _store_with(root: Path, *files: str) -> Path:
+    for f in files:
+        (root / f).parent.mkdir(parents=True, exist_ok=True)
+        (root / f).write_text("{}")
+    return root
+
+
 class TestSyncData:
-    def test_copies_zarr_directory_to_local_store(self, compiler, tmp_path):
-        remote_dir = tmp_path / "remote"
-        remote_dir.mkdir()
-        (remote_dir / "data.zarr").mkdir()
-        (remote_dir / "data.zarr" / ".zattrs").write_text("{}")
+    def test_mirrors_store_to_local_store(self, compiler, tmp_path):
+        compiler.catalog.store_root = _store_with(
+            tmp_path / "remote" / "h2ds", "data.zarr/.zattrs"
+        )
+        compiler.local_store_root = tmp_path / "local" / "h2ds"
 
-        source = remote_dir / "data.zarr"
-        local_store = tmp_path / "local"
-        local_store.mkdir(exist_ok=True)
+        compiler.sync_data()
 
-        compiler.local_store_root = local_store
-        compiler.sync_data(source)
+        assert (tmp_path / "local" / "h2ds" / "data.zarr" / ".zattrs").exists()
 
-        assert (local_store / "data.zarr").exists()
-
-    def test_accepts_custom_backup_dir(self, compiler, tmp_path):
-        remote_dir = tmp_path / "remote"
-        remote_dir.mkdir()
-        (remote_dir / "chunk.zarr").mkdir()
-        (remote_dir / "chunk.zarr" / ".zattrs").write_text("{}")
-
+    def test_custom_backup_dir_gets_the_store_folder(self, compiler, tmp_path):
+        """Same layout as the default (ZARR_BACKUP_DIR/<local_folder>) and the Parquet backup."""
+        compiler.catalog.store_root = _store_with(
+            tmp_path / "remote" / "h2ds", "chunk.zarr/.zattrs"
+        )
         backup_dir = tmp_path / "backup"
-        backup_dir.mkdir()
 
-        compiler.sync_data(remote_dir / "chunk.zarr", backup_dir=backup_dir)
-        assert (backup_dir / "chunk.zarr").exists()
+        compiler.sync_data(backup_dir=backup_dir)
+
+        assert (backup_dir / "h2ds" / "chunk.zarr" / ".zattrs").exists()
+
+    def test_backup_drops_what_the_store_no_longer_has(self, compiler, tmp_path):
+        """A file or chunk gone from the store must not linger in the backup."""
+        compiler.catalog.store_root = _store_with(
+            tmp_path / "remote" / "h2ds", "2020.zarr/.zattrs"
+        )
+        local = _store_with(
+            tmp_path / "local" / "h2ds",
+            "2020.zarr/.zattrs",
+            "2020.zarr/sst/9.0.0",
+            "old.zarr/.zattrs",
+        )
+        compiler.local_store_root = local
+
+        compiler.sync_data()
+
+        assert (local / "2020.zarr" / ".zattrs").exists()
+        assert not (local / "2020.zarr" / "sst").exists()
+        assert not (local / "old.zarr").exists()
 
     def test_failed_copy_is_not_reported_as_success(self, compiler, tmp_path):
-        # Regression: the "File copied!" success line sat outside the except
-        # block, so a backup that raised was logged as an error and then
-        # announced as copied on the very next line.
-        source = tmp_path / "remote" / "data.zarr"
-        source.mkdir(parents=True)
+        # Regression: the success line sat outside the except block, so a
+        # backup that raised was logged as an error and then announced as
+        # copied on the very next line.
+        compiler.catalog.store_root = _store_with(
+            tmp_path / "remote" / "h2ds", "data.zarr/.zattrs"
+        )
         compiler.local_store_root = tmp_path / "local"
 
         messages: list[str] = []
         sink = logger.add(messages.append, level="DEBUG", format="{message}")
         try:
             with patch(
-                "h2mare.processing.compiler.shutil.copytree",
+                "h2mare.utils.files_io.shutil.copytree",
                 side_effect=PermissionError("destination is read-only"),
             ):
-                compiler.sync_data(source)
+                compiler.sync_data()
         finally:
             logger.remove(sink)
 
         text = "".join(messages)
-        assert "Failed to copy" in text
-        assert "File copied!" not in text
+        assert "Failed to mirror" in text
+        assert "backup complete" not in text
 
 
 # ---------------------------------------------------------------------------

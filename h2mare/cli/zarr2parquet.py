@@ -75,7 +75,8 @@ def parquet(
         help=(
             "Root directory for Parquet output. "
             "Each variable is written to a <out-dir>/<var-key> sub-directory. "
-            "Defaults to get_settings().PARQUET_DIR."
+            "Defaults to STORE_ROOT/parquet (data/processed/parquet when "
+            "STORE_ROOT is not set)."
         ),
     ),
     store_path: Optional[Path] = typer.Option(
@@ -105,12 +106,12 @@ def parquet(
     parquet_backup: bool = typer.Option(
         False,
         "--parquet-backup",
-        help="Copy the Parquet output to the remote store.",
+        help="Mirror the Parquet store to a second location.",
     ),
     parquet_backup_dir: Optional[Path] = typer.Option(
         None,
         "--parquet-backup-dir",
-        help="Override destination for the Parquet backup (only used with --parquet-backup; defaults to STORE_ROOT/parquet).",
+        help="Root for the Parquet backup; the store goes in its own sub-directory (only used with --parquet-backup; defaults to PARQUET_BACKUP_DIR).",
     ),
 ) -> None:
     """Convert compiled Zarr stores to Hive-partitioned Parquet for one or more variable keys."""

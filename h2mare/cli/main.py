@@ -93,22 +93,22 @@ def run(
     h2ds_zarr_backup: bool = typer.Option(
         False,
         "--h2ds-zarr-backup",
-        help="Copy the compiled h2ds zarr files to the local backup store.",
+        help="Mirror the compiled h2ds zarr store to the local backup store.",
     ),
     h2ds_parquet_backup: bool = typer.Option(
         False,
         "--h2ds-parquet-backup",
-        help="Copy the h2ds Parquet output to the remote store.",
+        help="Mirror the h2ds Parquet store to a second location.",
     ),
     h2ds_zarr_backup_dir: Optional[Path] = typer.Option(
         None,
         "--h2ds-zarr-backup-dir",
-        help="Override destination directory for the zarr backup (only used with --h2ds-zarr-backup).",
+        help="Root for the zarr backup; the store goes in its <local_folder> sub-directory (only used with --h2ds-zarr-backup; defaults to ZARR_BACKUP_DIR).",
     ),
     h2ds_parquet_backup_dir: Optional[Path] = typer.Option(
         None,
         "--h2ds-parquet-backup-dir",
-        help="Override destination for the Parquet backup (only used with --h2ds-parquet-backup).",
+        help="Root for the Parquet backup; the store goes in its own sub-directory (only used with --h2ds-parquet-backup; defaults to PARQUET_BACKUP_DIR).",
     ),
 ) -> None:
     """Download and convert climate/ocean data for one or more variable keys."""
@@ -167,7 +167,7 @@ def run(
             raise typer.Exit(code=1)
         # Never consulted — every selected variable resolves to its own root —
         # but PipelineManager needs a default to hold.
-        store_root = get_settings().ZARR_DIR
+        store_root = get_settings().FALLBACK_STORE_ROOT
 
     success = PipelineManager(
         app_config=get_settings().app_config,

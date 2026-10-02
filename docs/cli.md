@@ -22,10 +22,10 @@ uv run h2mare run [OPTIONS]
 | `--no-compile` | flag | false | Convert to Zarr but skip the h2ds compile step |
 | `--no-parquet` | flag | false | Skip the Zarr → Parquet conversion step |
 | `--dry-run` | flag | false | Plan tasks and log without downloading anything |
-| `--h2ds-zarr-backup` | flag | false | Copy the compiled h2ds Zarr files to the local backup store |
-| `--h2ds-parquet-backup` | flag | false | Copy the h2ds Parquet output to the remote store |
-| `--h2ds-zarr-backup-dir` | path | `local_store_root` | Override destination for the Zarr backup (only used with `--h2ds-zarr-backup`) |
-| `--h2ds-parquet-backup-dir` | path | `STORE_ROOT/parquet` | Override destination for the Parquet backup (only used with `--h2ds-parquet-backup`) |
+| `--h2ds-zarr-backup` | flag | false | Mirror the compiled h2ds Zarr store to the local backup store |
+| `--h2ds-parquet-backup` | flag | false | Mirror the h2ds Parquet store to a second location (skipped when it resolves to the store itself) |
+| `--h2ds-zarr-backup-dir` | path | `ZARR_BACKUP_DIR` | Root for the Zarr backup; the store goes in its `<local_folder>` sub-directory (only used with `--h2ds-zarr-backup`) |
+| `--h2ds-parquet-backup-dir` | path | `PARQUET_BACKUP_DIR` | Root for the Parquet backup; the store goes in its own sub-directory (only used with `--h2ds-parquet-backup`) |
 
 When `--start-date` / `--end-date` are omitted the pipeline infers the missing date range from the existing store.
 
@@ -75,8 +75,8 @@ uv run h2mare compile [OPTIONS]
 | `--start-date` | YYYY-MM-DD | inferred | Start of date range |
 | `--end-date` | YYYY-MM-DD | inferred | End of date range |
 | `--store-path` | path | `STORE_ROOT` | Override the Zarr store root for the whole run, including variables that declare their own `store_root` in `config.yaml` |
-| `--zarr-backup` | flag | false | Copy compiled Zarr files to the local backup store |
-| `--zarr-backup-dir` | path | `local_store_root` | Override destination for the Zarr backup (only used with `--zarr-backup`) |
+| `--zarr-backup` | flag | false | Mirror the compiled Zarr store to the local backup store |
+| `--zarr-backup-dir` | path | `ZARR_BACKUP_DIR` | Root for the Zarr backup; the store goes in its `<local_folder>` sub-directory (only used with `--zarr-backup`) |
 
 **Examples**
 
@@ -144,11 +144,11 @@ uv run h2mare parquet [OPTIONS]
 | `--add-var` | text (repeatable) | — | Merge new columns into the existing h2ds Parquet store (see below) |
 | `--start-date` | YYYY-MM-DD | inferred | Start of date range |
 | `--end-date` | YYYY-MM-DD | inferred | End of date range |
-| `--out-dir` | path | `PARQUET_DIR` | Root directory for Parquet output |
+| `--out-dir` | path | `STORE_ROOT/parquet` | Root directory for Parquet output (`data/processed/parquet` when `STORE_ROOT` is not set) |
 | `--store-path` | path | `STORE_ROOT` | Override the Zarr store root for the whole run, including variables that declare their own `store_root` in `config.yaml` |
 | `--depth` | float | — | Depth level in metres for depth-aware variables (e.g. `thetao`, `o2`) |
-| `--parquet-backup` | flag | false | Copy the Parquet output to the remote store |
-| `--parquet-backup-dir` | path | `STORE_ROOT/parquet` | Override destination for the Parquet backup (only used with `--parquet-backup`) |
+| `--parquet-backup` | flag | false | Mirror the Parquet store to a second location (skipped when it resolves to the store itself) |
+| `--parquet-backup-dir` | path | `PARQUET_BACKUP_DIR` | Root for the Parquet backup; the store goes in its own sub-directory (only used with `--parquet-backup`) |
 
 **Examples**
 
@@ -159,7 +159,7 @@ uv run h2mare parquet
 # Convert a specific date range
 uv run h2mare parquet --start-date 1998-01-01 --end-date 1998-12-31
 
-# Convert and back up to remote store (off by default)
+# Convert and copy the store to a second location (off by default)
 uv run h2mare parquet --parquet-backup
 
 # Write to a custom output directory

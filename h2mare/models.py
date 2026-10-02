@@ -141,6 +141,160 @@ class BOAFrontSpec(msgspec.Struct, forbid_unknown_fields=True):
             raise ValueError(f"n_workers must be at least 1; got {self.n_workers}")
 
 
+class FrontConfidence(msgspec.Struct, forbid_unknown_fields=True):
+    """A field's own uncertainty variable, and the value above which it is too
+    uncertain to assess a front (e.g. OSTIA's ``analysis_error`` above 1.52 K)."""
+
+    var: str
+    max: float
+
+    def __post_init__(self):
+        if self.max <= 0:
+            raise ValueError(f"confidence max must be positive; got {self.max}")
+
+
+class PersistentDistance(msgspec.Struct, forbid_unknown_fields=True):
+    """
+    Distance to persistent fronts: km from each pixel to the nearest pixel
+    whose ``ffreq{window}`` is at least ``min_frequency``.
+
+    No default for ``min_frequency``: the value *is* the definition of
+    "persistent", and it moves the distances several-fold
+    (plans/front-layers.md §4.4), so an entry states it.
+    """
+
+    # The frequency window persistence is judged over; one of frequency_days.
+    window: int
+    # Share of assessed days with a front nearby, in (0, 1].
+    min_frequency: float
+
+    def __post_init__(self):
+        if not 0 < self.min_frequency <= 1:
+            raise ValueError(
+                f"min_frequency must be in (0, 1]; got {self.min_frequency}"
+            )
+
+
+class FrontLayerSpec(msgspec.Struct, forbid_unknown_fields=True):
+    """
+    Front layers, detected at convert time (``front_layers``): front strength,
+    frequency and distance to persistent fronts.
+
+    Scale-aware, Canny-style detection on L4 fields: Gaussian smoothing in km,
+    a per-km gradient with the cos(lat) metric, thinning and hysteresis. Every
+    value here is a physical one, fixed for all years; how each was chosen is
+    ``plans/front-layers.md`` §4. See ``processing/core/front_layers.py``.
+
+    Writes, for an entry named ``sst``: ``sst_front`` (the daily front mask,
+    native store only), ``sst_grad`` (gradient magnitude per km) and
+    ``sst_ffreq30`` (share of the last 30 assessed days with a front within
+    ``frequency_radius_km``), one frequency per ``frequency_days``.
+    """
+
+    # Field fronts are detected in, named as source_renames and the processor
+    # leave it. A 2-D field over time/lat/lon.
+    source: str
+    # Smoothing width in km, on both axes. Set from the product's effective
+    # resolution: 5 km for OSTIA sst (no noise floor), 7 km for chl (removes
+    # the noise floor below ~30 km).
+    sigma_km: float
+    # Hysteresis thresholds, in the (transformed) field's units per km:
+    # a front starts at >= high and extends while >= low.
+    low_per_km: float
+    high_per_km: float
+    # "log10" for chlorophyll, whose gradients otherwise scale with
+    # concentration and vanish in oligotrophic water.
+    transform: str = "none"
+    # Pixels whose uncertainty exceeds the cut are not assessed: never fronts,
+    # and left out of the frequency's denominator.
+    confidence: Optional[FrontConfidence] = None
+    # Frequency windows, in days. Each needs that many days of stored masks
+    # before the first day it can be computed for.
+    frequency_days: list[int] = msgspec.field(default_factory=lambda: [30])
+    # A pixel counts a front on a day if one was within this distance (km).
+    # About a quarter of the ~50 km effective resolution, the scale at which
+    # front positions are uncertain; exact pixel hits measure position noise.
+    frequency_radius_km: float = 12.5
+    # Optional: also write {name}_pdist{window}, the distance to persistent
+    # fronts. The alternative to the frequency where a distance is wanted;
+    # the two measure the same signal (§5.3).
+    persistent_distance: Optional[PersistentDistance] = None
+    # Worker processes, one day per task; capped by resolve_n_workers.
+    n_workers: Optional[int] = None
+
+    def __post_init__(self):
+        if self.transform not in ("none", "log10"):
+            raise ValueError(
+                f"transform must be 'none' or 'log10'; got {self.transform!r}"
+            )
+        if self.sigma_km <= 0:
+            raise ValueError(f"sigma_km must be positive; got {self.sigma_km}")
+        if not 0 < self.low_per_km < self.high_per_km:
+            raise ValueError(
+                f"need 0 < low_per_km < high_per_km; got {self.low_per_km}, "
+                f"{self.high_per_km}"
+            )
+        if not self.frequency_days or any(
+            isinstance(n, bool) or not isinstance(n, int) or n < 2
+            for n in self.frequency_days
+        ):
+            raise ValueError(
+                f"frequency_days must be whole numbers of days >= 2; got {self.frequency_days}"
+            )
+        if len(set(self.frequency_days)) != len(self.frequency_days):
+            raise ValueError(f"frequency_days repeats a window: {self.frequency_days}")
+        if self.frequency_radius_km < 0:
+            raise ValueError(
+                f"frequency_radius_km must be >= 0; got {self.frequency_radius_km}"
+            )
+        if self.n_workers is not None and self.n_workers < 1:
+            raise ValueError(f"n_workers must be at least 1; got {self.n_workers}")
+        pd_ = self.persistent_distance
+        if pd_ is not None and pd_.window not in self.frequency_days:
+            raise ValueError(
+                f"persistent_distance.window {pd_.window} is not one of "
+                f"frequency_days {self.frequency_days}"
+            )
+
+    def mask_name(self, name: str) -> str:
+        return f"{name}_front"
+
+    def grad_name(self, name: str) -> str:
+        return f"{name}_grad"
+
+    def freq_names(self, name: str) -> list[str]:
+        return [f"{name}_ffreq{n}" for n in self.frequency_days]
+
+    def pdist_names(self, name: str) -> list[str]:
+        """``[{name}_pdist{window}]`` when declared, else []."""
+        pd_ = self.persistent_distance
+        return [f"{name}_pdist{pd_.window}"] if pd_ is not None else []
+
+    def output_names(self, name: str) -> list[str]:
+        return [
+            self.mask_name(name),
+            self.grad_name(name),
+            *self.freq_names(name),
+            *self.pdist_names(name),
+        ]
+
+    def published_names(self, name: str) -> list[str]:
+        """What compile carries into h2ds: everything but the daily mask."""
+        return [self.grad_name(name), *self.freq_names(name), *self.pdist_names(name)]
+
+
+def native_only_vars(var_config) -> set[str]:
+    """
+    Variables a var_key keeps in its own store and never compiles.
+
+    The front mask is the history the frequency is computed from, not a
+    published layer; averaged into h2ds it would publish an unasked-for daily
+    front fraction.
+    """
+    specs = getattr(var_config, "front_layers", None) or {}
+    return {spec.mask_name(name) for name, spec in specs.items()}
+
+
 def step_freq(var_config) -> str:
     """
     Pandas frequency alias matching a variable's cadence — ``"h"`` or ``"D"``.
@@ -397,6 +551,12 @@ class KeyVarConfigEntry(msgspec.Struct):
     # Daily stores only: detection schedules one field per day, and an hourly
     # axis has 24 of them. The threshold is BOA's own — see BOAFrontSpec.
     boa_fronts: Optional[dict[str, BOAFrontSpec]] = None
+    # Front layers (plans/front-layers.md), keyed by output prefix — e.g.
+    # {sst: {source: sst, sigma_km: 5, low_per_km: 0.0155, ...}} writes
+    # sst_front, sst_grad and sst_ffreq30. The successor of boa_fronts; the two
+    # can run side by side while consumers move over. Applied after boa_fronts
+    # and before derived_vars. Daily stores only. See FrontLayerSpec.
+    front_layers: Optional[dict[str, FrontLayerSpec]] = None
     # How each variable is put on the compile base grid, keyed by its name at
     # that point (a compiled column name) — e.g. {ac_track: nearest}. Anything
     # not listed uses "auto", which compares the native and target resolutions
@@ -634,6 +794,66 @@ def _check_front_entries(var_key: str, var_config: KeyVarConfigEntry) -> None:
             )
 
 
+def _check_front_layer_entries(var_key: str, var_config: KeyVarConfigEntry) -> None:
+    """
+    Refuse front_layers entries that clash, need a daily axis, or would not
+    reach h2ds as declared.
+
+    Like boa_fronts, each output is assigned into the dataset by name, so a
+    name another mechanism writes would silently win or lose by run order.
+    Where compiled_vars is declared it must list the published outputs, and
+    must not list the daily mask, which stays in the native store.
+    """
+    if not var_config.front_layers:
+        return
+
+    if var_config.time_step is not TimeStep.DAILY:
+        raise ValueError(
+            f"'{var_key}': front_layers needs a daily store; this one is "
+            f"{var_config.time_step.value}. Detection reads one field per day."
+        )
+
+    taken: dict[str, str] = {}
+    for name, spec in (var_config.derived_vars or {}).items():
+        for out in spec.output_names(name):
+            taken[out] = "derived_vars"
+    for name in var_config.boa_fronts or {}:
+        taken[name] = "boa_fronts"
+    for purpose in ("compile", "extract"):
+        for out in depth_column_names(depth_levels_for(var_key, var_config, purpose)):
+            taken[out] = "depth levels"
+
+    for name, spec in var_config.front_layers.items():
+        outputs = spec.output_names(name)
+        if spec.source in outputs:
+            raise ValueError(
+                f"'{var_key}': front_layers.{name} writes over its own source "
+                f"'{spec.source}'; choose another prefix."
+            )
+        for out in outputs:
+            if out in taken:
+                raise ValueError(
+                    f"'{var_key}': '{out}' is written both by front_layers and by "
+                    f"{taken[out]}; keep one."
+                )
+            taken[out] = f"front_layers.{name}"
+
+        compiled = var_config.compiled_vars
+        if compiled:
+            missing = [n for n in spec.published_names(name) if n not in compiled]
+            if missing:
+                raise ValueError(
+                    f"'{var_key}': front_layers.{name} publishes {missing}; add "
+                    f"them to compiled_vars."
+                )
+            if spec.mask_name(name) in compiled:
+                raise ValueError(
+                    f"'{var_key}': '{spec.mask_name(name)}' is the daily front "
+                    f"mask, kept in the native store and never compiled; remove "
+                    f"it from compiled_vars."
+                )
+
+
 def _check_regrid_names(var_key: str, var_config: KeyVarConfigEntry) -> None:
     """
     Refuse regrid overrides naming a column the var_key does not publish.
@@ -687,16 +907,24 @@ def _check_source_renames(var_key: str, var_config: KeyVarConfigEntry) -> None:
             f"{collided}; only one of them would survive the rename."
         )
 
-    written = {
-        out
-        for name, spec in (var_config.derived_vars or {}).items()
-        for out in spec.output_names(name)
-    } | set(var_config.boa_fronts or {})
+    written = (
+        {
+            out
+            for name, spec in (var_config.derived_vars or {}).items()
+            for out in spec.output_names(name)
+        }
+        | set(var_config.boa_fronts or {})
+        | {
+            out
+            for name, spec in (var_config.front_layers or {}).items()
+            for out in spec.output_names(name)
+        }
+    )
     clash = sorted(set(targets) & written)
     if clash:
         raise ValueError(
-            f"'{var_key}': source_renames writes {clash}, which derived_vars or "
-            f"boa_fronts also write; keep one."
+            f"'{var_key}': source_renames writes {clash}, which derived_vars, "
+            f"boa_fronts or front_layers also write; keep one."
         )
 
     # Only where compiled_vars is declared, which is what says the names exist.
@@ -732,6 +960,7 @@ class AppConfig(msgspec.Struct):
         for var_key, var_config in self.variables.items():
             _check_derived_names(var_key, var_config)
             _check_front_entries(var_key, var_config)
+            _check_front_layer_entries(var_key, var_config)
             _check_regrid_names(var_key, var_config)
             _check_source_renames(var_key, var_config)
 

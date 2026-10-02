@@ -29,7 +29,7 @@ variables:
       analysed_sst: sst
     # Names as they appear in the compiled h2ds store, including anything the
     # convert step derives. `h2mare parquet --add-var` selects on these.
-    compiled_vars: [sst, analysis_error, sst_std, sst_fdist]
+    compiled_vars: [sst, analysis_error, sst_std]
     dataset_id_rep: METOFFICE-GLO-SST-L4-REP-OBS-SST
     # Optional: a near-real-time id for the recent tail, superseded by REP
     # once the reprocessed product catches up.

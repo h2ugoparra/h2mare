@@ -282,45 +282,47 @@ class TestGlobalAttrs:
 
 class TestFrontLayers:
     """
-    The detection threshold lives in ``boa_fronts`` and is quoted in the
-    layer's ``comment``. Nothing makes the prose follow the number, so a
-    threshold changed in one place and not the other would leave every file
+    The detection parameters live in ``front_layers`` and are quoted in each
+    output's ``comment``. Nothing makes the prose follow the numbers, so a
+    parameter changed in one place and not the other would leave every file
     written afterwards describing itself wrongly.
     """
 
-    def _declared(self, config) -> list[tuple[str, str, float]]:
+    def _declared(self, config) -> list[tuple[str, str, dict]]:
         return [
-            (var_key, name, spec["threshold"])
+            (var_key, name, spec)
             for var_key, entry in config["variables"].items()
-            for name, spec in (entry.get("boa_fronts") or {}).items()
+            for name, spec in (entry.get("front_layers") or {}).items()
         ]
+
+    def _outputs(self, name: str, spec: dict) -> list[str]:
+        freqs = [f"{name}_ffreq{n}" for n in spec.get("frequency_days", [30])]
+        pdist = spec.get("persistent_distance")
+        extra = [f"{name}_pdist{pdist['window']}"] if pdist else []
+        return [f"{name}_front", f"{name}_grad", *freqs, *extra]
 
     def test_the_layers_are_in_the_table(self, config):
         missing = [
-            f"{var_key}:{name}"
-            for var_key, name, _ in self._declared(config)
-            if name not in config["variable_attrs"]
+            f"{var_key}:{out}"
+            for var_key, name, spec in self._declared(config)
+            for out in self._outputs(name, spec)
+            if out not in config["variable_attrs"]
         ]
-        assert self._declared(config), "no boa_fronts entries left to check"
+        assert self._declared(config), "no front_layers entries left to check"
         assert not missing, f"front layers with no variable_attrs entry: {missing}"
 
-    def test_each_comment_states_the_configured_threshold(self, config):
+    def test_each_comment_states_the_configured_parameters(self, config):
         attrs = config["variable_attrs"]
         drifted = {}
-        for var_key, name, threshold in self._declared(config):
-            comment = attrs.get(name, {}).get("comment", "")
-            if str(threshold) not in comment:
-                drifted[f"{var_key}:{name}"] = (
-                    f"threshold {threshold} not in {comment!r}"
-                )
-        assert not drifted, f"comments that no longer state their threshold: {drifted}"
-
-    def test_each_comment_names_the_detection_algorithm(self, config):
-        """The threshold means nothing without it: it is a BOA gradient cut."""
-        attrs = config["variable_attrs"]
-        unnamed = [
-            f"{var_key}:{name}"
-            for var_key, name, _ in self._declared(config)
-            if "belkin" not in attrs.get(name, {}).get("comment", "").lower()
-        ]
-        assert not unnamed, f"front layers whose comment omits the algorithm: {unnamed}"
+        for var_key, name, spec in self._declared(config):
+            stated = [
+                f"sigma {spec['sigma_km']:g} km",
+                f"{spec['low_per_km']:g}",
+                f"{spec['high_per_km']:g}",
+            ]
+            for out in self._outputs(name, spec):
+                comment = attrs.get(out, {}).get("comment", "")
+                absent = [p for p in stated if p not in comment]
+                if absent:
+                    drifted[f"{var_key}:{out}"] = f"{absent} not in {comment!r}"
+        assert not drifted, f"comments that no longer state their parameters: {drifted}"

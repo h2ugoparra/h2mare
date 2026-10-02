@@ -5,6 +5,7 @@ Configuration management for h2mare project
 from __future__ import annotations
 
 import os
+import warnings
 from functools import lru_cache
 from pathlib import Path
 from typing import Optional
@@ -25,7 +26,10 @@ class Settings:
         # project root: directory containing h2mare's config.yaml
         self.BASE_DIR, self._project_mode = self._find_project_root()
 
-        # Load .env file
+        # Load .env file — noting first whether STORE_ROOT was already in the
+        # environment, which .env does not override, so describe_paths() can
+        # say which of the two it came from.
+        store_root_in_env = "STORE_ROOT" in os.environ
         self._load_dotenv()
 
         # === Data Directories ===
@@ -40,15 +44,27 @@ class Settings:
 
         # Processed data (final outputs)
         self.PROCESSED_DIR = self.DATA_DIR / "processed"
-        self.ZARR_DIR = self.PROCESSED_DIR / "zarr"
-        self.PARQUET_DIR = self.PROCESSED_DIR / "parquet"
         self.METADATA_DIR = self.PROCESSED_DIR / "metadata"
+        # Where the Zarr stores go when STORE_ROOT is not set. Only that — the
+        # local backups below happen to share its path but are their own names.
+        self.FALLBACK_STORE_ROOT = self.PROCESSED_DIR / "zarr"
+
+        # Local backups: default roots that --zarr-backup / --parquet-backup
+        # mirror the stores into (each store in its own sub-directory).
+        self.ZARR_BACKUP_DIR = self.PROCESSED_DIR / "zarr"
+        self.PARQUET_BACKUP_DIR = self.PROCESSED_DIR / "parquet"
 
         # Logs
         self.LOGS_DIR = self.BASE_DIR / "logs"
 
         # External Storage (where all data lives)
         self.STORE_ROOT = self._get_store_dir()
+        if self.STORE_ROOT is None:
+            self._store_root_source = "not set"
+        elif store_root_in_env:
+            self._store_root_source = "the environment"
+        else:
+            self._store_root_source = ".env"
         # Whether STORE_ROOT was set by --store-path rather than read from .env.
         # A variable may name its own root in config.yaml, and that root beats
         # the configured STORE_ROOT — but not an operator who explicitly asked
@@ -193,6 +209,7 @@ class Settings:
             logger.info(f"Store root overridden: {resolved}")
         self.STORE_ROOT = resolved
         self._store_root_overridden = True
+        self._store_root_source = "--store-path"
 
     def describe_resolution(self) -> str:
         """
@@ -215,6 +232,85 @@ class Settings:
             f"{config_note}; {store}"
         )
 
+    def describe_paths(self) -> str:
+        """
+        Every path h2mare uses, grouped by role, with where the roots came from.
+
+        The flat attribute list does not say which paths are the durable stores
+        (on ``STORE_ROOT``, often an external drive), which are local scratch
+        under the project root, and which are local backups of the stores —
+        and the computed ones (``PARQUET_DIR``, ``CLIMATOLOGY_DIR``) do not
+        show up in ``vars()`` at all. This is the ``repr``, so a REPL or
+        notebook shows it for ``get_settings()``.
+        """
+        config = self.BASE_DIR / "config.yaml"
+
+        def rows(entries: list[tuple[str, Optional[Path]]]) -> list[str]:
+            return [f"    {name:<20}{path}" for name, path in entries]
+
+        lines = [
+            "h2mare settings",
+            f"  Project root          {self.BASE_DIR}",
+            f"    from {self._root_source}; "
+            + ("config.yaml present" if config.exists() else "no config.yaml there"),
+            "",
+        ]
+        if self.STORE_ROOT is not None:
+            lines.append(
+                f"  Stores (durable data) - STORE_ROOT from {self._store_root_source}"
+            )
+            lines += rows(
+                [
+                    ("STORE_ROOT", self.STORE_ROOT),
+                    ("PARQUET_DIR", self.PARQUET_DIR),
+                    ("CLIMATOLOGY_DIR", self.CLIMATOLOGY_DIR),
+                ]
+            )
+        else:
+            lines.append(
+                "  Stores (durable data) - STORE_ROOT not set, kept under the project"
+            )
+            lines += rows(
+                [
+                    ("FALLBACK_STORE_ROOT", self.FALLBACK_STORE_ROOT),
+                    ("PARQUET_DIR", self.PARQUET_DIR),
+                ]
+            )
+        lines.append(
+            "    (a variable's own store_root in config.yaml beats STORE_ROOT)"
+        )
+        lines += ["", "  Local workspace (scratch, under the project root)"]
+        lines += rows(
+            [
+                ("DOWNLOADS_DIR", self.DOWNLOADS_DIR),
+                ("INTERIM_DIR", self.INTERIM_DIR),
+                ("METADATA_DIR", self.METADATA_DIR),
+                ("LOGS_DIR", self.LOGS_DIR),
+            ]
+        )
+        lines += ["", "  Local backups (default mirror roots for --*-backup)"]
+        lines += rows(
+            [
+                ("ZARR_BACKUP_DIR", self.ZARR_BACKUP_DIR),
+                ("PARQUET_BACKUP_DIR", self.PARQUET_BACKUP_DIR),
+            ]
+        )
+        return "\n".join(lines)
+
+    def __repr__(self) -> str:
+        return self.describe_paths()
+
+    @property
+    def ZARR_DIR(self) -> Path:
+        """Deprecated: split into ``FALLBACK_STORE_ROOT`` and ``ZARR_BACKUP_DIR``."""
+        warnings.warn(
+            "Settings.ZARR_DIR is deprecated: use FALLBACK_STORE_ROOT for where "
+            "stores go without STORE_ROOT, or ZARR_BACKUP_DIR for the backup root.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self.FALLBACK_STORE_ROOT
+
     @property
     def store_root_overridden(self) -> bool:
         """True when ``STORE_ROOT`` came from ``--store-path``, not from ``.env``."""
@@ -226,13 +322,25 @@ class Settings:
             return None
         return self.STORE_ROOT / "Climatology"
 
+    @property
+    def PARQUET_DIR(self) -> Path:
+        """
+        Root of the Parquet stores: ``STORE_ROOT/parquet``, else the project's own.
+
+        It sits beside the Zarr stores it is converted from, so a store is found
+        where the data lives rather than on whichever machine ran the
+        conversion. Computed rather than stored so ``--store-path`` moves it too.
+        """
+        if self.STORE_ROOT is None:
+            return self.PROCESSED_DIR / "parquet"
+        return self.STORE_ROOT / "parquet"
+
     def ensure_directories(self):
         """Scaffold the project directory tree under BASE_DIR. Opt-in, not automatic."""
         dirs = [
             self.DOWNLOADS_DIR,
             self.INTERIM_DIR,
-            self.ZARR_DIR,
-            self.PARQUET_DIR,
+            self.FALLBACK_STORE_ROOT,
             self.METADATA_DIR,
             self.LOGS_DIR,
         ]

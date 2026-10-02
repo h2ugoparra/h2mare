@@ -374,7 +374,7 @@ class TestCleanup:
             mock_get_settings.return_value.app_config = cfg
             mock_get_settings.return_value.DOWNLOADS_DIR = tmp_path
             mock_get_settings.return_value.STORE_ROOT = None
-            mock_get_settings.return_value.ZARR_DIR = tmp_path / "zarr"
+            mock_get_settings.return_value.FALLBACK_STORE_ROOT = tmp_path / "zarr"
             d = _DummyDownloader("sst", app_config=cfg, download_root=tmp_path)
 
         d._cleanup_empty_download_dir()

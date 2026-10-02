@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import gc
 import re
-import shutil
 import time
 from collections import defaultdict
 from collections.abc import Iterable
@@ -26,6 +25,7 @@ from h2mare.storage.coverage import get_store_coverage, split_time_range
 from h2mare.storage.parquet_indexer import ParquetIndexer
 from h2mare.types import DateLike, DateRange, FilePeriod
 from h2mare.utils.datetime_utils import end_of_day
+from h2mare.utils.files_io import mirror_tree
 from h2mare.validators import validate_file_period
 
 # How far behind the parquet end the incremental backfill looks for "holes"
@@ -576,33 +576,32 @@ class Zarr2Parquet(BaseConverter):
 
     def sync_data(self, remote_root: Optional[Path] = None) -> None:
         """
-        Copy the local Parquet store to a remote location.
+        Mirror the Parquet store to another location.
 
-        If *remote_root* is not provided, defaults to
-        ``get_settings().STORE_ROOT / "parquet" / var_key``.  The backup is silently
-        skipped when ``STORE_ROOT`` is not configured.
+        The copy is exact: anything under the destination store folder that the
+        source no longer has is deleted, so a partition rewritten into fewer
+        ``part-N.parquet`` files does not leave stale ones behind as duplicate
+        rows. Only ``remote_root / <store name>`` is touched.
 
         Args:
-            remote_root: Explicit destination root. The variable sub-directory
-                is appended automatically when omitted.
+            remote_root: Root holding the backup; the store goes in its own
+                sub-directory. Defaults to ``PARQUET_BACKUP_DIR``.
         """
-        if remote_root is None:
-            store_root = get_settings().STORE_ROOT
-            if store_root is None:
-                logger.warning(
-                    "STORE_ROOT is not set — skipping Parquet backup. "
-                    "Set STORE_ROOT in .env or pass remote_root explicitly."
-                )
-                return
-            remote_root = store_root / "parquet"
-
+        remote_root = remote_root or get_settings().PARQUET_BACKUP_DIR
         dest = remote_root / self.parquet_root.name
-        logger.info(f"Backing up Parquet: {self.parquet_root} → {dest}")
+        logger.info(f"Mirroring Parquet: {self.parquet_root} → {dest}")
         try:
-            shutil.copytree(str(self.parquet_root), str(dest), dirs_exist_ok=True)
-        except (PermissionError, OSError) as e:
+            removed = mirror_tree(self.parquet_root, dest)
+        except ValueError as e:
+            # Without STORE_ROOT the store itself is under PARQUET_BACKUP_DIR,
+            # which lands here as an overlap.
+            logger.warning(f"Skipping Parquet backup: {e}.")
+            return
+        except OSError as e:
             logger.exception(f"Parquet backup failed: {e}")
             return
+        if removed:
+            logger.info(f"Removed {removed} stale path(s) from the backup.")
         logger.success("Parquet backup complete.")
 
     # -------------------------------------------------------------------------

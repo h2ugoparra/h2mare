@@ -7,7 +7,7 @@ variables:
     source_vars: [analysed_sst, analysis_error]
     source_renames:
       analysed_sst: sst
-    compiled_vars: [sst, analysis_error, sst_std, sst_fdist]
+    compiled_vars: [sst, analysis_error, sst_std, sst_grad, sst_ffreq30, sst_pdist30]
     dataset_id_rep: METOFFICE-GLO-SST-L4-REP-OBS-SST
     dataset_id_nrt: METOFFICE-GLO-SST-L4-NRT-OBS-SST-V2
     source: cmems
@@ -17,9 +17,24 @@ variables:
     bbox: [-80, 0, 10, 70]
     derived_vars:
       sst_std: {op: rolling_std, source: sst, window: 3}
-    # Belkin & O'Reilly (2009): threshold in the source's units, here °C.
-    boa_fronts:
-      sst_fdist: {source: sst, threshold: 0.4}
+    # Front layers (plans/front-layers.md): Canny-style detection at the
+    # product's resolution, thresholds per km and fixed for every year (3-year
+    # calibration, 2004/2014/2024). In a deployed config, enable together with
+    # the backfill: native extraction refuses a daily store missing what
+    # compiled_vars lists, and the stores hold none of these until it has run.
+    front_layers:
+      sst:
+        source: sst
+        sigma_km: 5.0                 # OSTIA has no noise floor (§4.1)
+        low_per_km: 0.0155            # degC/km, p75 of the smoothed gradient
+        high_per_km: 0.0299           # degC/km, p90
+        confidence: {var: analysis_error, max: 1.52}   # K, 2024 p99; 0.84 masked the Gulf Stream (§4.3)
+        frequency_days: [30]
+        frequency_radius_km: 12.5
+        # km to the nearest pixel with a front nearby on >= half the assessed
+        # days: above chance recurrence, and not so low the zone covers the
+        # sea and the distance turns into a mask (§4.4)
+        persistent_distance: {window: 30, min_frequency: 0.5}
 
   ssh:
     local_folder: CMEMS_PHY_008_047
@@ -68,16 +83,31 @@ variables:
     source_vars: [CHL]
     source_renames:
       CHL: chl
-    compiled_vars: [chl, chl_fdist]
+    compiled_vars: [chl, chl_grad, chl_ffreq30, chl_pdist30]
     dataset_id_rep: cmems_obs-oc_glo_bgc-plankton_my_l4-gapfree-multi-4km_P1D
     source: cmems
     pattern: (\d{4}-\d{2}-\d{2})(?:-(\d{4}-\d{2}-\d{2}))?
     subset: true
     filename_date_range: true
     bbox: [-80, 0, 10, 70]
-    # Belkin & O'Reilly (2009): threshold in the source's units, here mg.m-3.
-    boa_fronts:
-      chl_fdist: {source: chl, threshold: 0.06}
+    # Front layers (plans/front-layers.md): Canny-style detection at the
+    # product's resolution, thresholds per km and fixed for every year (3-year
+    # calibration, 2004/2014/2024). In a deployed config, enable together with
+    # the backfill: native extraction refuses a daily store missing what
+    # compiled_vars lists, and the stores hold none of these until it has run.
+    front_layers:
+      chl:
+        source: chl
+        transform: log10              # gradients otherwise scale with concentration
+        sigma_km: 7.0                 # removes the noise floor below ~30 km (§4.1)
+        low_per_km: 0.0035            # log10(mg m-3)/km, p75
+        high_per_km: 0.0070           # log10(mg m-3)/km, p90
+        frequency_days: [30]
+        frequency_radius_km: 12.5
+        # km to the nearest pixel with a front nearby on >= half the assessed
+        # days: above chance recurrence, and not so low the zone covers the
+        # sea and the distance turns into a mask (§4.4)
+        persistent_distance: {window: 30, min_frequency: 0.5}
     # Confirmed empty at source, not lost in transit: re-downloading each
     # of these from CMEMS returns a normal 14.6 MB file in which all
     # 3,628,800 pixels are fill. Neighbouring days come back ~60% finite
@@ -368,15 +398,29 @@ variable_attrs:
     dataset_id_rep: METOFFICE-GLO-SST-L4-REP-OBS-SST
     dataset_id_nrt: METOFFICE-GLO-SST-L4-NRT-OBS-SST-V2
   
-  sst_fdist:
-    short_name: SST FrontDist
-    long_name: Distance to nearest SST front
+  sst_front:
+    short_name: SST Front
+    long_name: SST front mask (1 front, 0 no front, missing where not assessed)
+    units: '1'
+    comment: "Canny-style detection (plans/front-layers.md): sigma 5 km, hysteresis 0.0155/0.0299 degC/km, analysis_error <= 1.52 K. Native store only."
+
+  sst_grad:
+    short_name: SST Gradient
+    long_name: SST gradient magnitude
+    units: K km-1
+    comment: "Gradient magnitude after Gaussian smoothing, per km with the cos(lat) metric. Canny-style detection (plans/front-layers.md): sigma 5 km, hysteresis 0.0155/0.0299 degC/km, analysis_error <= 1.52 K."
+
+  sst_ffreq30:
+    short_name: SST FrontFreq30
+    long_name: SST front frequency over the last 30 days
+    units: '1'
+    comment: "Share of the last 30 assessed days with a front within 12.5 km; days not assessed are left out. Canny-style detection (plans/front-layers.md): sigma 5 km, hysteresis 0.0155/0.0299 degC/km, analysis_error <= 1.52 K."
+
+  sst_pdist30:
+    short_name: SST PersistFrontDist
+    long_name: Distance to the nearest persistent SST front
     units: km
-    comment: Front detection using the Belkin and O'Reilly (2009) method and a threshold value of 0.4.
-    product_id_rep: SST_GLO_SST_L4_REP_Observations_010_011
-    product_id_nrt: SST_GLO_SST_L4_NRT_Observations_010_001
-    dataset_id_rep: METOFFICE-GLO-SST-L4-REP-OBS-SST
-    dataset_id_nrt: METOFFICE-GLO-SST-L4-NRT-OBS-SST-V2
+    comment: "Great-circle distance to the nearest pixel with a front within 12.5 km on at least half of the last 30 assessed days (ffreq30 >= 0.5); 0 inside that zone. Canny-style detection (plans/front-layers.md): sigma 5 km, hysteresis 0.0155/0.0299 degC/km, analysis_error <= 1.52 K."
 
   analysis_error:
     short_name: SST Error Std 
@@ -484,13 +528,29 @@ variable_attrs:
     product_id: OCEANCOLOUR_GLO_BGC_L4_MY_009_104
     dataset_id: cmems_obs-oc_glo_bgc-plankton_my_l4-gapfree-multi-4km_P1D
   
-  chl_fdist:
-    short_name: CHL FrontDist
-    long_name: Distance to nearest Chlorophyll-a front
+  chl_front:
+    short_name: CHL Front
+    long_name: CHL front mask (1 front, 0 no front, missing where not assessed)
+    units: '1'
+    comment: "Canny-style detection on log10 chl (plans/front-layers.md): sigma 7 km, hysteresis 0.0035/0.0070 log10(mg m-3)/km. Native store only."
+
+  chl_grad:
+    short_name: CHL Gradient
+    long_name: Gradient magnitude of log10 chlorophyll-a
+    units: km-1
+    comment: "Gradient magnitude after Gaussian smoothing, per km with the cos(lat) metric. Canny-style detection on log10 chl (plans/front-layers.md): sigma 7 km, hysteresis 0.0035/0.0070 log10(mg m-3)/km."
+
+  chl_ffreq30:
+    short_name: CHL FrontFreq30
+    long_name: CHL front frequency over the last 30 days
+    units: '1'
+    comment: "Share of the last 30 assessed days with a front within 12.5 km; days not assessed are left out. Canny-style detection on log10 chl (plans/front-layers.md): sigma 7 km, hysteresis 0.0035/0.0070 log10(mg m-3)/km."
+
+  chl_pdist30:
+    short_name: CHL PersistFrontDist
+    long_name: Distance to the nearest persistent CHL front
     units: km
-    comment: Front detection defined by Belkin and O'Reilly (2009) method and a threshold value of 0.06.
-    product_id: OCEANCOLOUR_GLO_BGC_L4_MY_009_104
-    dataset_id: cmems_obs-oc_glo_bgc-plankton_my_l4-gapfree-multi-4km_P1D
+    comment: "Great-circle distance to the nearest pixel with a front within 12.5 km on at least half of the last 30 assessed days (ffreq30 >= 0.5); 0 inside that zone. Canny-style detection on log10 chl (plans/front-layers.md): sigma 7 km, hysteresis 0.0035/0.0070 log10(mg m-3)/km."
 
 # SEAPODYM
   mnkc_epi:
