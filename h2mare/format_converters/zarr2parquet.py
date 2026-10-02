@@ -583,31 +583,18 @@ class Zarr2Parquet(BaseConverter):
         ``part-N.parquet`` files does not leave stale ones behind as duplicate
         rows. Only ``remote_root / <store name>`` is touched.
 
-        If *remote_root* is not provided, defaults to
-        ``get_settings().STORE_ROOT / "parquet" / var_key``.  The backup is silently
-        skipped when ``STORE_ROOT`` is not configured.
-
         Args:
-            remote_root: Explicit destination root. The variable sub-directory
-                is appended automatically when omitted.
+            remote_root: Root holding the backup; the store goes in its own
+                sub-directory. Defaults to ``PARQUET_BACKUP_DIR``.
         """
-        if remote_root is None:
-            store_root = get_settings().STORE_ROOT
-            if store_root is None:
-                logger.warning(
-                    "STORE_ROOT is not set — skipping Parquet backup. "
-                    "Set STORE_ROOT in .env or pass remote_root explicitly."
-                )
-                return
-            remote_root = store_root / "parquet"
-
+        remote_root = remote_root or get_settings().PARQUET_BACKUP_DIR
         dest = remote_root / self.parquet_root.name
         logger.info(f"Mirroring Parquet: {self.parquet_root} → {dest}")
         try:
             removed = mirror_tree(self.parquet_root, dest)
         except ValueError as e:
-            # The default backup root, STORE_ROOT/parquet, is where the store
-            # itself now lives — that lands here as an overlap.
+            # Without STORE_ROOT the store itself is under PARQUET_BACKUP_DIR,
+            # which lands here as an overlap.
             logger.warning(f"Skipping Parquet backup: {e}.")
             return
         except OSError as e:

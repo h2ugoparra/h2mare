@@ -76,7 +76,7 @@ class ZarrCatalog:
             var_key (str): Variable key that must exist in app_config.variables
             file_period: Temporal granularity for file storage ('year' or 'month'). Defaults to 'year'.
             app_config (Optional[AppConfig], optional): Application configuration. If None, loads from get_settings().
-            store_root (Optional[Path]): Root directory for zarr files. If None, uses get_settings().STORE_ROOT or get_settings().ZARR_DIR.
+            store_root (Optional[Path]): Root directory for zarr files. If None, uses get_settings().STORE_ROOT or get_settings().FALLBACK_STORE_ROOT.
             metadata_root (Optional[Path]): Root directory for catalog parquet files. If None, uses get_settings().METADATA_DIR.
             auto_refresh (bool): Automatically check for changes on access. Defaults to True.
 

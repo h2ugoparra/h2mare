@@ -153,7 +153,7 @@ class TestDirectoryCreation:
         for d in (
             s.DOWNLOADS_DIR,
             s.INTERIM_DIR,
-            s.ZARR_DIR,
+            s.FALLBACK_STORE_ROOT,
             s.METADATA_DIR,
             s.LOGS_DIR,
         ):
@@ -206,6 +206,81 @@ class TestMaxWorkers:
         """Ignored, not raised — a typo in a tuning knob must not stop a
         command that starts no pool at all."""
         assert self._settings(tmp_path, monkeypatch, value).MAX_WORKERS is None
+
+
+class TestPathRoles:
+    """Each path has one role, and the printout says which, and from where."""
+
+    def test_backup_and_fallback_roots_are_local(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("H2MARE_ROOT", str(tmp_path))
+        monkeypatch.setenv("STORE_ROOT", str(tmp_path / "store"))
+        s = Settings()
+        assert s.ZARR_BACKUP_DIR == s.PROCESSED_DIR / "zarr"
+        assert s.PARQUET_BACKUP_DIR == s.PROCESSED_DIR / "parquet"
+        assert s.FALLBACK_STORE_ROOT == s.PROCESSED_DIR / "zarr"
+
+    def test_zarr_dir_is_a_deprecated_alias(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("H2MARE_ROOT", str(tmp_path))
+        s = Settings()
+        with pytest.warns(DeprecationWarning, match="FALLBACK_STORE_ROOT"):
+            assert s.ZARR_DIR == s.FALLBACK_STORE_ROOT
+
+    @staticmethod
+    def _section(text: str, header: str) -> str:
+        """The lines of one printout section, up to the next blank line."""
+        return text.split(header, 1)[1].split("\n\n", 1)[0]
+
+    def test_printout_groups_store_paths_apart_from_local_ones(
+        self, tmp_path, monkeypatch
+    ):
+        monkeypatch.setenv("H2MARE_ROOT", str(tmp_path / "proj"))
+        monkeypatch.setenv("STORE_ROOT", str(tmp_path / "ext"))
+        s = Settings()
+        text = repr(s)
+
+        stores = self._section(text, "Stores (durable data)")
+        assert str(s.STORE_ROOT) in stores
+        assert str(s.PARQUET_DIR) in stores
+        assert str(s.CLIMATOLOGY_DIR) in stores
+        assert str(s.BASE_DIR) not in stores
+
+        workspace = self._section(text, "Local workspace")
+        for p in (s.DOWNLOADS_DIR, s.INTERIM_DIR, s.METADATA_DIR, s.LOGS_DIR):
+            assert str(p) in workspace
+
+        backups = self._section(text, "Local backups")
+        assert str(s.ZARR_BACKUP_DIR) in backups
+        assert str(s.PARQUET_BACKUP_DIR) in backups
+
+    def test_printout_names_where_store_root_came_from(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("H2MARE_ROOT", str(tmp_path))
+        monkeypatch.setenv("STORE_ROOT", str(tmp_path / "from_env"))
+        s = Settings()
+        assert "STORE_ROOT from the environment" in repr(s)
+
+        s.override_store_root(tmp_path / "from_flag")
+        assert "STORE_ROOT from --store-path" in repr(s)
+
+    def test_printout_names_dotenv_as_the_source(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("H2MARE_ROOT", str(tmp_path))
+        monkeypatch.delenv("STORE_ROOT", raising=False)
+        (tmp_path / ".env").write_text(f"STORE_ROOT={tmp_path / 'ext'}\n")
+        try:
+            s = Settings()
+            assert "STORE_ROOT from .env" in repr(s)
+        finally:
+            # load_dotenv wrote it into the process environment.
+            os.environ.pop("STORE_ROOT", None)
+
+    def test_printout_without_store_root_shows_the_fallback(
+        self, tmp_path, monkeypatch
+    ):
+        monkeypatch.setenv("H2MARE_ROOT", str(tmp_path))
+        monkeypatch.delenv("STORE_ROOT", raising=False)
+        s = Settings()
+        stores = self._section(repr(s), "Stores (durable data)")
+        assert "STORE_ROOT not set" in stores
+        assert str(s.FALLBACK_STORE_ROOT) in stores
 
 
 class TestParquetDir:
