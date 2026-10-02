@@ -165,24 +165,3 @@ sst:
     Then compile and Parquet over the same period.
 - **Changing a threshold** means recomputing the layers over the whole record:
   run the backfill again, then compile and Parquet.
-
----
-
-## Describing the method
-
-For a paper using the layers:
-
-> Fronts were detected daily with an implementation of the Canny (1986) edge
-> detector adapted to gridded L4 fields: Gaussian smoothing with σ = 5 km (SST)
-> or 7 km (log10 chl), gradients computed per km with a cos(latitude) metric,
-> non-maximum suppression, and hysteresis thresholding with fixed thresholds
-> (0.0155 / 0.0299 °C km⁻¹ for SST; 0.0035 / 0.0070 km⁻¹ for log10 chl) set at
-> the 75th and 90th percentiles of the smoothed gradient in the study domain.
-> SST pixels with an analysis error above 1.52 K were treated as unobserved.
-
-Add the derived layers you use: the 30-day frequency counts a front within
-12.5 km, and persistent fronts are pixels with a front nearby on at least half
-the assessed days.
-
-Canny, J. (1986). A computational approach to edge detection. *IEEE Transactions
-on Pattern Analysis and Machine Intelligence*, 8(6), 679–698.
