@@ -20,7 +20,7 @@ from h2mare.storage.zarr_catalog import ZarrCatalog
 from h2mare.types import DateRange
 from h2mare.utils.datetime_utils import end_of_day
 from h2mare.utils.paths import static_layer_path, store_root_for
-from h2mare.utils.spatial import clip_land_data, regrid_to
+from h2mare.utils.spatial import axis_step, clip_land_data, regrid_to
 
 if TYPE_CHECKING:
     from h2mare.processing.compiler import Compiler
@@ -97,6 +97,38 @@ def _to_base_grid(
 # ---------------------------------------------------------------------------
 
 
+#: Relative slack when comparing a bathy layer's step with the grid's, the
+#: same 1% regrid_to allows before calling a ratio anything but 1: stored
+#: labels are rounded, so two equal steps can differ in the last digits.
+_BATHY_STEP_TOL = 0.01
+
+
+def _check_bathy_resolution(layer: xr.Dataset, grid: xr.Dataset, name: str) -> None:
+    """
+    Refuse a bathy layer coarser than the compile grid.
+
+    Interpolated onto finer cells, it would read as bathymetry at the grid's
+    resolution while holding only its own, and its ``bathy_std`` (the spread
+    of depths within each of its cells) would be labelled with cells it does
+    not describe. Nothing else would notice. A layer as fine as the grid or
+    finer goes through the area mean, which is right for both variables
+    (``bathy_std`` becomes the cell mean of the layer's own std, as every
+    ``_std`` column does).
+    """
+    for axis in ("lat", "lon"):
+        layer_step = axis_step(layer[axis])
+        grid_step = axis_step(grid[axis])
+        if layer_step > grid_step * (1 + _BATHY_STEP_TOL):
+            raise ValueError(
+                f"bathy compile_layer {name!r} is on a {layer_step:.6g}° {axis} "
+                f"step, coarser than the {grid_step:.6g}° compile grid: it would "
+                f"be interpolated and pass for a resolution it does not have. "
+                f"Point compile_layer at a layer at least as fine (15s, 60s), or "
+                f"build one at the grid's step with scripts/bathymetry.py, which "
+                f"writes 0.25° only (issue #264)."
+            )
+
+
 def _compile_bathy(
     compiler: Compiler,
     catalog: ZarrCatalog | None,
@@ -117,6 +149,7 @@ def _compile_bathy(
         lon=slice(compiler.bbox.xmin, compiler.bbox.xmax),
         lat=slice(compiler.bbox.ymin, compiler.bbox.ymax),
     )
+    _check_bathy_resolution(ds, compiler.base_grid, var_cfg.compile_layer)
     return _to_base_grid(compiler, ds, "bathy")
 
 
