@@ -57,14 +57,16 @@ Compiler().run(
 | `start_date` | Start of compilation period. Inferred from the stores if `None` |
 | `end_date` | End of compilation period. Inferred from the stores if `None` |
 | `var_keys` | List of variable keys to include. Defaults to all keys in `config.yaml` |
-| `zarr_backup` | Copy compiled Zarr files to the local backup store. Defaults to `False` |
-| `zarr_backup_dir` | Override backup destination. Defaults to `local_store_root` |
+| `zarr_backup` | Mirror the compiled Zarr store to the local backup store. Defaults to `False` |
+| `zarr_backup_dir` | Root for the backup; the store goes in its `<local_folder>` sub-directory. Defaults to `local_store_root` |
 
 The method builds the output grid, checks it against the store already on disk,
 splits the requested range into yearly (or monthly) chunks, runs each variable's
 processor on each chunk, merges the results with `xr.merge`, and writes via
-`write_append_zarr`. After all chunks are written, the compiled files are copied to
-`local_store_root` (or `zarr_backup_dir`) only when `zarr_backup=True`.
+`write_append_zarr`. After all chunks are written, the compiled store is mirrored to
+`local_store_root` (or `zarr_backup_dir/<local_folder>`) only when `zarr_backup=True`.
+The mirror is exact — files the store no longer has are deleted from the backup —
+and skips files that are unchanged since the last backup.
 
 Variables with no data for a given chunk are skipped with a warning rather than
 raising an error. Compiling a subset (`var_keys=[...]`) writes only those variables'

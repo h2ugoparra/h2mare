@@ -378,6 +378,74 @@ class TestSyncData:
 
         assert (remote_root / "h2ds" / "data.parquet").exists()
 
+    def test_skips_when_destination_is_the_store_itself(self, tmp_path):
+        """
+        The default backup root, STORE_ROOT/parquet, is now where the store
+        lives. Copying it onto itself failed file by file and logged an error.
+        """
+        z = _make_converter(tmp_path)
+        z.parquet_root.mkdir(parents=True)
+        (z.parquet_root / "data.parquet").write_bytes(b"\x00")
+
+        with patch("h2mare.utils.files_io.shutil.copytree") as mock_copytree:
+            z.sync_data(remote_root=z.parquet_root.parent)
+
+        mock_copytree.assert_not_called()
+
+    def test_mirror_removes_what_the_source_no_longer_has(self, tmp_path):
+        """
+        A partition rewritten into fewer part files, or dropped entirely, must not
+        survive in the backup — stale part files read back as duplicate rows.
+        """
+        z = _make_converter(tmp_path)
+        month = z.parquet_root / "year=2020" / "month=1"
+        month.mkdir(parents=True)
+        (month / "part-0.parquet").write_bytes(b"rewritten")
+
+        backup = tmp_path / "backup"
+        old_month = backup / z.parquet_root.name / "year=2020" / "month=1"
+        old_month.mkdir(parents=True)
+        (old_month / "part-0.parquet").write_bytes(b"old")
+        (old_month / "part-1.parquet").write_bytes(b"old")
+        dropped = backup / z.parquet_root.name / "year=2019"
+        (dropped / "month=12").mkdir(parents=True)
+        (dropped / "month=12" / "part-0.parquet").write_bytes(b"old")
+        neighbour = backup / "other_store" / "keep.parquet"
+        neighbour.parent.mkdir(parents=True)
+        neighbour.write_bytes(b"keep")
+
+        z.sync_data(remote_root=backup)
+
+        assert (old_month / "part-0.parquet").read_bytes() == b"rewritten"
+        assert not (old_month / "part-1.parquet").exists()
+        assert not dropped.exists()
+        assert neighbour.exists()  # only the store's own folder is mirrored
+
+    def test_empty_source_does_not_wipe_the_backup(self, tmp_path):
+        z = _make_converter(tmp_path)
+        z.parquet_root.mkdir(parents=True)
+
+        backup = tmp_path / "backup"
+        kept = backup / z.parquet_root.name / "year=2020" / "part-0.parquet"
+        kept.parent.mkdir(parents=True)
+        kept.write_bytes(b"old")
+
+        z.sync_data(remote_root=backup)
+
+        assert kept.exists()
+
+    def test_skips_a_destination_containing_the_source(self, tmp_path):
+        """Pruning a destination that holds the store would delete the store."""
+        z = _make_converter(tmp_path)
+        # The destination store folder is tmp_path/"h2ds", which holds the source.
+        z.parquet_root = tmp_path / "h2ds" / "inner" / "h2ds"
+        z.parquet_root.mkdir(parents=True)
+        (z.parquet_root / "part-0.parquet").write_bytes(b"live")
+
+        z.sync_data(remote_root=tmp_path)
+
+        assert (z.parquet_root / "part-0.parquet").exists()
+
 
 # ---------------------------------------------------------------------------
 # _resolve_backfill_groups

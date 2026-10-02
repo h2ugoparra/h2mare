@@ -4,7 +4,6 @@ Create h2ds zarr files
 
 from __future__ import annotations
 
-import shutil
 import time
 from pathlib import Path
 from typing import Literal, Optional
@@ -35,6 +34,7 @@ from h2mare.storage.xarray_helpers import (
 from h2mare.storage.zarr_catalog import ZarrCatalog
 from h2mare.types import BBox, DateLike, DateRange, FilePeriod
 from h2mare.utils.datetime_utils import normalize_date
+from h2mare.utils.files_io import mirror_tree
 from h2mare.utils.paths import store_root_for
 from h2mare.utils.spatial import GridBuilder
 from h2mare.validators import validate_file_period, validate_var_key
@@ -122,8 +122,8 @@ class Compiler:
             app_config (AppConfig, optional): Configuration data for var keys. Defaults to AppConfig.
             remote_store_root (Path, optional): Default root of the source stores.
                 Defaults to ``STORE_ROOT``; a var_key's own ``store_root`` wins.
-            local_store_root (Path, optional): Where ``zarr_backup`` copies the
-                compiled files. Defaults to ``ZARR_DIR/<local_folder>``.
+            local_store_root (Path, optional): Where ``zarr_backup`` mirrors the
+                compiled store. Defaults to ``ZARR_DIR/<local_folder>``.
             file_period: Temporal granularity ('year' or 'month') for file storage. Defaults to 'year'.
             date_format: string date format for output file name.
         """
@@ -209,8 +209,9 @@ class Compiler:
                 the store (see above).
             var_keys: Variable keys to include. ``None`` compiles all configured
                 variables (incremental mode).
-            zarr_backup: Copy written zarr files to the local store. Defaults to False.
-            zarr_backup_dir: Override destination for the zarr backup. Defaults to local_store_root.
+            zarr_backup: Mirror the compiled store to the backup location. Defaults to False.
+            zarr_backup_dir: Root for the zarr backup; the store goes in its
+                ``<local_folder>`` sub-directory. Defaults to local_store_root.
         """
         t0 = time.perf_counter()
         logger.info(
@@ -314,10 +315,9 @@ class Compiler:
         self.catalog.refresh()
 
         if zarr_backup:
-            # Backup all written files to local store in one pass — avoids repeated
-            # large directory copies after each individual chunk
-            for path in written_paths:
-                self.sync_data(path, backup_dir=zarr_backup_dir)
+            # Once, after every chunk — not per chunk, which re-walked the store
+            # for each one.
+            self.sync_data(backup_dir=zarr_backup_dir)
 
         logger.success(
             f"Compile complete: {len(written_paths)}/{len(chunks)} chunk(s) written "
@@ -682,25 +682,38 @@ class Compiler:
                 return False
         return False
 
-    def sync_data(self, remote_path: Path, backup_dir: Optional[Path] = None) -> None:
+    def sync_data(self, backup_dir: Optional[Path] = None) -> None:
         """
-        Copy a compiled zarr file to the local backup store.
+        Mirror the compiled store to the backup location.
+
+        The copy is exact, as for the Parquet backup: files the store no longer
+        has are deleted from the backup, and unchanged files are not recopied.
+        Only the store's own folder is touched.
 
         Args:
-            remote_path: path built by the caller via ``ZarrCatalog.build_file_path()``
-            backup_dir: destination directory; defaults to ``local_store_root``.
+            backup_dir: Root holding the backup; the store goes in its
+                ``<local_folder>`` sub-directory. Defaults to ``local_store_root``.
         """
-        local_path = (backup_dir or self.local_store_root) / remote_path.name
-
-        logger.info(f"Copying {remote_path} to {local_path}")
+        src = self.catalog.store_root
+        dest = (
+            backup_dir / self.var_config.local_folder
+            if backup_dir is not None
+            else self.local_store_root
+        )
+        logger.info(f"Mirroring {src} to {dest}")
 
         try:
-            shutil.copytree(remote_path, local_path, dirs_exist_ok=True)
-        except (PermissionError, OSError) as e:
+            removed = mirror_tree(src, dest)
+        except ValueError as e:
+            logger.warning(f"Skipping zarr backup: {e}.")
+            return
+        except OSError as e:
             # Return rather than fall through: the success line below sits
             # outside this handler, so falling through would log a failed backup
-            # as an error and then announce "File copied!" on the next line.
-            logger.exception(f"Failed to copy {remote_path} to {local_path}: {e}")
+            # as an error and then announce success on the next line.
+            logger.exception(f"Failed to mirror {src} to {dest}: {e}")
             return
 
-        logger.success("File copied!")
+        if removed:
+            logger.info(f"Removed {removed} stale path(s) from the backup.")
+        logger.success("Zarr backup complete.")

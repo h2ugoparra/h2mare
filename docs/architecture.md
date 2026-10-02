@@ -56,7 +56,7 @@ Raw files are opened with xarray, regridded to a daily time axis, and written (o
 **Class:** `Compiler` (`processing/compiler.py`)  
 **Output:** unified `h2ds` Zarr in `$STORE_ROOT/h2ds/`
 
-All per-variable Zarr stores are opened, regridded to the daily grid the `h2ds` entry defines in `config.yaml` (0.25° shipped), and merged into a single dataset. How each variable is regridded follows from its own resolution: a store finer than the grid is aggregated by an area-weighted mean, one at the grid's resolution or coarser is interpolated linearly, and a column a mean would destroy — an eddy track ID — is pinned to `nearest` in config. See [Regridding](api/compiler.md#regridding). Variables without data for a given period are skipped gracefully. With `zarr_backup=True` the compiled files are also copied to a local store.
+All per-variable Zarr stores are opened, regridded to the daily grid the `h2ds` entry defines in `config.yaml` (0.25° shipped), and merged into a single dataset. How each variable is regridded follows from its own resolution: a store finer than the grid is aggregated by an area-weighted mean, one at the grid's resolution or coarser is interpolated linearly, and a column a mean would destroy — an eddy track ID — is pinned to `nearest` in config. See [Regridding](api/compiler.md#regridding). Variables without data for a given period are skipped gracefully. With `zarr_backup=True` the compiled store is also mirrored to a local backup.
 
 Special variables handled outside the general path:
 
