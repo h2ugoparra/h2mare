@@ -93,17 +93,17 @@ def run(
     h2ds_zarr_backup: bool = typer.Option(
         False,
         "--h2ds-zarr-backup",
-        help="Copy the compiled h2ds zarr files to the local backup store.",
+        help="Mirror the compiled h2ds zarr store to the local backup store.",
     ),
     h2ds_parquet_backup: bool = typer.Option(
         False,
         "--h2ds-parquet-backup",
-        help="Copy the h2ds Parquet output to the remote store.",
+        help="Mirror the h2ds Parquet store to a second location.",
     ),
     h2ds_zarr_backup_dir: Optional[Path] = typer.Option(
         None,
         "--h2ds-zarr-backup-dir",
-        help="Override destination directory for the zarr backup (only used with --h2ds-zarr-backup).",
+        help="Root for the zarr backup; the store goes in its <local_folder> sub-directory (only used with --h2ds-zarr-backup).",
     ),
     h2ds_parquet_backup_dir: Optional[Path] = typer.Option(
         None,

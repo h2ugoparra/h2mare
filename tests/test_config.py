@@ -154,7 +154,6 @@ class TestDirectoryCreation:
             s.DOWNLOADS_DIR,
             s.INTERIM_DIR,
             s.ZARR_DIR,
-            s.PARQUET_DIR,
             s.METADATA_DIR,
             s.LOGS_DIR,
         ):
@@ -207,6 +206,29 @@ class TestMaxWorkers:
         """Ignored, not raised — a typo in a tuning knob must not stop a
         command that starts no pool at all."""
         assert self._settings(tmp_path, monkeypatch, value).MAX_WORKERS is None
+
+
+class TestParquetDir:
+    """Parquet stores live beside the Zarr stores they come from, on STORE_ROOT."""
+
+    def test_under_store_root_when_set(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("H2MARE_ROOT", str(tmp_path))
+        monkeypatch.setenv("STORE_ROOT", str(tmp_path / "store"))
+        s = Settings()
+        assert s.PARQUET_DIR == (tmp_path / "store").resolve() / "parquet"
+
+    def test_project_local_when_store_root_unset(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("H2MARE_ROOT", str(tmp_path))
+        monkeypatch.delenv("STORE_ROOT", raising=False)
+        s = Settings()
+        assert s.PARQUET_DIR == s.PROCESSED_DIR / "parquet"
+
+    def test_follows_store_path_override(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("H2MARE_ROOT", str(tmp_path))
+        monkeypatch.setenv("STORE_ROOT", str(tmp_path / "from_env"))
+        s = Settings()
+        s.override_store_root(tmp_path / "from_flag")
+        assert s.PARQUET_DIR == (tmp_path / "from_flag").resolve() / "parquet"
 
 
 class TestOverrideStoreRoot:

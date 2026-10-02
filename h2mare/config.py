@@ -41,7 +41,6 @@ class Settings:
         # Processed data (final outputs)
         self.PROCESSED_DIR = self.DATA_DIR / "processed"
         self.ZARR_DIR = self.PROCESSED_DIR / "zarr"
-        self.PARQUET_DIR = self.PROCESSED_DIR / "parquet"
         self.METADATA_DIR = self.PROCESSED_DIR / "metadata"
 
         # Logs
@@ -226,13 +225,25 @@ class Settings:
             return None
         return self.STORE_ROOT / "Climatology"
 
+    @property
+    def PARQUET_DIR(self) -> Path:
+        """
+        Root of the Parquet stores: ``STORE_ROOT/parquet``, else the project's own.
+
+        It sits beside the Zarr stores it is converted from, so a store is found
+        where the data lives rather than on whichever machine ran the
+        conversion. Computed rather than stored so ``--store-path`` moves it too.
+        """
+        if self.STORE_ROOT is None:
+            return self.PROCESSED_DIR / "parquet"
+        return self.STORE_ROOT / "parquet"
+
     def ensure_directories(self):
         """Scaffold the project directory tree under BASE_DIR. Opt-in, not automatic."""
         dirs = [
             self.DOWNLOADS_DIR,
             self.INTERIM_DIR,
             self.ZARR_DIR,
-            self.PARQUET_DIR,
             self.METADATA_DIR,
             self.LOGS_DIR,
         ]

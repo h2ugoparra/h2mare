@@ -56,12 +56,12 @@ def compile(
     zarr_backup: bool = typer.Option(
         False,
         "--zarr-backup",
-        help="Copy compiled zarr files to the local backup store after writing.",
+        help="Mirror the compiled zarr store to the local backup store after writing.",
     ),
     zarr_backup_dir: Optional[Path] = typer.Option(
         None,
         "--zarr-backup-dir",
-        help="Override destination directory for the zarr backup (only used with --zarr-backup; defaults to local_store_root from settings).",
+        help="Root for the zarr backup; the store goes in its <local_folder> sub-directory (only used with --zarr-backup; defaults to ZARR_DIR).",
     ),
 ) -> None:
     """Merge per-variable Zarr stores into the unified h2ds compiled dataset."""

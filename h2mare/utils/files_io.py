@@ -82,6 +82,64 @@ def safe_rmtree(path: Path, retries=10, delay=0.5) -> None:
     ) from last_err
 
 
+def _copy_if_changed(src: str, dst: str) -> str:
+    """
+    ``copytree`` copy function that skips a file the destination already holds.
+
+    ``copy2`` carries the modification time across, so an unchanged file
+    matches on size and mtime. The 2 s tolerance is FAT/exFAT's mtime
+    resolution, for a backup on an external drive.
+    """
+    try:
+        s, d = os.stat(src), os.stat(dst)
+        if s.st_size == d.st_size and abs(s.st_mtime - d.st_mtime) < 2:
+            return dst
+    except FileNotFoundError:
+        pass
+    return shutil.copy2(src, dst)
+
+
+def mirror_tree(src: Path, dest: Path) -> int:
+    """
+    Make *dest* an exact copy of *src*.
+
+    Copies what is new or changed, then deletes whatever under *dest* the
+    source no longer has — a stale file left behind in a backup reads back as
+    data that no longer exists (a duplicate Parquet part, a dropped period).
+
+    Refuses rather than deletes when the call looks wrong: *src* and *dest*
+    overlapping (pruning a destination that holds the source deletes the
+    source) or *src* holding no files (mirroring an empty or unmounted store
+    wipes the backup).
+
+    Returns:
+        Number of stale paths removed from *dest*.
+
+    Raises:
+        ValueError: *src* and *dest* overlap, or *src* holds no files.
+        OSError: The copy or a removal failed.
+    """
+    src_r, dest_r = src.resolve(), dest.resolve()
+    if src_r.is_relative_to(dest_r) or dest_r.is_relative_to(src_r):
+        raise ValueError(f"{dest} overlaps {src}")
+    if not src.is_dir() or not any(p.is_file() for p in src.rglob("*")):
+        raise ValueError(f"no files under {src}")
+
+    shutil.copytree(src, dest, dirs_exist_ok=True, copy_function=_copy_if_changed)
+
+    # Reverse order visits children before their parent directory.
+    removed = 0
+    for path in sorted(dest.rglob("*"), reverse=True):
+        if (src / path.relative_to(dest)).exists():
+            continue
+        if path.is_dir() and not path.is_symlink():
+            shutil.rmtree(path)
+        else:
+            path.unlink()
+        removed += 1
+    return removed
+
+
 def filter_raw_files(paths: list[Path], var_config) -> list[Path]:
     """
     Keep only the raw files a variable's ``raw_include`` regex admits.
