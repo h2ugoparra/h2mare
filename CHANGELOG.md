@@ -7,8 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-10-02
+
+### Breaking
+
+- **Breaking (paths): the Parquet store lives on `STORE_ROOT`.** `PARQUET_DIR`
+  is now `STORE_ROOT/parquet` (the project's `data/processed/parquet` only when
+  `STORE_ROOT` is unset), beside the Zarr stores it is converted from, and
+  `--store-path` moves it too. Code reading `get_settings().PARQUET_DIR` follows
+  the store; anything that hardcoded the old project-local folder now points at
+  the backup (`PARQUET_BACKUP_DIR`). See Upgrade notes (#269).
+- **Breaking (CLI): `--zarr-backup-dir` takes a root**, like the Parquet flag:
+  the store is mirrored to `<dir>/<local_folder>` rather than into `<dir>`
+  itself (#269).
+- **Breaking (values): BOA front distances are removed** (`sst_fdist`,
+  `chl_fdist`); see Removed.
+
 ### Added
 
+- `Settings.describe_paths()`, also the `repr` of `get_settings()`: every path
+  grouped as stores / local workspace / local backups, with where the project
+  root and `STORE_ROOT` came from (environment, `.env` or `--store-path`).
+  `PARQUET_DIR` and `CLIMATOLOGY_DIR`, being computed, did not show in `vars()`
+  at all (#270).
+- `FALLBACK_STORE_ROOT`, `ZARR_BACKUP_DIR` and `PARQUET_BACKUP_DIR` settings:
+  where stores go without `STORE_ROOT`, and the default roots of the two
+  backups (#270).
 - **Front layers** (`front_layers`, the successor of `boa_fronts`; design
   and evidence in `plans/front-layers.md`). A Canny-style detector at the scale
   the L4 products resolve: Gaussian smoothing in km, the gradient per km with
@@ -33,8 +57,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`plans/front-layers.md` §4.4), and the shipped config publishes
   `sst_pdist30` and `chl_pdist30` at it.
 
+### Changed
+
+- **Backups are exact mirrors.** `--parquet-backup` and the compile zarr backup
+  used to only add files, so a partition rewritten into fewer part files left
+  stale ones behind, which read back as duplicate rows. Both now copy what
+  changed and delete what the source no longer has, and refuse an overlapping
+  destination or an empty source instead of wiping anything. The zarr backup
+  mirrors the whole h2ds store once per compile (#269).
+
+### Deprecated
+
+- `Settings.ZARR_DIR`: it was both the store root used without `STORE_ROOT`
+  and the zarr backup's default root. Use `FALLBACK_STORE_ROOT` or
+  `ZARR_BACKUP_DIR` (same path, one meaning each); the old name still works and
+  warns (#270).
+
 ### Fixed
 
+- A bare `--parquet-backup` did nothing once the store moved to `STORE_ROOT`,
+  its default destination being the store itself. It now defaults to
+  `PARQUET_BACKUP_DIR` (#270).
 - **Compile refuses a bathymetry layer coarser than the h2ds grid.** It used
   to interpolate it, so a finer `cells_per_degree` with the 0.25° layer would
   have published 0.25° bathymetry, and its within-cell `bathy_std`, as if at
@@ -51,6 +94,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Breaking for anyone reading them; the front layers replace them. h2ds and the
   Parquet store still hold them until rebuilt. The `boa_fronts` key and its
   code remain for now.
+
+### Upgrade notes
+
+- **Parquet store location.** With `STORE_ROOT` set, `h2mare parquet` now reads
+  and writes `STORE_ROOT/parquet`. Move or copy an existing store there from
+  `data/processed/parquet` before the next run, since the old folder is no
+  longer where the store is looked for; it then serves as the
+  `--parquet-backup` mirror.
+- **Front layers** reach existing stores through
+  `scripts/backfill_front_layers.py`, then a `compile` and `parquet` run.
 
 ## [0.9.0] - 2026-09-30
 
@@ -715,6 +768,8 @@ anyone running 0.3.x or earlier should upgrade.
 - Numerous correctness fixes in the fronts processor, FSLE processing
   (bbox handling), extraction (NaN coordinates), and Parquet schema unioning.
 
+[0.10.0]: https://github.com/h2ugoparra/h2mare/compare/v0.9.0...v0.10.0
+[0.9.0]: https://github.com/h2ugoparra/h2mare/compare/v0.8.1...v0.9.0
 [0.8.1]: https://github.com/h2ugoparra/h2mare/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/h2ugoparra/h2mare/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/h2ugoparra/h2mare/compare/v0.6.0...v0.7.0
