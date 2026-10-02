@@ -44,7 +44,7 @@ directory, or set `H2MARE_ROOT` to point at them. When dates are omitted, the pi
 `ZarrCatalog` coverage and only fetches/processes the gap — this is what makes partial runs resumable.
 
 A variable's store is `<root>/<local_folder>/`, and the root is resolved by `utils/paths.py::store_root_for`:
-`--store-path` > the variable's own `store_root` in config.yaml > `STORE_ROOT` > `ZARR_DIR`. Declaring no
+`--store-path` > the variable's own `store_root` in config.yaml > `STORE_ROOT` > `FALLBACK_STORE_ROOT`. Declaring no
 `store_root` anywhere is the shipped setup and resolves exactly as it always has. Steps holding a root of their
 own (`PipelineManager.store_root`, `Compiler.remote_store_root`) pass it as `store_root_for`'s *default*, never
 as the answer. Only the Zarr stores follow it — downloads, `STORE_ROOT/parquet` and `Climatology/` do not.

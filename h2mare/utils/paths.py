@@ -52,7 +52,7 @@ def store_root_for(
         2. ``var_config.store_root`` from config.yaml
         3. *default_root*, the root the calling step was handed
         4. ``STORE_ROOT`` from .env
-        5. ``get_settings().ZARR_DIR``
+        5. ``get_settings().FALLBACK_STORE_ROOT``
 
     A variable's own root beats the configured ``STORE_ROOT`` — that is the
     point of the field — but not an explicit ``--store-path``, which relocates
@@ -86,7 +86,7 @@ def store_root_for(
     if settings.STORE_ROOT is not None:
         return settings.STORE_ROOT
 
-    return settings.ZARR_DIR
+    return settings.FALLBACK_STORE_ROOT
 
 
 def resolve_store_path(
@@ -103,7 +103,7 @@ def resolve_store_path(
         2. ``--store-path`` override
         3. var_config.store_root from config.yaml
         4. STORE_ROOT environment variable
-        5. get_settings().ZARR_DIR
+        5. get_settings().FALLBACK_STORE_ROOT
 
     Note the asymmetry in level 1: an explicit ``store_root`` argument is *one
     store's exact directory* and ``local_folder`` is not appended to it, while

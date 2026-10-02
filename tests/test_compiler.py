@@ -437,7 +437,7 @@ class TestSyncData:
         assert (tmp_path / "local" / "h2ds" / "data.zarr" / ".zattrs").exists()
 
     def test_custom_backup_dir_gets_the_store_folder(self, compiler, tmp_path):
-        """Same layout as the default (ZARR_DIR/<local_folder>) and the Parquet backup."""
+        """Same layout as the default (ZARR_BACKUP_DIR/<local_folder>) and the Parquet backup."""
         compiler.catalog.store_root = _store_with(
             tmp_path / "remote" / "h2ds", "chunk.zarr/.zattrs"
         )

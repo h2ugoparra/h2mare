@@ -64,7 +64,7 @@ def _settings(tmp_path, *, store_root=None, overridden=False):
     """
     mock_settings = MagicMock()
     mock_settings.STORE_ROOT = store_root
-    mock_settings.ZARR_DIR = tmp_path / "zarr_dir"
+    mock_settings.FALLBACK_STORE_ROOT = tmp_path / "zarr_dir"
     mock_settings.store_root_overridden = overridden
     return mock_settings
 
@@ -93,7 +93,10 @@ class TestResolveStorePath:
         settings = _settings(tmp_path, store_root=None)
         with patch("h2mare.utils.paths.get_settings", return_value=settings):
             result = resolve_store_path(_VAR_CONFIG, warn_if_missing=False)
-        assert result == (settings.ZARR_DIR / _VAR_CONFIG.local_folder).resolve()
+        assert (
+            result
+            == (settings.FALLBACK_STORE_ROOT / _VAR_CONFIG.local_folder).resolve()
+        )
 
     def test_variables_own_root_beats_store_root(self, tmp_path):
         """The whole point of the field: this variable lives on another drive."""
@@ -122,7 +125,7 @@ class TestResolveStorePath:
 class TestStoreRootFor:
     """
     Precedence: --store-path > config.yaml store_root > default_root > STORE_ROOT
-    > ZARR_DIR. Returns a *root*; callers join local_folder themselves.
+    > FALLBACK_STORE_ROOT. Returns a *root*; callers join local_folder themselves.
     """
 
     def test_returns_store_root_when_variable_names_none(self, tmp_path):
@@ -166,7 +169,7 @@ class TestStoreRootFor:
         """Backward compatibility: an entry declaring nothing resolves as before."""
         settings = _settings(tmp_path, store_root=None)
         with patch("h2mare.utils.paths.get_settings", return_value=settings):
-            assert store_root_for(_VAR_CONFIG) == settings.ZARR_DIR
+            assert store_root_for(_VAR_CONFIG) == settings.FALLBACK_STORE_ROOT
 
     def test_tolerates_a_config_predating_the_field(self, tmp_path):
         """Stand-in configs without the attribute, as step_freq allows for time_step."""

@@ -123,7 +123,7 @@ class Compiler:
             remote_store_root (Path, optional): Default root of the source stores.
                 Defaults to ``STORE_ROOT``; a var_key's own ``store_root`` wins.
             local_store_root (Path, optional): Where ``zarr_backup`` mirrors the
-                compiled store. Defaults to ``ZARR_DIR/<local_folder>``.
+                compiled store. Defaults to ``ZARR_BACKUP_DIR/<local_folder>``.
             file_period: Temporal granularity ('year' or 'month') for file storage. Defaults to 'year'.
             date_format: string date format for output file name.
         """
@@ -132,7 +132,8 @@ class Compiler:
         self.var_config = self.app_config.variables[self.var_key]
 
         self.local_store_root = (
-            local_store_root or get_settings().ZARR_DIR / self.var_config.local_folder
+            local_store_root
+            or get_settings().ZARR_BACKUP_DIR / self.var_config.local_folder
         )
         resolved_remote = remote_store_root or get_settings().STORE_ROOT
         if resolved_remote is None:

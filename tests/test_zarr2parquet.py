@@ -7,7 +7,7 @@ Covers:
   incremental, up-to-date)
 - run(): always splits by month regardless of range length
 - run(): depth filtering logic for depth-aware variables
-- sync_data(): skips when STORE_ROOT is None; copies when remote_root is given
+- sync_data(): mirrors to PARQUET_BACKUP_DIR by default or to remote_root
 """
 
 import re
@@ -343,14 +343,23 @@ class TestRunDepthFiltering:
 
 
 class TestSyncData:
-    def test_skips_when_store_root_is_none(self, tmp_path):
-        """sync_data() returns without error when STORE_ROOT is not configured."""
+    def test_defaults_to_parquet_backup_dir(self, tmp_path):
+        """
+        Without a root the mirror goes to the local PARQUET_BACKUP_DIR — not
+        STORE_ROOT/parquet, which is where the store itself lives.
+        """
         z = _make_converter(tmp_path)
+        z.parquet_root.mkdir(parents=True)
+        (z.parquet_root / "part-0.parquet").write_bytes(b"data")
+        backup = tmp_path / "local_backup"
+
         with patch(
             "h2mare.format_converters.zarr2parquet.get_settings"
         ) as mock_get_settings:
-            mock_get_settings.return_value.STORE_ROOT = None
-            z.sync_data()  # must not raise
+            mock_get_settings.return_value.PARQUET_BACKUP_DIR = backup
+            z.sync_data()
+
+        assert (backup / z.parquet_root.name / "part-0.parquet").exists()
 
     def test_copies_to_explicit_remote_root(self, tmp_path):
         """When remote_root is given explicitly, parquet_root is copied there."""
