@@ -716,3 +716,25 @@ class TestListing:
         with patch.object(type(dl), "adjust_ftp_path_to_dataset"):
             with pytest.raises(RuntimeError):
                 dl.get_rep_availability()
+
+
+class TestFilterFilesByRange:
+    def test_undated_file_in_listing_is_skipped(self, tmp_path):
+        """
+        Regression: AVISO added META3.2_DT_allsat_report.pdf to the eddies REP
+        folder. Availability skipped it with a warning, but filtering raised
+        "No valid dates found in filenames" and aborted the download.
+        """
+        with patch.object(AVISODownloader, "connect_ftp", return_value=MagicMock()):
+            dl = AVISODownloader(
+                "eddies",
+                app_config=_eddies_app_config(),
+                store_root=tmp_path,
+                download_root=tmp_path,
+            )
+        files = [
+            "META3.2_DT_allsat_Anticyclonic_long_19930101_20220209.nc",
+            "META3.2_DT_allsat_report.pdf",
+        ]
+        window = DateRange(pd.Timestamp("2022-01-01"), pd.Timestamp("2022-02-09"))
+        assert dl._filter_files_by_range(files, window) == files[:1]

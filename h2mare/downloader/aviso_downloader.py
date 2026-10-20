@@ -276,8 +276,11 @@ class AVISODownloader(BaseDownloader):
         """Filter file list to those overlapping with the given DateRange."""
         result = []
         for filepath in files:
-            dates = self._extract_date_from_filename(filepath)
-            if dates is None:
+            try:
+                dates = self._extract_date_from_filename(filepath)
+            except ValueError:
+                # Non-data file in the dataset folder (e.g. AVISO's report PDF);
+                # _get_dataset_availability already warned about it.
                 continue
             if isinstance(dates, tuple):
                 file_start, file_end = dates
