@@ -5,7 +5,7 @@ import os
 import re
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from ftplib import FTP
+from ftplib import FTP, error_perm
 from pathlib import Path
 from typing import Optional
 
@@ -17,6 +17,12 @@ from h2mare.config import AppConfig
 from h2mare.downloader.base import BaseDownloader
 from h2mare.storage.coverage import resolve_date_range
 from h2mare.types import DateLike, DateRange, FTPDownloadTask
+
+# Seconds a single socket operation may block — not a cap on the transfer. A
+# slow link that still delivers bytes never trips it; a dead one that delivers
+# none used to hang the run indefinitely, since the retry below only fires on
+# an exception.
+FTP_TIMEOUT_S = 120
 
 
 def _download_to_part(
@@ -30,32 +36,62 @@ def _download_to_part(
     has no way to tell a partial file from a complete one, so the damage
     surfaces much later as missing or corrupt days inside a year that every
     coverage check reports as healthy.
+
+    A ``.part`` left by a dropped transfer — this run's previous attempt or a
+    killed run — is resumed with ``REST`` rather than refetched: on a slow link
+    the eddies trajectory files take hours. Resuming needs the remote size, both
+    to know where the file ends and to check the result, so without it the
+    transfer starts over. The size check cannot tell a same-length replacement
+    on the server from the original; a longer or shorter result is discarded.
     """
     part_path = local_path.with_name(local_path.name + ".part")
+    offset = part_path.stat().st_size if part_path.exists() and file_size else 0
+    if file_size and offset > file_size:
+        offset = 0  # not a prefix of this file — the server's copy changed
+
+    if offset:
+        logger.info(
+            f"Resuming {remote_path.split('/')[-1]} at {offset}/{file_size} bytes"
+        )
+
     try:
-        with open(part_path, "wb") as f:
-            if file_size:
+        # offset == file_size: the bytes all arrived but the attempt failed
+        # after (e.g. on the closing reply), so only the rename is left.
+        if not (file_size and offset == file_size):
+            with open(part_path, "ab" if offset else "wb") as f:
                 # disable=None: tqdm auto-disables on non-tty, so scheduled
                 # runs don't persist one log line per refresh tick.
                 with tqdm(
                     total=file_size,
+                    initial=offset,
                     unit="B",
                     unit_scale=True,
                     desc=remote_path.split("/")[-1],
-                    disable=None,
+                    disable=None if file_size else True,
                 ) as pbar:
 
                     def callback(data):
                         f.write(data)
                         pbar.update(len(data))
 
-                    ftp.retrbinary(f"RETR {remote_path}", callback)
-            else:
-                ftp.retrbinary(f"RETR {remote_path}", f.write)
-        os.replace(part_path, local_path)
-    except BaseException:
-        part_path.unlink(missing_ok=True)
+                    ftp.retrbinary(f"RETR {remote_path}", callback, rest=offset or None)
+    except BaseException as e:
+        # Otherwise keep the .part: the next attempt resumes from it. Not
+        # without a size, which could never resume it, and not on a permanent
+        # error — a refused REST would refuse every retry too.
+        if not file_size or isinstance(e, error_perm):
+            part_path.unlink(missing_ok=True)
         raise
+
+    if file_size:
+        received = part_path.stat().st_size
+        if received != file_size:
+            part_path.unlink(missing_ok=True)
+            raise IOError(
+                f"{remote_path}: received {received} bytes, server reports "
+                f"{file_size}; discarded the partial file."
+            )
+    os.replace(part_path, local_path)
 
 
 class AVISODownloader(BaseDownloader):
@@ -195,7 +231,12 @@ class AVISODownloader(BaseDownloader):
                 "AVISO credentials not found in .env or environment variables."
             )
 
-        ftp = FTP(host=ftp_server, user=str(username), passwd=str(password))
+        ftp = FTP(
+            host=ftp_server,
+            user=str(username),
+            passwd=str(password),
+            timeout=FTP_TIMEOUT_S,
+        )
         ftp.set_pasv(True)
         return ftp
 
