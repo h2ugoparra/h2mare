@@ -99,6 +99,39 @@ class TestNothingToDownloadMessage:
         assert "WARNING|'fsle': requested 1994-01-01 to 1994-01-31" in text
 
 
+class TestDownloadPlanLogging:
+    def test_dry_run_logs_each_task_with_its_dates(self, dl):
+        from loguru import logger
+
+        tasks = [
+            FTPDownloadTask(filepath="2022/fsle_20220209.nc", source="rep"),
+            FTPDownloadTask(filepath="fsle_20261019.nc", source="nrt"),
+        ]
+        rep = DateRange("2010-01-01", "2022-02-09")
+        messages: list[str] = []
+        sink = logger.add(messages.append, level="DEBUG", format="{message}")
+        try:
+            with (
+                patch.object(dl, "_create_download_tasks", return_value=tasks),
+                patch.object(dl, "get_rep_availability", return_value=rep),
+                patch.object(dl, "_warn_if_rep_updated"),
+            ):
+                assert dl.run("2022-02-01", "2026-10-30", dry_run=True) is False
+        finally:
+            logger.remove(sink)
+
+        text = "".join(messages)
+        assert "Created 2 download task(s) for 2022-02-01 to 2026-10-30" in text
+        assert (
+            "Download task (rep): 2022/fsle_20220209.nc "
+            "covering 2022-02-09 to 2022-02-09" in text
+        )
+        assert (
+            "Download task (nrt): fsle_20261019.nc "
+            "covering 2026-10-19 to 2026-10-19" in text
+        )
+
+
 class TestGetRepAvailability:
     def test_calls_get_dataset_files_with_rep_id(self, dl):
         fake_files = ["rep/file1.nc", "rep/file2.nc"]
@@ -849,6 +882,37 @@ class TestListing:
         with patch.object(type(dl), "adjust_ftp_path_to_dataset"):
             with pytest.raises(RuntimeError):
                 dl.get_rep_availability()
+
+    def test_dataset_files_leave_out_non_data_files(self, dl):
+        """Regression: AVISO's report PDF warned on every scan of the REP folder."""
+        from loguru import logger
+
+        dl.ftp.mlsd = _fake_mlsd(
+            {"fsle_20200101.nc": None, "report_20200101.pdf": None}
+        )
+        messages: list[str] = []
+        sink = logger.add(messages.append, level="WARNING", format="{message}")
+        try:
+            files = dl._get_dataset_files("/dataset/fsle/rep")
+            dl._get_dataset_availability(files)
+        finally:
+            logger.remove(sink)
+
+        assert files == ["fsle_20200101.nc"]
+        assert messages == []
+
+    def test_undated_netcdf_still_warns(self, dl):
+        from loguru import logger
+
+        dl.ftp.mlsd = _fake_mlsd({"fsle_20200101.nc": None, "fsle_latest.nc": None})
+        messages: list[str] = []
+        sink = logger.add(messages.append, level="WARNING", format="{message}")
+        try:
+            dl._get_dataset_availability(dl._get_dataset_files("/dataset/fsle/rep"))
+        finally:
+            logger.remove(sink)
+
+        assert "".join(messages).startswith("Could not extract date from file: fsle_l")
 
 
 class TestFilterFilesByRange:
