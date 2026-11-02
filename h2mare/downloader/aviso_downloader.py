@@ -247,9 +247,13 @@ class AVISODownloader(BaseDownloader):
         return self.ftp
 
     def _get_dataset_files(self, dataset_id: str) -> list[str]:
-        """Get list of files for a given dataset_id from FTP."""
+        """Get list of NetCDF files for a given dataset_id from FTP.
+
+        Non-data files sharing the folder (AVISO's report PDF) are dropped here,
+        so the undated warning stays reserved for a data file that can't be read.
+        """
         self.adjust_ftp_path_to_dataset(dataset_id)
-        return self.get_all_files_recursively()
+        return [f for f in self.get_all_files_recursively() if f.endswith(".nc")]
 
     def _get_dataset_availability(self, files: list[str]) -> DateRange:
         """
@@ -320,7 +324,6 @@ class AVISODownloader(BaseDownloader):
             try:
                 dates = self._extract_date_from_filename(filepath)
             except ValueError:
-                # Non-data file in the dataset folder (e.g. AVISO's report PDF);
                 # _get_dataset_availability already warned about it.
                 continue
             if isinstance(dates, tuple):
@@ -608,7 +611,12 @@ class AVISODownloader(BaseDownloader):
             )
             return False
 
-        logger.debug(f"Created {len(tasks)} download task(s)")
+        logger.debug(f"Created {len(tasks)} download task(s) for {requested_range}")
+        for task in tasks:
+            logger.debug(
+                f"Download task ({task.source}): {task.filepath} "
+                f"covering {self._task_date_range([task.filepath])}"
+            )
 
         self._warn_if_rep_updated(pd.Timestamp(self.get_rep_availability().end))
 
