@@ -9,6 +9,7 @@ import pytest
 from h2mare.storage.parquet_helpers import (
     aggregate_by_space_time,
     aggregate_by_time,
+    aggregate_by_time_stats,
     polars_float64_to_float32,
     validate_columns,
 )
@@ -101,9 +102,9 @@ class TestAggregateByTime:
         assert len(result) == 1
 
     def test_agg_by_season(self, lf):
-        # Dec is placed into the *next* year's winter (meteorological convention),
-        # so a full Jan-Dec year produces 5 year-season groups. Use Feb-Nov to get
-        # exactly 4 complete seasons without any year-split winter.
+        # Dec and the following Jan/Feb form one winter, so a full Jan-Dec year
+        # spans 5 year-season groups. Use Feb-Nov to get exactly 4 seasons
+        # (Feb is the previous winter's tail).
         dates = pl.date_range(date(2020, 2, 1), date(2020, 11, 30), "1d", eager=True)
         rng = np.random.default_rng(0)
         lf_4s = pl.DataFrame(
@@ -114,6 +115,27 @@ class TestAggregateByTime:
         ).lazy()
         result = aggregate_by_time(lf_4s, "sst", agg_by="season").collect()
         assert len(result) == 4
+
+    def test_season_key_is_chronological_and_labels_winter_by_its_december(self):
+        # One value per season from autumn 2021 to spring 2022. Winter 2021/22
+        # (Dec 2021 - Feb 2022) must be one group keyed 20214: after autumn
+        # 2021 (20213) and before spring 2022 (20221). It used to be keyed
+        # 20224, i.e. sorted and plotted a year late, after autumn 2022's slot.
+        df = pl.DataFrame(
+            {
+                "time": [
+                    date(2021, 10, 1),
+                    date(2021, 12, 15),
+                    date(2022, 1, 15),
+                    date(2022, 2, 15),
+                    date(2022, 4, 1),
+                ],
+                "sst": [3.0, 4.0, 4.0, 4.0, 1.0],
+            }
+        )
+        for fn in (aggregate_by_time, aggregate_by_time_stats):
+            result = fn(df.lazy(), "sst", agg_by="season").collect()
+            assert result["time_agg"].to_list() == [20213, 20214, 20221], fn.__name__
 
     def test_missing_column_raises(self, lf):
         with pytest.raises(ValueError, match="chl"):
