@@ -79,15 +79,6 @@ def calculate_moon_phase(
     return phases
 
 
-def postprocess_sst_fdist(ds: xr.Dataset, var_name: str = "sst_fdist") -> xr.Dataset:
-    """
-    Clip sst_fdist data because interp_like gives negative values
-    """
-    if var_name in ds:
-        ds[var_name] = ds[var_name].clip(min=0)
-    return ds
-
-
 class Compiler:
     """
     Merges the per-variable Zarr stores into the compiled product (``h2ds``).

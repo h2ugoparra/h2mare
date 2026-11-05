@@ -4,17 +4,14 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import msgspec
-import numpy as np
 import pandas as pd
 import pytest
-import xarray as xr
 from loguru import logger
 
 from h2mare.models import AppConfig
 from h2mare.processing.compiler import (
     Compiler,
     calculate_moon_phase,
-    postprocess_sst_fdist,
 )
 from h2mare.types import DateRange
 
@@ -85,40 +82,6 @@ class TestCalculateMoonPhase:
         dates = pd.DatetimeIndex(["2020-01-10"])
         phases = calculate_moon_phase(40.0, -10.0, dates)
         assert phases[0] > 80.0
-
-
-# ---------------------------------------------------------------------------
-# postprocess_sst_fdist
-# ---------------------------------------------------------------------------
-
-
-class TestPostprocessSstFdist:
-    def _make_ds(self, values: np.ndarray) -> xr.Dataset:
-        return xr.Dataset(
-            {"sst_fdist": (["time", "lat", "lon"], values.reshape(1, 2, 2))},
-            coords={
-                "time": pd.date_range("2020-01-01", periods=1, freq="D"),
-                "lat": [30.0, 35.0],
-                "lon": [-10.0, -5.0],
-            },
-        )
-
-    def test_clips_negative_values_to_zero(self):
-        ds = self._make_ds(np.array([-0.5, 1.0, -0.1, 2.0]))
-        result = postprocess_sst_fdist(ds)
-        assert float(result["sst_fdist"].min()) >= 0.0
-
-    def test_positive_values_unchanged(self):
-        ds = self._make_ds(np.array([1.0, 2.0, 3.0, 4.0]))
-        result = postprocess_sst_fdist(ds)
-        np.testing.assert_allclose(
-            result["sst_fdist"].values.ravel(), [1.0, 2.0, 3.0, 4.0]
-        )
-
-    def test_no_op_when_variable_absent(self):
-        ds = xr.Dataset({"sst": (["time"], [1.0, 2.0])})
-        result = postprocess_sst_fdist(ds)
-        assert "sst_fdist" not in result
 
 
 # ---------------------------------------------------------------------------
