@@ -41,10 +41,10 @@ instead.
 Raises `ValueError` if no variables are given, more than 4 are given, or any
 variable is absent from the store.
 
-Seasons are meteorological (DJF, MAM, JJA, SON) and, here, chronological: December
-counts towards the *next* year's winter, so each winter is one contiguous DJF.
-Seasonal values are assigned to the first month of the season (e.g. spring → March
-1st) for plotting purposes.
+Seasons are meteorological (DJF, MAM, JJA, SON) and, here, chronological: each
+winter is one contiguous December–February, labelled by the year it starts in.
+Seasonal values are assigned to the first month of the season for plotting
+purposes (spring → March 1st; winter 2021/22 → 2021-12-01).
 
 ```python
 # Compare SST and chlorophyll at a single grid point
