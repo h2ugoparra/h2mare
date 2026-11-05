@@ -53,6 +53,16 @@ dl.run(start_date="2024-01-01", end_date="2024-12-31")
 
 **Used for:** `fsle`, `eddies`
 
+How it transfers:
+
+- Only `.nc` files in the dataset folder are considered; other files sharing it (AVISO's report PDF) are ignored. A NetCDF file whose name yields no date is skipped with a warning rather than downloaded.
+- Each file is written to a `<name>.part` sidecar and renamed only once its size matches the server's, so a dropped connection never leaves a truncated `.nc` for the convert step to read.
+- A `.part` left by a dropped transfer — this run's or a killed one — is **resumed** with FTP `REST` instead of refetched (the eddy trajectory files take hours on a slow link). Without a remote size the transfer starts over.
+- FTP connections time out after 120 s of silence (`FTP_TIMEOUT_S`), so a dead connection fails and is retried rather than hanging the run.
+- REP and NRT files are fetched into separate staging directories. The download plan (also on `dry_run`) logs the requested range and each file with the dates it covers.
+
+The downloader holds an FTP control connection; `close()` releases it. `PipelineManager` does this for you, and every downloader is a context manager (`with AVISODownloader("fsle") as dl: ...`).
+
 ---
 
 ## CDSDownloader
@@ -100,6 +110,10 @@ Returns `True` when downloads ran, `False` when there was nothing to fetch or on
 |---|---|---|
 | `run(...)` | all | Download data for the given date range (above) |
 | `get_rep_availability()` | CMEMS, AVISO | The `DateRange` the reprocessed (REP) product covers, from the CMEMS catalogue or the FTP listing. Cached after the first call |
+| `get_nrt_availability()` | CMEMS, AVISO | The same for the near-real-time (NRT) product, or `None` when the entry has no `dataset_id_nrt` |
+| `close()` | all | Release any connection the downloader holds (the AVISO FTP session; a no-op for the others) |
+
+`h2mare.downloader` also exports the module-level CMEMS helpers the class uses: `cmems_download_subset(dataset_id, start, end, output_dir, *, variables=None, bbox=None, depth_range=None)` (`copernicusmarine.subset`), `cmems_download_original(dataset_id, start, end, output_dir)` (`copernicusmarine.get`, full files) and `generate_copernicus_patterns(start, end)` (the `get` filename filters for a date range).
 
 ### Date inference
 

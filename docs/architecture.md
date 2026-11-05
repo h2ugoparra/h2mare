@@ -7,8 +7,8 @@ H2MARE is a five-stage pipeline: **Download → Convert → Compile → Index �
 ## Pipeline overview
 
 ```
-CLI (h2mare/cli/main.py)
-  └── PipelineManager
+CLI (h2mare/cli/)  — run · convert · compile · parquet · parquet2zarr · catalog · audit
+  └── PipelineManager                     (`h2mare run`)
         ├── Downloader (CMEMSDownloader | AVISODownloader | CDSDownloader)
         │     └── DOWNLOADER_REGISTRY  (downloader/registry.py)
         ├── Netcdf2Zarr : BaseConverter
@@ -16,17 +16,19 @@ CLI (h2mare/cli/main.py)
         │           ├── ZarrIndex   (catalog persistence + queries)
         │           │     └── ZarrDirectoryScanner  (filesystem I/O + metadata)
         │           └── ZarrReader  (open_dataset: bbox, variables, time)
-        └── Compiler
+        ├── Compiler
+        └── Zarr2Parquet : BaseConverter  (writes through ParquetIndexer)
 
-Zarr2Parquet : BaseConverter         (uses ParquetIndexer)
-Extractor                            (uses ParquetIndexer)
+Extractor                            (reads Zarr through ZarrCatalog — native stores or h2ds)
 convert_parquet_to_csv               (one-way export; reads Parquet directly)
+storage.audit                        (`h2mare audit` — interior gaps in the stores)
 
 ParquetIndexer  (facade)
   ├── ParquetStore   (writes: add_data, overlap resolution, atomic I/O)
   ├── ParquetCatalog (reads: scan, load, coverage queries)
-  └── ParquetPlotter (via catalog.plot)
+  └── ParquetPlotter (via indexer.plot)
         ├── time_series()
+        ├── stats_summary()
         └── spatial_maps()
 ```
 
@@ -47,7 +49,15 @@ Each downloader resolves the date range to fetch (explicit or inferred from the 
 **Class:** `Netcdf2Zarr` (`format_converters/netcdf2zarr.py`) — extends `BaseConverter`  
 **Output:** Zarr stores in `$STORE_ROOT/<local_folder>/`
 
-Raw files are opened with xarray, regridded to a daily time axis, and written (or appended) as chunked Zarr stores. `ZarrCatalog` updates its Parquet index after each write so subsequent runs can resume from where they left off.
+Raw files are opened with xarray and taken through the per-variable steps in this order, then written (or appended) as chunked Zarr stores at the variable's own resolution and cadence (`time_step: daily` or `hourly`):
+
+1. `source_renames` — source names → published names (`analysed_sst` → `sst`)
+2. the var_key's convert-time processor (`processing/registry.py`; unregistered var_keys pass through)
+3. `boa_fronts` and `front_layers` — front layers (the shipped config uses `front_layers` only; see [Front Layers](front-layers.md))
+4. `derived_vars` — rolling std / kinetic energy layers
+5. `apply_cf_attrs` — CF metadata for variables and coordinates
+
+`ZarrCatalog` updates its Parquet index after each write so subsequent runs can resume from where they left off.
 
 ---
 
@@ -65,6 +75,21 @@ Special variables handled outside the general path:
 - **3-D variables** (`o2`, `thetao`, any var_key with `depth_levels`) — each listed variable is sliced at its configured depths before regridding; chosen by config rather than by a registry entry
 
 The `h2ds` store is chunked for **extraction** (time-contiguous: long time block per small spatial tile), which makes point/geometry time series cheap but full-grid single-date reads costly. For interactive visualization, `export_map_zarr` produces a separate **map-optimized** sibling store (`h2ds_map`) chunked the other way — space-contiguous with a small time chunk — so one date's full field reads as a single small chunk. See [Map export](api/map_export.md).
+
+---
+
+## Stage 4 — Index (Parquet)
+
+**Class:** `Zarr2Parquet` (`format_converters/zarr2parquet.py`) — extends `BaseConverter`  
+**Output:** Hive-partitioned Parquet in `PARQUET_DIR` (`$STORE_ROOT/parquet/`, or `data/processed/parquet/` when `STORE_ROOT` is unset)
+
+The compiled `h2ds` store is flattened to long-format rows (`time`, `lat`, `lon`, one column per variable) and written through `ParquetIndexer.add_data`. With no dates it runs incrementally: it appends what h2ds holds past the Parquet store's end, and backfills any column that was appended while its source lagged (`get_var_backfill_start`). `h2mare run` runs this step after compile unless `--no-parquet` (implied by `--no-compile` / `--no-convert`); `h2mare parquet` runs it alone.
+
+---
+
+## Stage 5 — Visualize
+
+`ParquetIndexer.plot` (a [`ParquetPlotter`](api/parquet_plotter.md)) draws time series and climatological maps from the Parquet store; [`h2mare.utils.plot`](api/plotting.md) holds standalone helpers for DataFrames and Zarr fields. Both need the `viz` extra.
 
 ---
 
@@ -106,7 +131,7 @@ of a `var_key`. See [Ad-hoc converters](api/adhoc_converters.md).
 
 ## Extractor
 
-`Extractor` reads h2ds Zarr stores and extracts time series at:
+`Extractor` (`processing/extractor.py`) is a standalone analysis tool, not a pipeline stage. It reads each var_key's own Zarr store through `ZarrCatalog` — or the compiled `h2ds` for hourly var_keys queried at daily cadence, or for any var_key with `read_from="compiled"` (see [Cadence](api/extractor.md#cadence)) — and extracts time series at:
 
 - **Point locations** — from a CSV file with `lat`/`lon`/`time` columns
 - **Geometries** — from a SHP file (polygons or lines)
@@ -148,8 +173,10 @@ Key behaviors (implemented in `ParquetCatalog`):
 
 | Method | Description |
 |---|---|
-| `time_series(var, agg_by)` | Interactive Plotly line chart aggregated over space and time (`day`, `week`, `month`, `season`, `year`) |
-| `spatial_maps(var, agg_by)` | Climatological panel maps — 12 panels for `month`, 4 for `season` — showing the long-term mean at each grid cell |
+| `time_series(var, agg_by)` | Interactive Plotly line chart of up to 4 variables, aggregated over space and time (`day`, `week`, `month`, `season`, `year`) |
+| `stats_summary(var, agg_by)` | One variable's mean, ±1σ band, min/max and LOWESS trends over time |
+| `spatial_maps(var, agg_by=...)` | Climatological panel maps — 12 panels for `month`, 4 for `season` — showing the long-term mean at each grid cell |
+| `show(fig)` | Display a Plotly figure with the toolbar pinned |
 
 Aggregation results are cached internally and cleared when new data is written.
 
