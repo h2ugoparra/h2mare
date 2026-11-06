@@ -68,6 +68,9 @@ processor on each chunk, merges the results with `xr.merge`, and writes via
 The mirror is exact — files the store no longer has are deleted from the backup —
 and skips files that are unchanged since the last backup.
 
+The mirror is `sync_data(backup_dir=None)`, which can also be called on its own to
+refresh a backup without compiling.
+
 Variables with no data for a given chunk are skipped with a warning rather than
 raising an error. Compiling a subset (`var_keys=[...]`) writes only those variables'
 columns; the rest of the store is preserved and catches up on the next full compile.

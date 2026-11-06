@@ -91,8 +91,15 @@ Same as `scan()` but collects and returns a `pl.DataFrame`.
 | Method | Returns | Description |
 |---|---|---|
 | `get_schema()` | `dict[str, pl.DataType]` | Column names and dtypes |
-| `get_time_coverage()` | `DateRange \| None` | Start and end of stored data |
+| `get_time_coverage()` | `DateRange \| None` | First and last date of the stored rows. A frontier, not a completeness check |
+| `get_var_coverage(columns=None)` | `dict[str, DateRange]` | Per column, the span of its *non-null* values — spots a lagging variable whose trailing rows exist but hold only nulls |
+| `get_var_coverage_end(columns)` | `dict[str, datetime]` | Last non-null date per column, read newest partition first and stopping once every column is found (usually one partition). Columns never non-null are omitted |
+| `get_var_backfill_start(columns, not_before=None)` | `dict[str, datetime]` | Earliest date each column has rows but only nulls — an append that landed while the column's source lagged. Drives the incremental backfill of `h2mare parquet` |
 | `get_geoextent()` | `BBox \| None` | Spatial extent of stored data |
+
+Properties: `parquet_root`, `time_col`, `lon_col`, `lat_col`, `physical_schema` (column → dtype as written, excluding Hive partition columns; `None` before the first write), `physical_cols` (columns stored in the files) and `partition_cols` (columns encoded in the directory names).
+
+`ParquetIndexer` is a facade over `ParquetStore` (writes) and `ParquetCatalog` (reads), both in `h2mare.storage`; construct one of those directly when only one side is needed.
 
 ---
 

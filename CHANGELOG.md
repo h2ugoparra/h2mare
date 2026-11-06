@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- AVISO: undated files are skipped when filtering downloads by range (#273).
+- AVISO: dropped FTP transfers resume from a `.part` sidecar with `REST`, and
+  connections time out after 120 s instead of hanging (#274).
+- AVISO: the download plan logs its dates, and non-NetCDF files in a dataset
+  folder (the report PDF) are ignored (#275).
+
+### Documentation
+
+- Docs brought in line with the code: the `thetao` var_key and missing `ssh` /
+  `seapodym` outputs, Stages 4–5 and the convert-step order in Architecture
+  (the Extractor reads Zarr, not Parquet), `H2MARE_LOG_LEVEL`, the current
+  data layout (`STORE_ROOT/parquet`), the retired `sst_fdist` examples, the
+  downloader registry, and the season semantics of `spatial_maps`. New
+  *Package reference* page indexes every exported name without a page of its
+  own; ParquetIndexer, ZarrCatalog and the downloaders list their remaining
+  public methods.
+
 ## [0.10.0] - 2026-10-02
 
 ### Breaking

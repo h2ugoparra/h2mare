@@ -45,7 +45,7 @@ uv sync --dev
 h2mare --help
 ```
 
-Expected output lists the available commands: `run`, `compile`, `convert`, `catalog`
+Expected output lists the available commands: `run`, `convert`, `compile`, `parquet`, `parquet2zarr`, `catalog`, `audit` (see [CLI Reference](cli.md)).
 
 ## First-time setup
 
@@ -91,14 +91,19 @@ $PROJECT_ROOT/
 │   └── downloads/<local_folder>/    # raw NetCDF / GRIB files from downloaders
 ├── data/interim/                    # temporary scratch files (checkpoints, tmp Zarr)
 ├── data/processed/
-│   ├── zarr/<local_folder>/         # per-variable Zarr stores (fallback when STORE_ROOT is not set)
-│   ├── parquet/                     # Hive-partitioned Parquet store
+│   ├── zarr/                        # Zarr stores when STORE_ROOT is unset (FALLBACK_STORE_ROOT); also the default Zarr backup root (ZARR_BACKUP_DIR)
+│   ├── parquet/                     # Parquet store when STORE_ROOT is unset; also the default Parquet backup root (PARQUET_BACKUP_DIR)
 │   └── metadata/                    # ZarrCatalog Parquet indices
 └── logs/                            # pipeline log files
 
-$STORE_ROOT/<local_folder>/          # per-variable Zarr stores (when STORE_ROOT is set)
+$STORE_ROOT/
+├── <local_folder>/                  # per-variable Zarr stores (and h2ds)
+├── parquet/                         # Hive-partitioned Parquet store (PARQUET_DIR)
+└── Climatology/                     # climatologies (e.g. the Ekman one)
 ```
 
-`local_folder` is defined per variable in `config.yaml` (e.g. `CMEMS_SST`, `CMEMS_SSH`). When `STORE_ROOT` is set, Zarr output goes there; otherwise it falls back to `data/processed/zarr/`.
+`local_folder` is defined per variable in `config.yaml` (e.g. `CMEMS_SST`, `CMEMS_SSH`); a variable may also name its own `store_root` (see [Where a variable's store lives](configuration.md#where-a-variables-store-lives)). When `STORE_ROOT` is set, the Zarr and Parquet stores go there; otherwise they fall back to `data/processed/`. Backups (`--h2ds-zarr-backup`, `--h2ds-parquet-backup`) are off by default.
+
+`print(get_settings())` (or `get_settings().describe_paths()`) lists every resolved path, grouped as stores, local workspace and local backups, with where the project root and `STORE_ROOT` came from.
 
 These directories are created on first write, not at import — so a project root only grows the branches it actually uses. Call `get_settings().ensure_directories()` to scaffold the whole tree up front.
