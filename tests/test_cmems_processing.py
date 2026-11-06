@@ -75,8 +75,8 @@ class TestProcessSst:
         np.testing.assert_allclose(result["sst"].values, 300.0 - 273.15, rtol=1e-4)
 
     def test_leaves_the_derived_layers_to_config(self):
-        """sst_std comes from derived_vars and sst_fdist from boa_fronts; both
-        are applied after the processor, by the convert step."""
+        """sst_std comes from derived_vars and the front layers from
+        front_layers; both are applied after the processor, by the convert step."""
         result = process_sst(self._make_ds())
         assert set(map(str, result.data_vars)) == {"sst"}
 

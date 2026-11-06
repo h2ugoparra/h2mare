@@ -245,7 +245,6 @@ Every processor ends in the regrid above.
 | `atm-accum-avg` | `_compile_atm_accum_avg` | A daily store already holds the Ekman features. An hourly store holds raw stress and precipitation, so the whole Ekman chain runs here, in memory-bounded slabs. `dayofyear`/`month`/`quantile` coordinates dropped before merge |
 | `atm-instante` | `_compile_atm_instante` | An hourly store is reduced to its daily aggregates here (wind, cloud, pressure); a daily store is only regridded |
 | `waves` | `_compile_waves` | Reduced to daily if the store is hourly; `mdts` regridded through its unit-vector components |
-| `sst` | `_compile_sst` | `sst_fdist` clipped to ≥ 0, then regridded |
 | any var_key with `depth_levels` | `_compile_depth_var` | Each listed 3-D variable sliced at its configured depths (`thetao_0`, `o2_100`, …) before regridding; hourly 3-D stores are refused |
 | anything else | `compile_default` | Opened from its catalog, reduced to a daily **mean** if the store is hourly, regridded. Refuses a store that still has a depth axis. An accumulated hourly variable needs its own processor, since a mean of accumulations is plausible-looking and wrong |
 
