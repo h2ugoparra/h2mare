@@ -264,6 +264,35 @@ class TestStatsSummary:
         assert "Statistics Summary" in fig.layout.title.text
 
 
+class TestSeasonPlotDate:
+    def test_winter_is_plotted_at_the_december_it_starts_in(self):
+        # Dec 2021 - Feb 2022 must sit at 2021-12-01, between autumn 2021 and
+        # spring 2022 — it used to land on 2022-12-01, a year late.
+        from datetime import date
+
+        from h2mare.storage.parquet_helpers import aggregate_by_time
+
+        lf = pl.DataFrame(
+            {
+                "time": [
+                    date(2021, 10, 1),
+                    date(2021, 12, 15),
+                    date(2022, 2, 15),
+                    date(2022, 4, 1),
+                ],
+                "sst": [3.0, 4.0, 4.0, 1.0],
+            }
+        ).lazy()
+        result = ParquetPlotter._add_season_plot_date(
+            aggregate_by_time(lf, "sst", agg_by="season")
+        ).collect()
+        assert result["time_plot"].dt.date().to_list() == [
+            date(2021, 9, 1),
+            date(2021, 12, 1),
+            date(2022, 3, 1),
+        ]
+
+
 # ---------------------------------------------------------------------------
 # show / PLOT_CONFIG
 # ---------------------------------------------------------------------------

@@ -41,7 +41,7 @@ class ParquetPlotter:
 
     Example:
         >>> indexer.plot.time_series("sst", agg_by="month")
-        >>> indexer.plot.monthly_map("sst")
+        >>> indexer.plot.spatial_maps("sst", agg_by="season")
     """
 
     # Render config for the interactive (Plotly) figures. ``displayModeBar``
@@ -109,6 +109,9 @@ class ParquetPlotter:
 
         Seasons are anchored to the first month of each meteorological season
         (spring → March, summer → June, autumn → September, winter → December).
+        The key's year is the year the season starts in (see
+        ``parquet_helpers._season_key``), so ``YYYY4`` — Dec ``YYYY`` to Feb
+        ``YYYY+1`` — lands on ``YYYY-12-01``.
         """
         return result.with_columns(
             time_plot=pl.datetime(
@@ -190,7 +193,7 @@ class ParquetPlotter:
 
         Note:
             Seasonal values are assigned to the first month of the respective season
-            (e.g. spring → March 1st).
+            (e.g. spring → March 1st); a winter (DJF) sits at the December it starts in.
 
         Raises:
             ValueError: If no variables are given, more than 4 are given, or any
@@ -323,7 +326,8 @@ class ParquetPlotter:
 
         Note:
             Seasonal values are assigned to the first month of the respective season
-            (e.g. spring → March 1st). ``std`` is ``null`` for buckets with a single
+            (e.g. spring → March 1st); a winter (DJF) sits at the December it starts
+            in. ``std`` is ``null`` for buckets with a single
             observation; Plotly renders those as gaps in the shaded band.
 
         Returns:
