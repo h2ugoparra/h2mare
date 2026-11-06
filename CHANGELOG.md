@@ -7,13 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.1] - 2026-11-06
+
 ### Fixed
 
+- Seasonal `time_series` and `stats_summary` plotted each winter a year late:
+  December–February was labelled by the year it ends but drawn at that year's
+  December, after the following spring, summer and autumn. Winters are now
+  labelled by the year they start and plotted at their own December, in order
+  (#277).
 - AVISO: undated files are skipped when filtering downloads by range (#273).
 - AVISO: dropped FTP transfers resume from a `.part` sidecar with `REST`, and
   connections time out after 120 s instead of hanging (#274).
 - AVISO: the download plan logs its dates, and non-NetCDF files in a dataset
   folder (the report PDF) are ignored (#275).
+
+### Removed
+
+- The `sst` compile processor and `postprocess_sst_fdist`, which clipped the
+  retired `sst_fdist` layer; `sst` now compiles through `compile_default` (#278).
 
 ### Documentation
 
@@ -787,6 +799,7 @@ anyone running 0.3.x or earlier should upgrade.
 - Numerous correctness fixes in the fronts processor, FSLE processing
   (bbox handling), extraction (NaN coordinates), and Parquet schema unioning.
 
+[0.10.1]: https://github.com/h2ugoparra/h2mare/compare/v0.10.0...v0.10.1
 [0.10.0]: https://github.com/h2ugoparra/h2mare/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/h2ugoparra/h2mare/compare/v0.8.1...v0.9.0
 [0.8.1]: https://github.com/h2ugoparra/h2mare/compare/v0.8.0...v0.8.1
