@@ -9,10 +9,11 @@ All variables configured in `config.yaml`. Each key maps to one data stream with
 | Key | Source | Provider | NRT | Output variables |
 |---|---|---|---|---|
 | `sst` | CMEMS | Satellite L4 | yes | `sst`, `analysis_error`, `sst_std`, `sst_grad`, `sst_ffreq30`, `sst_pdist30` |
-| `ssh` | CMEMS | Satellite L4 | yes | `adt`, `sla`, `ugos`, `vgos`, `gke` |
+| `ssh` | CMEMS | Satellite L4 | yes | `adt`, `sla`, `ugos`, `vgos`, `adt_std`, `sla_std`, `gke` |
 | `mld` | CMEMS | Model (NEMO) | no | `mld` |
+| `thetao` | CMEMS | Model (NEMO) | no | `thetao_100`, `thetao_200`, `thetao_500`, `thetao_1000` |
 | `chl` | CMEMS | Satellite L4 | no | `chl`, `chl_grad`, `chl_ffreq30`, `chl_pdist30` |
-| `seapodym` | CMEMS | Model (SEAPODYM) | no | `mnkc_epi`, `mnkc_umeso`, `mnkc_mumeso`, `npp`, `zooc`, `zeu` |
+| `seapodym` | CMEMS | Model (SEAPODYM) | no | `mnkc_epi`, `mnkc_umeso`, `mnkc_mumeso`, `mnkc_lmeso`, `mnkc_hmlmeso`, `mnkc_mlmeso`, `npp`, `zooc`, `zeu` |
 | `o2` | CMEMS | Model (PISCES) | no | `o2_0`, `o2_100`, `o2_500`, `o2_1000` |
 | `fsle` | AVISO | FTP | yes | `fsle_max` |
 | `eddies` | AVISO | FTP | yes | eddy geometry and track fields |
@@ -35,12 +36,17 @@ All variables configured in `config.yaml`. Each key maps to one data stream with
 - **Dataset (rep):** `cmems_obs-sl_glo_phy-ssh_my_allsat-l4-duacs-0.125deg_P1D`
 - **Dataset (nrt):** `cmems_obs-sl_glo_phy-ssh_nrt_allsat-l4-duacs-0.125deg_P1D`
 - **Resolution:** 0.125°, area-averaged onto the 0.25° grid
-- **Variables:** ADT (m), SLA (m), geostrophic velocities u/v (m s⁻¹), geostrophic kinetic energy (m² s⁻²)
+- **Variables:** ADT (m), SLA (m), geostrophic velocities u/v (m s⁻¹), 3×3 rolling std of ADT and SLA (m), geostrophic kinetic energy (m² s⁻²) — the std and kinetic-energy layers are declared in `derived_vars`
 
 ### `mld` — Mixed Layer Depth
 - **Dataset (rep):** `cmems_mod_glo_phy_my_0.083deg_P1D-m`
 - **Resolution:** 0.083°, area-averaged onto the 0.25° grid
 - **Variables:** mixed layer depth (m) — depth where density increase corresponds to a 0.2 °C temperature decrease relative to 10 m
+
+### `thetao` — Ocean Potential Temperature
+- **Dataset (rep):** `cmems_mod_glo_phy_my_0.083deg_P1D-m`
+- **Resolution:** 0.083°, area-averaged onto the 0.25° grid
+- **Variables:** potential temperature (°C) at 100, 200, 500 and 1000 m depth (`compile_depth_slices`; downloaded over `depth_range: [0, 1000]`)
 
 ### `chl` — Chlorophyll-a
 - **Dataset (rep):** `cmems_obs-oc_glo_bgc-plankton_my_l4-gapfree-multi-4km_P1D`
@@ -49,7 +55,7 @@ All variables configured in `config.yaml`. Each key maps to one data stream with
 
 ### `seapodym` — Micronekton (SEAPODYM)
 - **Dataset (rep):** `cmems_mod_glo_bgc_my_0.083deg-lmtl_P1D-i`
-- **Variables:** epipelagic, upper/migrant mesopelagic micronekton (g m⁻²); net primary productivity (mg m⁻² day⁻¹); zooplankton carbon (g m⁻²); euphotic depth (m)
+- **Variables:** epipelagic, upper, migrant upper, lower, migrant lower and highly migrant lower mesopelagic micronekton (g m⁻²); net primary productivity (mg m⁻² day⁻¹); zooplankton carbon (g m⁻²); euphotic depth (m)
 
 ### `o2` — Dissolved Oxygen
 - **Dataset (rep):** `cmems_mod_glo_bgc_my_0.25deg_P1D-m`

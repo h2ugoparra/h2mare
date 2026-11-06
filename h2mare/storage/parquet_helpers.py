@@ -16,6 +16,35 @@ SEASON_INDEX = {
 }
 
 
+def _season_key(time_col: str) -> pl.Expr:
+    """
+    Chronological ``YYYYS`` key of each row's meteorological season.
+
+    ``S`` is 1 spring (MAM), 2 summer (JJA), 3 autumn (SON), 4 winter (DJF), and
+    ``YYYY`` is the year the season *starts* in — so a winter is labelled by its
+    December, and January/February belong to the previous year's winter. That
+    keeps the key sorting in time order (``20213`` autumn 2021 < ``20214``
+    winter 2021/22 < ``20221`` spring 2022) and lets a plot anchor each season
+    at its first month in that year (winter → ``YYYY-12-01``).
+    """
+    month = pl.col(time_col).dt.month()
+    season = (
+        pl.when(month.is_in([12, 1, 2]))
+        .then(4)
+        .when(month.is_in([3, 4, 5]))
+        .then(1)
+        .when(month.is_in([6, 7, 8]))
+        .then(2)
+        .otherwise(3)
+    )
+    year = (
+        pl.when(month.is_in([1, 2]))
+        .then(pl.col(time_col).dt.year() - 1)
+        .otherwise(pl.col(time_col).dt.year())
+    )
+    return year * 10 + season
+
+
 def polars_float64_to_float32(df: pl.DataFrame) -> pl.DataFrame:
     """Converts dtype column from float64 to float32"""
 
@@ -145,24 +174,7 @@ def aggregate_by_time(
         lf2 = lf.with_columns(pl.col(time_col).dt.truncate("1y").alias(key))
     elif agg_by == "season":
         key = "season"
-
-        SEASON_EXPR = (
-            pl.when(pl.col(time_col).dt.month().is_in([12, 1, 2]))
-            .then(4)
-            .when(pl.col(time_col).dt.month().is_in([3, 4, 5]))
-            .then(1)
-            .when(pl.col(time_col).dt.month().is_in([6, 7, 8]))
-            .then(2)
-            .otherwise(3)
-        )
-
-        YEAR_EXPR = (
-            pl.when(pl.col(time_col).dt.month() == 12)
-            .then(pl.col(time_col).dt.year() + 1)
-            .otherwise(pl.col(time_col).dt.year())
-        )
-
-        lf2 = lf.with_columns(season=YEAR_EXPR * 10 + SEASON_EXPR)
+        lf2 = lf.with_columns(season=_season_key(time_col))
     else:
         raise ValueError(f"Unsupported aggregation: {agg_by}")
 
@@ -214,24 +226,7 @@ def aggregate_by_time_stats(
         lf2 = lf.with_columns(pl.col(time_col).dt.truncate("1y").alias(key))
     elif agg_by == "season":
         key = "season"
-
-        SEASON_EXPR = (
-            pl.when(pl.col(time_col).dt.month().is_in([12, 1, 2]))
-            .then(4)
-            .when(pl.col(time_col).dt.month().is_in([3, 4, 5]))
-            .then(1)
-            .when(pl.col(time_col).dt.month().is_in([6, 7, 8]))
-            .then(2)
-            .otherwise(3)
-        )
-
-        YEAR_EXPR = (
-            pl.when(pl.col(time_col).dt.month() == 12)
-            .then(pl.col(time_col).dt.year() + 1)
-            .otherwise(pl.col(time_col).dt.year())
-        )
-
-        lf2 = lf.with_columns(season=YEAR_EXPR * 10 + SEASON_EXPR)
+        lf2 = lf.with_columns(season=_season_key(time_col))
     else:
         raise ValueError(f"Unsupported aggregation: {agg_by}")
 

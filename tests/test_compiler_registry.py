@@ -19,7 +19,6 @@ from h2mare.processing.compiler_registry import (
     _compile_bathy,
     _compile_depth_var,
     _compile_moon,
-    _compile_sst,
     compile_default,
 )
 from h2mare.processing.core.cds import _EKMAN_WARMUP_DAYS
@@ -94,8 +93,9 @@ class TestCompileProcessorsRegistry:
     def test_contains_atm_accum_avg(self):
         assert "atm-accum-avg" in COMPILE_PROCESSORS
 
-    def test_contains_sst(self):
-        assert "sst" in COMPILE_PROCESSORS
+    def test_sst_uses_the_default_processor(self):
+        # Its only special case was clipping the retired sst_fdist layer.
+        assert "sst" not in COMPILE_PROCESSORS
 
     def test_all_values_are_callable(self):
         for key, fn in COMPILE_PROCESSORS.items():
@@ -902,50 +902,6 @@ class TestCompileRadiationHourly:
         assert out is not None
         last = float(out["ssrd"].isel(time=-1).mean())
         assert last > 700.0, "reading only 00:00 of the last day would give 200"
-
-
-# ---------------------------------------------------------------------------
-# _compile_sst
-# ---------------------------------------------------------------------------
-
-
-class TestCompileSst:
-    def test_returns_none_when_data_missing(self, tmp_path):
-        compiler = _make_compiler(tmp_path)
-        catalog = _make_catalog(None)
-        result = _compile_sst(compiler, catalog, _DR)
-        assert result is None
-
-    def test_calls_postprocess_sst_fdist(self, tmp_path):
-        compiler = _make_compiler(tmp_path)
-        catalog = _make_catalog(_daily_ds("sst", _DATES))
-
-        with patch(
-            "h2mare.processing.compiler_registry._compile_sst.__module__",
-            create=True,
-        ):
-            with patch(
-                "h2mare.processing.compiler.postprocess_sst_fdist",
-                wraps=lambda ds, **kw: ds,
-            ) as mock_post:
-                _compile_sst(compiler, catalog, _DR)
-
-        mock_post.assert_called_once()
-
-    def test_clips_negative_sst_fdist_values(self, tmp_path):
-        compiler = _make_compiler(tmp_path)
-        ds = _daily_ds("sst", _DATES)
-        ds["sst_fdist"] = xr.DataArray(
-            np.array([-1.0, 0.5, -0.2, 1.0]).reshape(1, 2, 2),
-            dims=["time", "lat", "lon"],
-            coords={"time": _DATES[:1], "lat": [30.0, 30.25], "lon": [-10.0, -9.75]},
-        )
-        # Use only 1 date to keep shape consistent
-        ds = ds.isel(time=slice(0, 1))
-        catalog = _make_catalog(ds)
-        result = _compile_sst(compiler, catalog, _DR)
-        assert result is not None
-        assert float(result["sst_fdist"].min()) >= 0.0
 
 
 # ---------------------------------------------------------------------------

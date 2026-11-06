@@ -7,6 +7,8 @@ idx.plot.time_series("sst", agg_by="month")
 idx.plot.spatial_maps("sst", agg_by="season")
 ```
 
+In every method, the arguments after `agg_by` (and `agg_by` itself in `spatial_maps()`) are keyword-only.
+
 ---
 
 ## `time_series()`
@@ -39,7 +41,10 @@ instead.
 Raises `ValueError` if no variables are given, more than 4 are given, or any
 variable is absent from the store.
 
-Seasonal values are assigned to the first month of the season (e.g. spring → March 1st) for plotting purposes.
+Seasons are meteorological (DJF, MAM, JJA, SON) and, here, chronological: each
+winter is one contiguous December–February, labelled by the year it starts in.
+Seasonal values are assigned to the first month of the season for plotting
+purposes (spring → March 1st; winter 2021/22 → 2021-12-01).
 
 ```python
 # Compare SST and chlorophyll at a single grid point
@@ -97,6 +102,14 @@ idx.plot.spatial_maps(
 ```
 
 Climatological panel maps — 12 panels for `agg_by="month"`, 4 for `agg_by="season"`. Each panel shows the long-term mean at every grid cell across all years in the selected data.
+
+Unlike `time_series()`, seasons here are grouped by **calendar month alone**: `winter`
+pools every December, January and February in `dates`, whatever their year. Over
+many years that is the usual DJF climatology. Over a single calendar year
+(`("2021-01-01", "2021-12-31")`) it mixes the end of one winter with the start of
+the next — pass a season-aligned window (`("2020-12-01", "2021-11-30")`) for one
+contiguous winter. The mean is over all daily rows in the group, so months weigh
+by their number of days.
 
 | Parameter | Description |
 |---|---|

@@ -99,6 +99,39 @@ class TestNothingToDownloadMessage:
         assert "WARNING|'fsle': requested 1994-01-01 to 1994-01-31" in text
 
 
+class TestDownloadPlanLogging:
+    def test_dry_run_logs_each_task_with_its_dates(self, dl):
+        from loguru import logger
+
+        tasks = [
+            FTPDownloadTask(filepath="2022/fsle_20220209.nc", source="rep"),
+            FTPDownloadTask(filepath="fsle_20261019.nc", source="nrt"),
+        ]
+        rep = DateRange("2010-01-01", "2022-02-09")
+        messages: list[str] = []
+        sink = logger.add(messages.append, level="DEBUG", format="{message}")
+        try:
+            with (
+                patch.object(dl, "_create_download_tasks", return_value=tasks),
+                patch.object(dl, "get_rep_availability", return_value=rep),
+                patch.object(dl, "_warn_if_rep_updated"),
+            ):
+                assert dl.run("2022-02-01", "2026-10-30", dry_run=True) is False
+        finally:
+            logger.remove(sink)
+
+        text = "".join(messages)
+        assert "Created 2 download task(s) for 2022-02-01 to 2026-10-30" in text
+        assert (
+            "Download task (rep): 2022/fsle_20220209.nc "
+            "covering 2022-02-09 to 2022-02-09" in text
+        )
+        assert (
+            "Download task (nrt): fsle_20261019.nc "
+            "covering 2026-10-19 to 2026-10-19" in text
+        )
+
+
 class TestGetRepAvailability:
     def test_calls_get_dataset_files_with_rep_id(self, dl):
         fake_files = ["rep/file1.nc", "rep/file2.nc"]
@@ -568,7 +601,7 @@ class TestDownloadParallelCollectsFailures:
             ftp = MagicMock()
             ftp.size.side_effect = Exception("no size")
 
-            def _retr(cmd, _callback):
+            def _retr(cmd, _callback, rest=None):
                 path = cmd.split(" ", 1)[1]
                 if path in bad:
                     raise OSError(f"connection reset for {path}")
@@ -612,6 +645,139 @@ class TestDownloadParallelCollectsFailures:
 
         assert not (tmp_path / "b.nc").exists()
         assert not (tmp_path / "b.nc.part").exists()
+
+
+# ---------------------------------------------------------------------------
+# Resuming a dropped transfer
+#
+# The eddies NRT trajectory files are ~1.7 GB each; on a slow link one takes
+# hours, and a dropped connection used to throw the .part away and start the
+# retry from byte 0.
+# ---------------------------------------------------------------------------
+
+_REMOTE = bytes(range(256)) * 4  # 1024 bytes
+
+
+def _fake_ftp(content: bytes = _REMOTE, cut_at: int | None = None, size=True):
+    """FTP mock serving *content*, honouring REST; the first RETR dies at *cut_at*."""
+    ftp = MagicMock()
+    state = {"calls": 0}
+    if size:
+        ftp.size.return_value = len(content)
+    else:
+        ftp.size.side_effect = Exception("no size")
+
+    def _retr(cmd, callback, rest=None):
+        state["calls"] += 1
+        data = content[rest or 0 :]
+        if cut_at is not None and state["calls"] == 1:
+            callback(data[:cut_at])
+            raise TimeoutError("timed out")
+        for i in range(0, len(data), 100):
+            callback(data[i : i + 100])
+
+    ftp.retrbinary.side_effect = _retr
+    return ftp
+
+
+def _retry_without_sleep(fn, *args, max_attempts=3, **_kw):
+    for attempt in range(max_attempts):
+        try:
+            return fn(*args)
+        except Exception:
+            if attempt == max_attempts - 1:
+                raise
+
+
+class TestResumeTransfer:
+    def test_retry_resumes_from_the_part_file(self, dl, tmp_path):
+        ftp = _fake_ftp(cut_at=300)
+        with (
+            patch.object(dl, "connect_ftp", return_value=ftp),
+            patch.object(dl, "_retry_call", side_effect=_retry_without_sleep),
+        ):
+            failed = dl.download_parallel(
+                ["a.nc"], dataset_id="/d", output_dir=tmp_path
+            )
+
+        assert failed == []
+        assert (tmp_path / "a.nc").read_bytes() == _REMOTE
+        assert ftp.retrbinary.call_args_list[1].kwargs["rest"] == 300
+
+    def test_part_left_by_a_killed_run_is_resumed(self, dl, tmp_path):
+        (tmp_path / "a.nc.part").write_bytes(_REMOTE[:500])
+        ftp = _fake_ftp()
+        with patch.object(dl, "connect_ftp", return_value=ftp):
+            dl.download_parallel(["a.nc"], dataset_id="/d", output_dir=tmp_path)
+
+        assert (tmp_path / "a.nc").read_bytes() == _REMOTE
+        assert ftp.retrbinary.call_args.kwargs["rest"] == 500
+
+    def test_failed_transfer_keeps_the_part_for_the_next_run(self, dl, tmp_path):
+        ftp = _fake_ftp(cut_at=300)
+        with (
+            patch.object(dl, "connect_ftp", return_value=ftp),
+            patch.object(dl, "_retry_call", side_effect=lambda fn, *a, **kw: fn(*a)),
+        ):
+            failed = dl.download_parallel(
+                ["a.nc"], dataset_id="/d", output_dir=tmp_path
+            )
+
+        assert failed == ["a.nc"]
+        assert not (tmp_path / "a.nc").exists()
+        assert (tmp_path / "a.nc.part").read_bytes() == _REMOTE[:300]
+
+    def test_complete_part_is_renamed_without_a_transfer(self, dl, tmp_path):
+        (tmp_path / "a.nc.part").write_bytes(_REMOTE)
+        ftp = _fake_ftp()
+        with patch.object(dl, "connect_ftp", return_value=ftp):
+            dl.download_parallel(["a.nc"], dataset_id="/d", output_dir=tmp_path)
+
+        assert (tmp_path / "a.nc").read_bytes() == _REMOTE
+        ftp.retrbinary.assert_not_called()
+
+    def test_part_longer_than_the_remote_file_restarts(self, dl, tmp_path):
+        (tmp_path / "a.nc.part").write_bytes(b"x" * 2000)
+        ftp = _fake_ftp()
+        with patch.object(dl, "connect_ftp", return_value=ftp):
+            dl.download_parallel(["a.nc"], dataset_id="/d", output_dir=tmp_path)
+
+        assert (tmp_path / "a.nc").read_bytes() == _REMOTE
+        assert ftp.retrbinary.call_args.kwargs["rest"] is None
+
+    def test_without_a_remote_size_the_part_is_not_resumed(self, dl, tmp_path):
+        (tmp_path / "a.nc.part").write_bytes(b"stale")
+        ftp = _fake_ftp(size=False)
+        with patch.object(dl, "connect_ftp", return_value=ftp):
+            dl.download_parallel(["a.nc"], dataset_id="/d", output_dir=tmp_path)
+
+        assert (tmp_path / "a.nc").read_bytes() == _REMOTE
+
+    def test_size_mismatch_discards_the_result(self, dl, tmp_path):
+        """A server that ignores REST resends from 0, doubling the prefix."""
+        (tmp_path / "a.nc.part").write_bytes(_REMOTE[:500])
+        ftp = _fake_ftp()
+        ftp.retrbinary.side_effect = lambda cmd, cb, rest=None: cb(_REMOTE)
+        with patch.object(dl, "_retry_call", side_effect=lambda fn, *a, **kw: fn(*a)):
+            with patch.object(dl, "connect_ftp", return_value=ftp):
+                failed = dl.download_parallel(
+                    ["a.nc"], dataset_id="/d", output_dir=tmp_path
+                )
+
+        assert failed == ["a.nc"]
+        assert not (tmp_path / "a.nc").exists()
+        assert not (tmp_path / "a.nc.part").exists()
+
+    def test_connection_has_a_socket_timeout(self, tmp_path):
+        with patch("h2mare.downloader.aviso_downloader.FTP") as ftp_cls:
+            AVISODownloader(
+                "fsle",
+                app_config=_make_app_config(_ENTRY),
+                store_root=tmp_path,
+                download_root=tmp_path,
+            )
+
+        assert ftp_cls.call_args.kwargs["timeout"] == 120
 
 
 # ---------------------------------------------------------------------------
@@ -716,3 +882,56 @@ class TestListing:
         with patch.object(type(dl), "adjust_ftp_path_to_dataset"):
             with pytest.raises(RuntimeError):
                 dl.get_rep_availability()
+
+    def test_dataset_files_leave_out_non_data_files(self, dl):
+        """Regression: AVISO's report PDF warned on every scan of the REP folder."""
+        from loguru import logger
+
+        dl.ftp.mlsd = _fake_mlsd(
+            {"fsle_20200101.nc": None, "report_20200101.pdf": None}
+        )
+        messages: list[str] = []
+        sink = logger.add(messages.append, level="WARNING", format="{message}")
+        try:
+            files = dl._get_dataset_files("/dataset/fsle/rep")
+            dl._get_dataset_availability(files)
+        finally:
+            logger.remove(sink)
+
+        assert files == ["fsle_20200101.nc"]
+        assert messages == []
+
+    def test_undated_netcdf_still_warns(self, dl):
+        from loguru import logger
+
+        dl.ftp.mlsd = _fake_mlsd({"fsle_20200101.nc": None, "fsle_latest.nc": None})
+        messages: list[str] = []
+        sink = logger.add(messages.append, level="WARNING", format="{message}")
+        try:
+            dl._get_dataset_availability(dl._get_dataset_files("/dataset/fsle/rep"))
+        finally:
+            logger.remove(sink)
+
+        assert "".join(messages).startswith("Could not extract date from file: fsle_l")
+
+
+class TestFilterFilesByRange:
+    def test_undated_file_in_listing_is_skipped(self, tmp_path):
+        """
+        Regression: AVISO added META3.2_DT_allsat_report.pdf to the eddies REP
+        folder. Availability skipped it with a warning, but filtering raised
+        "No valid dates found in filenames" and aborted the download.
+        """
+        with patch.object(AVISODownloader, "connect_ftp", return_value=MagicMock()):
+            dl = AVISODownloader(
+                "eddies",
+                app_config=_eddies_app_config(),
+                store_root=tmp_path,
+                download_root=tmp_path,
+            )
+        files = [
+            "META3.2_DT_allsat_Anticyclonic_long_19930101_20220209.nc",
+            "META3.2_DT_allsat_report.pdf",
+        ]
+        window = DateRange(pd.Timestamp("2022-01-01"), pd.Timestamp("2022-02-09"))
+        assert dl._filter_files_by_range(files, window) == files[:1]

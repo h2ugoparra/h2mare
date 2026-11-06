@@ -31,11 +31,11 @@ def process_chl(
     var_key: str | None = None,
 ) -> xr.Dataset:
     """
-    Prepare the chlorophyll dataset for its front-distance layer.
+    Prepare the chlorophyll dataset for its front layers.
 
     ``CHL`` → ``chl`` is config's (``source_renames``), applied before this
-    runs. ``chl_fdist`` is declared in config too (``boa_fronts``) and detected
-    after this returns; the chunking here is what the detection stages from.
+    runs. The front layers are declared in config too (``front_layers``) and
+    detected after this returns; the chunking here is what the detection reads.
     """
     return ds.astype("float32").chunk({"time": 1, "lat": 500, "lon": 500})
 
@@ -49,8 +49,8 @@ def process_sst(
     Convert sea surface temperature from kelvin to degrees Celsius.
 
     ``analysed_sst`` → ``sst`` is config's (``source_renames``), applied before
-    this runs. ``sst_std`` and ``sst_fdist`` are declared in config too —
-    ``derived_vars`` and ``boa_fronts`` — and computed after this returns.
+    this runs. ``sst_std`` and the front layers are declared in config too —
+    ``derived_vars`` and ``front_layers`` — and computed after this returns.
     """
     _var = "sst"
     ds[_var] = (

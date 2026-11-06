@@ -85,11 +85,13 @@ convert_netcdf_to_zarr(
 )
 ```
 
-Only the processor runs: the `derived_vars` and `boa_fronts` layers a var_key
-declares (`sst_std`, `sst_fdist`) are config-driven steps of `Netcdf2Zarr` and are
-not computed here. Call `apply_derived_vars` (`h2mare.processing.derived`) or
-`apply_boa_fronts` (`h2mare.processing.core.fronts`) in the callable too if you
-need them.
+Only the processor runs: the `front_layers` and `derived_vars` a var_key declares
+(`sst_grad`, `sst_ffreq30`, `sst_std`) are config-driven steps of `Netcdf2Zarr` and
+are not computed here. Call `apply_derived_vars` (`h2mare.processing.derived`) in
+the callable too if you need them. `apply_front_layers`
+(`h2mare.processing.core.front_layers`) can be called the same way, but without the
+store's earlier front masks the frequency of the first days covers only the data
+in hand.
 
 ---
 

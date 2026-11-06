@@ -380,6 +380,8 @@ uv run h2mare parquet --start-date 2025-06-01 --end-date 2025-06-30
 
 Valid values for `-v / --vars`:
 
-`sst` `ssh` `mld` `chl` `seapodym` `o2` `fsle` `eddies` `atm-instante` `atm-accum-avg` `radiation` `waves`
+`sst` `ssh` `mld` `thetao` `chl` `seapodym` `o2` `fsle` `eddies` `atm-instante` `atm-accum-avg` `radiation` `waves`
+
+These are the downloaded var_keys of the shipped `config.yaml`; any key you add there is valid too. `bathy` and `moon` are compile-only (never downloaded or converted), and `h2ds` is the compiled output.
 
 See [Variables](variables.md) for descriptions and source details.

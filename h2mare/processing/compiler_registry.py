@@ -568,20 +568,6 @@ def _compile_waves(
     return out.drop_vars(["u_ts", "v_ts"])
 
 
-def _compile_sst(
-    compiler: Compiler,
-    catalog: ZarrCatalog | None,
-    date_range: DateRange,
-) -> xr.Dataset | None:
-    from h2mare.processing.compiler import postprocess_sst_fdist
-
-    ds = _open_or_warn(catalog, "sst", date_range, compiler.var_config.bbox)
-    if ds is None:
-        return None
-    ds = postprocess_sst_fdist(ds)
-    return _to_base_grid(compiler, ds, "sst")
-
-
 # ---------------------------------------------------------------------------
 # Default processor (open from catalog + interp to base grid)
 # ---------------------------------------------------------------------------
@@ -658,6 +644,5 @@ COMPILE_PROCESSORS: dict[str, CompileProcessor] = {
     "moon": _compile_moon,
     "atm-accum-avg": _compile_atm_accum_avg,
     "atm-instante": _compile_atm_instante,
-    "sst": _compile_sst,
     "waves": _compile_waves,
 }
