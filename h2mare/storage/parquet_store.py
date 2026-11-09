@@ -621,7 +621,10 @@ class ParquetStore:
                     # rows that exist only in the stored partition.
                     df_part = df_part.with_columns(pl.lit(True).alias("__h2m_from_new"))
                 conn.register("df_new", df_part)
-                merged = conn.execute(
+                # conn.sql(...).pl(), not conn.execute(...).pl(): DuckDB 2.0
+                # dropped .pl() from the connection execute() returns. The
+                # relation form works on 1.x and 2.x alike.
+                merged = conn.sql(
                     f"""
                     WITH existing AS (
                         SELECT *{exclude_clause}{alias_sql}
