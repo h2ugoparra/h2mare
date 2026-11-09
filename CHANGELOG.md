@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `SECURITY.md`: supported versions, private vulnerability reporting through
+  GitHub Security Advisories, response targets and scope.
+
 ## [0.10.1] - 2026-11-06
 
 ### Fixed
