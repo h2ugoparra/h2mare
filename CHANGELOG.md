@@ -12,6 +12,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `SECURITY.md`: supported versions, private vulnerability reporting through
   GitHub Security Advisories, response targets and scope.
 
+### Security
+
+- `uv.lock`: upgraded transitive dependencies with open advisories (75
+  Dependabot alerts) — pillow 13.0.0, certifi 2026.10.23, fsspec 2026.9.0,
+  filelock 4.2.9, virtualenv 21.15.6, tornado 6.6, uv 0.13.7. The lockfile
+  pins CI and local runs only; `pip install h2mare` already resolved fresh
+  versions.
+
 ## [0.10.1] - 2026-11-06
 
 ### Fixed
