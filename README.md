@@ -148,6 +148,8 @@ uv run ruff format h2mare/
 
 Contributions are welcome! Please feel free to submit issues or pull requests on [GitHub](https://github.com/h2ugoparra/h2mare.git).
 
+To report a security vulnerability, please do not open a public issue — see [SECURITY.md](SECURITY.md).
+
 ## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.

@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.2] - 2026-11-09
+
+### Added
+
+- `SECURITY.md`: supported versions, private vulnerability reporting through
+  GitHub Security Advisories, response targets and scope (#283).
+- Dependabot configuration: weekly `uv` and monthly GitHub Actions updates,
+  targeting `dev` (#282).
+
+### Security
+
+- `uv.lock`: upgraded transitive dependencies with open advisories (75
+  Dependabot alerts) — pillow 13.0.0, certifi 2026.10.23, fsspec 2026.9.0,
+  filelock 4.2.9, virtualenv 21.15.6, tornado 6.6, uv 0.13.7. The lockfile
+  pins CI and local runs only; `pip install h2mare` already resolved fresh
+  versions (#284).
+- CI workflows: the CI token is read-only, and every action in `ci.yml` and
+  `docs.yml` is pinned to a commit SHA, as `release.yml` already was (#285).
+
 ## [0.10.1] - 2026-11-06
 
 ### Fixed
@@ -799,6 +818,7 @@ anyone running 0.3.x or earlier should upgrade.
 - Numerous correctness fixes in the fronts processor, FSLE processing
   (bbox handling), extraction (NaN coordinates), and Parquet schema unioning.
 
+[0.10.2]: https://github.com/h2ugoparra/h2mare/compare/v0.10.1...v0.10.2
 [0.10.1]: https://github.com/h2ugoparra/h2mare/compare/v0.10.0...v0.10.1
 [0.10.0]: https://github.com/h2ugoparra/h2mare/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/h2ugoparra/h2mare/compare/v0.8.1...v0.9.0
