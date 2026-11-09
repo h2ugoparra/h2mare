@@ -4,6 +4,11 @@ on:
   pull_request:
     branches: [dev, main]
 
+# CI only reads the repo. Without this the jobs inherit the repository's
+# default token permissions, which can include write access.
+permissions:
+  contents: read
+
 # Every job installs with `uv sync --dev --locked`. The `--locked` is the point:
 # plain `uv sync` silently *updates* uv.lock when it has drifted from
 # pyproject.toml, so a dependency edit committed without re-locking went green
@@ -19,7 +24,7 @@ jobs:
     name: commit-lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           fetch-depth: 0
       - name: Validate commit messages
@@ -72,8 +77,8 @@ jobs:
     name: quality
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
         with:
           python-version: "3.11"
       - run: uv sync --dev --locked
@@ -92,8 +97,8 @@ jobs:
     runs-on: ubuntu-latest
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
         with:
           python-version: "3.11"
       - run: uv sync --dev --locked
@@ -122,8 +127,8 @@ jobs:
       matrix:
         python-version: ["3.12", "3.13"]
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
         with:
           python-version: ${{ matrix.python-version }}
       - run: uv sync --dev --locked
