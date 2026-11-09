@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Parquet writes that merge into existing partitions (`ParquetIndexer.add_data`)
+  failed under DuckDB 2.0 with *"'DuckDBPyConnection' object has no attribute
+  'pl'"*. `pyproject.toml` allows `duckdb>=1.0.0`, so a fresh install of 0.10.2
+  picked up 2.0 and broke the write path. The merge now uses the relation API,
+  which works on DuckDB 1.x and 2.x; the lockfile moves to DuckDB 2.0.0.
+
 ## [0.10.2] - 2026-11-09
 
 ### Added
