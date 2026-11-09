@@ -44,6 +44,8 @@ jobs:
           fi
 
   # Required gate on dev PRs only: feature branches must use an approved prefix.
+  # `dependabot/` is allowed because Dependabot names its own branches
+  # (dependabot/<ecosystem>/...) and dependabot.yml cannot change the prefix.
   branch-name:
     name: branch-name
     if: github.base_ref == 'dev'
@@ -56,8 +58,8 @@ jobs:
         env:
           branch: ${{ github.head_ref }}
         run: |
-          if ! printf '%s' "$branch" | grep -Eq '^(feature|fix|docs|chore|perf|refactor)/.+'; then
-            echo "::error::Branch '$branch' must start with feature/, fix/, docs/, chore/, perf/, or refactor/."
+          if ! printf '%s' "$branch" | grep -Eq '^(feature|fix|docs|chore|perf|refactor|dependabot)/.+'; then
+            echo "::error::Branch '$branch' must start with feature/, fix/, docs/, chore/, perf/, refactor/, or dependabot/."
             exit 1
           fi
 
