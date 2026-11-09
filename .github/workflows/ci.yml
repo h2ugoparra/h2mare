@@ -18,9 +18,6 @@ permissions:
 # project and a dependency surface whose floors are mostly unstated.
 # When it fails: run `uv lock` and commit the result with your change.
 
-permissions:
-  contents: read  
-
 jobs:
   # Required gate: every commit in the PR must follow Conventional Commits.
   commit-lint:
