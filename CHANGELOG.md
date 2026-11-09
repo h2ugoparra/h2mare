@@ -7,13 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.3] - 2026-11-09
+
 ### Fixed
 
 - Parquet writes that merge into existing partitions (`ParquetIndexer.add_data`)
   failed under DuckDB 2.0 with *"'DuckDBPyConnection' object has no attribute
   'pl'"*. `pyproject.toml` allows `duckdb>=1.0.0`, so a fresh install of 0.10.2
   picked up 2.0 and broke the write path. The merge now uses the relation API,
-  which works on DuckDB 1.x and 2.x; the lockfile moves to DuckDB 2.0.0.
+  which works on DuckDB 1.x and 2.x; the lockfile moves to DuckDB 2.0.0 (#294).
+
+### Changed
+
+- Locked dependencies: 26 minor/patch updates, among them xarray 2026.9.0,
+  dask 2026.8.0, pandas 3.1.1, matplotlib 3.11.2, geopandas 1.2.0,
+  shapely 2.2.0, copernicusmarine 2.5.1 and msgspec 0.22.0 (#289).
+- CI and release workflows: actions/checkout v7.0.1, astral-sh/setup-uv
+  v10.3.3, and patch updates to the artifact and PyPI publish actions (#288).
 
 ## [0.10.2] - 2026-11-09
 
@@ -826,6 +836,7 @@ anyone running 0.3.x or earlier should upgrade.
 - Numerous correctness fixes in the fronts processor, FSLE processing
   (bbox handling), extraction (NaN coordinates), and Parquet schema unioning.
 
+[0.10.3]: https://github.com/h2ugoparra/h2mare/compare/v0.10.2...v0.10.3
 [0.10.2]: https://github.com/h2ugoparra/h2mare/compare/v0.10.1...v0.10.2
 [0.10.1]: https://github.com/h2ugoparra/h2mare/compare/v0.10.0...v0.10.1
 [0.10.0]: https://github.com/h2ugoparra/h2mare/compare/v0.9.0...v0.10.0
