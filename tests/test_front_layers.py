@@ -468,7 +468,8 @@ class TestRepoConfig:
     evidence for each; change them together."""
 
     @pytest.fixture(scope="class")
-    def cfg(self):
+    @classmethod
+    def cfg(cls):
         import pathlib
 
         import yaml
