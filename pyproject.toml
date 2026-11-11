@@ -122,7 +122,7 @@ ignore = ["E501"]
 quote-style = "double"
 
 [tool.pytest.ini_options]
-# Two known-benign warnings accounted for every one of the suite's ~207 warnings.
+# Known-benign warnings accounted for every one of the suite's ~207 warnings.
 # Pinning them by message keeps the output meaningful: anything that shows up now
 # is new and worth reading, rather than buried in known noise.
 filterwarnings = [
@@ -137,6 +137,11 @@ filterwarnings = [
     # extension round-trips correctly. Drops out once netCDF4 ships a wheel built
     # against numpy 2.4.
     "ignore:numpy.ndarray size changed:RuntimeWarning",
+    # A rolling std whose window holds no valid cell is 0/0 in dask's reduction
+    # and comes out NaN, which is the documented answer. Pinned to dask's module
+    # so h2mare's own 0/0 still surfaces. Mirrors the CLI's filter — see
+    # h2mare/cli/__init__.py::_silence_known_benign_warnings for the full case.
+    'ignore:invalid value encountered in divide:RuntimeWarning:dask\.array\.numpy_compat',
 ]
 # A hung test is not a slow test: front detection deadlocked in a forked worker
 # and pytest sat there until the GitHub Actions six-hour job limit killed all

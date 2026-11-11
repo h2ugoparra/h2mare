@@ -38,11 +38,6 @@ def _noisy(shape, seed=0) -> np.ndarray:
 
 
 class TestRollingStd:
-    # The hole leaves windows with no valid cell, where the variance is 0/0:
-    # dask warns and yields the NaN the docstring promises.
-    @pytest.mark.filterwarnings(
-        "ignore:invalid value encountered in divide:RuntimeWarning"
-    )
     def test_matches_the_former_ssh_and_sst_code(self):
         """Both hardcoded versions this replaces, bit for bit, holes included —
         so stores written before and after the move agree."""
