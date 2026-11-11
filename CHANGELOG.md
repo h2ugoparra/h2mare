@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Extraction no longer raises pandas' `Pandas4Warning` about
+  `DataFrame.drop(inplace=True)`, which pandas 3.1 deprecates and a later
+  version removes. `Extractor` reassigns the dropped frame instead; results are
+  unchanged (#297).
+
 ## [0.10.3] - 2026-11-09
 
 ### Fixed
