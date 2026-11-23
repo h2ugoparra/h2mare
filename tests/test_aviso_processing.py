@@ -673,7 +673,8 @@ class TestRunBatchesByMonth:
     """
 
     @pytest.fixture(scope="class")
-    def converted(self, tmp_path_factory):
+    @classmethod
+    def converted(cls, tmp_path_factory):
         tmp_path = tmp_path_factory.mktemp("eddies_run")
         downloads = tmp_path / "downloads"
         store = tmp_path / "store"

@@ -384,7 +384,8 @@ class TestRepoConfig:
     silently stop them being written."""
 
     @pytest.fixture(scope="class")
-    def config(self) -> AppConfig:
+    @classmethod
+    def config(cls) -> AppConfig:
         raw = yaml.safe_load((REPO / "config.yaml").read_text(encoding="utf-8"))
         return msgspec.convert(
             {"variables": raw["variables"], "secrets": {}}, AppConfig

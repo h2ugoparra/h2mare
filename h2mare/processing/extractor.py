@@ -1637,11 +1637,7 @@ class Extractor:
                         var_key=var_key, vars=vars_, n_workers=n_workers
                     )
 
-                    result.drop(
-                        columns=_COORD_COLS,
-                        errors="ignore",
-                        inplace=True,
-                    )
+                    result = result.drop(columns=_COORD_COLS, errors="ignore")
                     if result.index.duplicated().any():
                         logger.warning(
                             f"Duplicate index values in '{var_key}' result — keeping first occurrence."
