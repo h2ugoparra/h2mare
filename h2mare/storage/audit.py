@@ -223,6 +223,21 @@ def interior_gaps(dates: pd.DatetimeIndex, freq: str = "D") -> pd.DatetimeIndex:
     return pd.date_range(dates[0], dates[-1], freq=freq).difference(dates)
 
 
+# Variables whose map is legitimately one value, so "degenerate" is no finding.
+# moon_phase is computed per day and broadcast over the grid. The solar fluxes
+# are exactly zero everywhere while the whole domain is dark — 01–05 UTC over
+# 80°W–10°E once the midnight sun ends — which only an hourly store can show.
+# Anything else repeating one value still reports, including a solar flux
+# stuck at a non-zero constant.
+UNIFORM_BY_DESIGN: frozenset[str] = frozenset({"moon_phase"})
+ZERO_AT_NIGHT: frozenset[str] = frozenset({"ssrd", "tisr"})
+
+
+def _uniform_is_expected(name: str, value: float) -> bool:
+    """Whether a slice holding the single value *value* is correct for *name*."""
+    return name in UNIFORM_BY_DESIGN or (name in ZERO_AT_NIGHT and value == 0)
+
+
 def check_slice_health(
     ds: xr.Dataset, *, window: Optional[DateRange] = None
 ) -> list[tuple[str, pd.Timestamp, str, str]]:
@@ -240,7 +255,9 @@ def check_slice_health(
     signals fall out separately:
 
     * ``n_finite == 0``            → ``"empty"``      (no usable data at all)
-    * ``min == max``, n_finite > 0 → ``"degenerate"`` (a single repeated value)
+    * ``min == max``, n_finite > 0 → ``"degenerate"`` (a single repeated value),
+      unless the variable is uniform by design (see ``UNIFORM_BY_DESIGN`` and
+      ``ZERO_AT_NIGHT``)
 
     Every reduction for every variable goes into a single ``compute()``. That
     is not a tidiness point: these stores are far too large to sit in page
@@ -301,7 +318,9 @@ def check_slice_health(
         for i, when in enumerate(times):
             if n_vals[i] == 0:
                 issues.append((name, when, "empty", "no finite values"))
-            elif lo_vals[i] == hi_vals[i]:
+            elif lo_vals[i] == hi_vals[i] and not _uniform_is_expected(
+                name, float(lo_vals[i])
+            ):
                 issues.append(
                     (name, when, "degenerate", f"single value {lo_vals[i]:.6g}")
                 )
