@@ -217,6 +217,28 @@ class TestCheckSliceHealth:
         assert kinds[pd.Timestamp("2020-01-03")] == "empty"
         assert kinds[pd.Timestamp("2020-01-07")] == "degenerate"
 
+    @pytest.mark.parametrize(
+        "name, value",
+        [("moon_phase", 42.0), ("ssrd", 0.0), ("tisr", 0.0)],
+    )
+    def test_uniform_by_design_is_not_degenerate(self, name, value):
+        """One moon phase per day; zero sunlight over a domain in darkness."""
+        ds = _ds(_JAN).rename({"testvar": name})
+        ds[name][4] = value
+
+        assert check_slice_health(ds) == []
+
+    @pytest.mark.parametrize(
+        "name, value",
+        [("ssrd", 7.5), ("testvar", 0.0)],
+    )
+    def test_other_constants_still_report(self, name, value):
+        """A flux stuck at a non-zero value, or zero where zero means nothing."""
+        ds = _ds(_JAN).rename({"testvar": name})
+        ds[name][4] = value
+
+        assert [k for _, _, k, _ in check_slice_health(ds)] == ["degenerate"]
+
     def test_healthy_dataset_reports_nothing(self):
         assert check_slice_health(_ds(_JAN)) == []
 

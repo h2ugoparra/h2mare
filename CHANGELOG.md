@@ -5,6 +5,21 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- Convert no longer stores a provider's newest day while it is still empty.
+  CMEMS lists a day before filling it in; fetched in that window the day was
+  written all-null, and since inferred runs start after the store's last date,
+  nothing asked for it again (ssh 2026-11-07, chl 2026-10-30). Trailing steps
+  with no finite value in the last 30 days are now left out, with a warning,
+  and the next run fetches them. Older empty days are kept, since those are
+  genuine source gaps.
+- `h2mare audit --values` no longer reports `moon_phase` (one value per day by
+  design) or a zero `ssrd`/`tisr` (night over the whole domain, in hourly
+  stores) as degenerate.
+
 ## [0.10.4] - 2026-11-23
 
 ### Fixed
