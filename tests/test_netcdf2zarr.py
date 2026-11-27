@@ -10,7 +10,11 @@ import pandas as pd
 import pytest
 import xarray as xr
 
-from h2mare.format_converters.netcdf2zarr import Netcdf2Zarr
+from h2mare.format_converters.netcdf2zarr import (
+    PROVISIONAL_WINDOW,
+    Netcdf2Zarr,
+    _drop_provisional_tail,
+)
 from h2mare.models import AppConfig
 from h2mare.processing.core.fronts import stage_path
 from h2mare.types import DateRange, FilePeriod
@@ -1405,3 +1409,94 @@ class TestFrontStaging:
         conv.run()
 
         assert not leftover.exists()
+
+
+# ---------------------------------------------------------------------------
+# Provisional tail
+#
+# A provider lists its newest day before filling it in. Fetched in that window
+# the day used to be stored empty, and since inferred runs start after the
+# store's last date, nothing ever asked for it again (ssh 2026-11-07, chl
+# 2026-10-30). Only recent trailing steps are dropped: an old empty day is a
+# genuine source gap, and dropping it would punch a hole in the time axis.
+# ---------------------------------------------------------------------------
+
+_NOW = pd.Timestamp("2026-11-27")
+_RECENT = pd.date_range(_NOW - pd.Timedelta(days=9), _NOW, freq="D")
+
+
+class TestDropProvisionalTail:
+    def test_recent_trailing_empty_days_are_dropped(self):
+        ds = _daily_ds(_RECENT, null_days=_RECENT[-2:])
+
+        out = _drop_provisional_tail(ds, ["testvar"], now=_NOW)
+
+        assert list(out.time.values) == list(_RECENT[:-2].values)
+
+    def test_old_trailing_empty_day_is_kept(self):
+        """A source gap long past the window is real data, not a placeholder."""
+        ds = _daily_ds(_JAN, null_days=[_JAN[-1]])
+
+        out = _drop_provisional_tail(ds, ["testvar"], now=_NOW)
+
+        assert out.sizes["time"] == len(_JAN)
+
+    def test_interior_empty_day_is_kept(self):
+        ds = _daily_ds(_RECENT, null_days=[_RECENT[4]])
+
+        out = _drop_provisional_tail(ds, ["testvar"], now=_NOW)
+
+        assert out.sizes["time"] == len(_RECENT)
+
+    def test_trailing_day_with_any_data_is_kept(self):
+        ds = _daily_ds(_RECENT)
+        ds["testvar"][-1, 1:, :] = np.nan  # mostly empty, not entirely
+
+        out = _drop_provisional_tail(ds, ["testvar"], now=_NOW)
+
+        assert out.sizes["time"] == len(_RECENT)
+
+    def test_walk_stops_at_the_window_edge(self):
+        """Empty all the way back: only the steps inside the window go."""
+        dates = pd.date_range(_NOW - PROVISIONAL_WINDOW * 2, _NOW, freq="D")
+        ds = _daily_ds(dates, null_days=dates)
+
+        out = _drop_provisional_tail(ds, ["testvar"], now=_NOW)
+
+        assert pd.Timestamp(out.time.values[-1]) < _NOW - PROVISIONAL_WINDOW
+
+    def test_unknown_names_fall_back_to_every_time_variable(self):
+        """CDS raw files do not carry the config's long source names."""
+        ds = _daily_ds(_RECENT, null_days=_RECENT[-1:])
+
+        out = _drop_provisional_tail(
+            ds, ["surface_solar_radiation_downwards"], now=_NOW
+        )
+
+        assert out.sizes["time"] == len(_RECENT) - 1
+
+
+class TestProcessPeriodProvisionalTail:
+    def test_empty_newest_day_is_not_stored(self, tmp_path):
+        recent = pd.date_range(
+            pd.Timestamp.now().normalize() - pd.Timedelta(days=4), periods=5
+        )
+        conv = _period_converter(tmp_path)
+        paths = _write_raw_days(conv, recent, null_days=recent[-1:])
+
+        conv._process_period(2020, paths)
+
+        with xr.open_zarr(conv.catalog.build_file_path.return_value) as stored:
+            assert pd.Timestamp(stored.time.values[-1]) == recent[-2]
+
+    def test_period_with_no_data_yet_writes_nothing(self, tmp_path):
+        recent = pd.date_range(
+            pd.Timestamp.now().normalize() - pd.Timedelta(days=1), periods=2
+        )
+        conv = _period_converter(tmp_path)
+        paths = _write_raw_days(conv, recent, null_days=recent)
+
+        conv._process_period(2020, paths)  # must not raise
+
+        assert not conv.catalog.build_file_path.return_value.exists()
+        assert not any(p.exists() for p in paths)  # spent: the next run refetches

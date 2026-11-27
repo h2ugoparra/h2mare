@@ -11,6 +11,7 @@ from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Literal, Optional
 
+import numpy as np
 import pandas as pd
 import xarray as xr
 from loguru import logger
@@ -76,6 +77,63 @@ def _dataset_dates(ds: xr.Dataset, freq: str = "D") -> pd.DatetimeIndex:
     if freq == "D":
         times = times.normalize()
     return times.unique().sort_values()
+
+
+# How far back from today a trailing empty step counts as provisional. A
+# provider lists its newest day before it fills it in (CMEMS NRT ssh on
+# 2026-11-07: "currently being updated"), and a fetch in that window used to
+# store the day empty — after which the store's frontier was past it and no
+# inferred run ever asked for it again. Older empty steps are left alone: that
+# is what a genuine source gap looks like (chl 1999), and dropping one would
+# turn a null day into a hole in the time axis.
+PROVISIONAL_WINDOW = pd.Timedelta(days=30)
+
+
+def _drop_provisional_tail(
+    ds: xr.Dataset,
+    variables: Iterable[str],
+    now: Optional[pd.Timestamp] = None,
+) -> xr.Dataset:
+    """
+    Drop trailing time steps on which none of *variables* has a finite value.
+
+    Only steps within :data:`PROVISIONAL_WINDOW` of *now* are dropped. Walks back
+    from the last step and stops at the first one carrying data, so the usual
+    case reads a single step. Falls back to every time-dimensioned variable when
+    none of *variables* is in *ds* (CDS raw files name them differently).
+
+    The dropped steps are then absent from the store, so the next inferred run
+    asks for them again. The shortfall at the tail is what
+    ``_verify_written_dates`` already treats as provider lag.
+    """
+    tdim = next((d for d in ("time", "valid_time") if d in ds.dims), None)
+    if tdim is None or ds[tdim].ndim != 1 or ds.sizes[tdim] == 0:
+        return ds
+
+    names = [v for v in variables if v in ds.data_vars and tdim in ds[v].dims]
+    if not names:
+        names = [str(v) for v in ds.data_vars if tdim in ds[v].dims]
+    if not names:
+        return ds
+
+    now = pd.Timestamp.now() if now is None else now
+    cutoff = now.normalize() - PROVISIONAL_WINDOW
+    times = pd.DatetimeIndex(ds[tdim].values)
+    keep = len(times)
+    while keep > 0 and times[keep - 1] >= cutoff:
+        step = ds[names].isel({tdim: keep - 1})
+        if any(bool(np.isfinite(step[v]).any()) for v in names):
+            break
+        keep -= 1
+
+    if keep == len(times):
+        return ds
+    logger.warning(
+        f"Not storing {len(times) - keep} trailing step(s) with no data "
+        f"({format_date_blocks(times[keep:])}): the provider has listed them but "
+        f"not filled them in yet. The next run fetches them again."
+    )
+    return ds.isel({tdim: slice(0, keep)})
 
 
 def _span_end(end: DateLike, freq: str) -> pd.Timestamp:
@@ -705,7 +763,18 @@ class Netcdf2Zarr(BaseConverter):
         ds: Optional[xr.Dataset] = None
 
         try:
-            ds = self.process_dataset(ds_raw)
+            ds_in = _drop_provisional_tail(ds_raw, self.var_config.source_vars)
+            if any(ds_in.sizes.get(d) == 0 for d in ("time", "valid_time")):
+                logger.warning(
+                    f"[{self.var_key}] period {period}: no step with data yet — "
+                    "nothing to store."
+                )
+                _close_all(ds_raw)
+                self._archive_raw_files(period, paths)
+                self._cleanup_period_files(paths)
+                return
+
+            ds = self.process_dataset(ds_in)
             path = self.catalog.build_file_path(ds, self.date_format)
             # Read the axis before the write: write_append_zarr closes ds.
             written = _dataset_dates(ds, self._step_freq)
